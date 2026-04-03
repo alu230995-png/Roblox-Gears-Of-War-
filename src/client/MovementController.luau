@@ -23,11 +23,15 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local MovementController = {}
 MovementController.__index = MovementController
 
-function MovementController.new(stateMachine)
+function MovementController.new(stateMachine, actionResolver)
 	local self = setmetatable({}, MovementController)
 
 	self._stateMachine = stateMachine
+	self._actionResolver = actionResolver
 	self._player = Players.LocalPlayer
+
+	-- Conexiones gestionadas (cleanup en Destroy)
+	self._connections = {}
 
 	-- Cover state
 	self._coverNormal = nil :: Vector3?
@@ -43,6 +47,31 @@ function MovementController.new(stateMachine)
 	self._evadeDirection = nil :: Vector3?
 
 	return self
+end
+
+------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function MovementController:Init()
+	-- Configuración realizada en constructor
+end
+
+--- Conecta al Signal ActionResolved del ActionResolver.
+--- MovementController reacciona a acciones resueltas sin acoplamiento directo.
+function MovementController:Start()
+	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(
+		function(action: string, targetState: string?, data: any?)
+			self:ExecuteAction(action, targetState, data)
+		end
+	)
+end
+
+function MovementController:Destroy()
+	for _, conn in self._connections do
+		conn.Disconnect()
+	end
+	table.clear(self._connections)
 end
 
 ------------------------------------------------------------------------

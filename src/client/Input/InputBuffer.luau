@@ -58,6 +58,22 @@ function InputBuffer.new()
 end
 
 ------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function InputBuffer:Init()
+	-- Configuración realizada en constructor
+end
+
+function InputBuffer:Start()
+	-- Sin conexiones propias — métodos son llamados por el heartbeat
+end
+
+function InputBuffer:Destroy()
+	self:Clear()
+end
+
+------------------------------------------------------------------------
 -- PUBLIC API
 ------------------------------------------------------------------------
 

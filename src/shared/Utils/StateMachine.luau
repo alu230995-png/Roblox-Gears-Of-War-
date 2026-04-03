@@ -10,9 +10,13 @@
 	- Las transiciones se validan contra una tabla de transiciones válidas.
 	- Soporte para "estado mínimo" — tiempo mínimo antes de poder cambiar.
 	- Historial del último estado para lógica de contexto.
+	- Signal StateChanged para comunicación event-driven con otros sistemas.
 ]]
 
-local Constants = require(script.Parent.Constants)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
+local Signal = require(Shared:WaitForChild("Signal"))
 
 local StateMachine = {}
 StateMachine.__index = StateMachine
@@ -37,8 +41,34 @@ function StateMachine.new(initialState: string, transitions: { [string]: { strin
 	self._stateEnteredAt = os.clock()
 	self._locked = false
 
+	-- Signal: se dispara en cada transición exitosa (newState, oldState)
+	self.StateChanged = Signal.new()
+
 	return self
 end
+
+------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function StateMachine:Init()
+	-- Configuración ya realizada en constructor
+end
+
+function StateMachine:Start()
+	-- Sin conexiones propias
+end
+
+function StateMachine:Destroy()
+	if self.StateChanged then
+		self.StateChanged:Destroy()
+	end
+	table.clear(self._stateCallbacks)
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API
+------------------------------------------------------------------------
 
 --- Registra callbacks para un estado.
 function StateMachine:RegisterState(stateName: string, callbacks: StateCallbacks)
@@ -101,6 +131,9 @@ function StateMachine:TransitionTo(newState: string): boolean
 		newCallbacks.OnEnter(oldState)
 	end
 
+	-- Notificar a todos los listeners
+	self.StateChanged:Fire(newState, oldState)
+
 	return true
 end
 
@@ -122,9 +155,12 @@ function StateMachine:ForceState(newState: string)
 	if newCallbacks and newCallbacks.OnEnter then
 		newCallbacks.OnEnter(oldState)
 	end
+
+	-- Notificar a todos los listeners
+	self.StateChanged:Fire(newState, oldState)
 end
 
---- Llama el OnUpdate del estado actual. Llamar cada frame desde RenderStepped o Heartbeat.
+--- Llama el OnUpdate del estado actual. Llamar cada frame desde Heartbeat.
 function StateMachine:Update(dt: number)
 	local callbacks = self._stateCallbacks[self._currentState]
 	if callbacks and callbacks.OnUpdate then

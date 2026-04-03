@@ -47,6 +47,22 @@ function IntentMapper.new(inputDetector, environmentSensor)
 end
 
 ------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function IntentMapper:Init()
+	-- Configuración realizada en constructor
+end
+
+function IntentMapper:Start()
+	-- Sin conexiones propias — Update() es llamado por el heartbeat
+end
+
+function IntentMapper:Destroy()
+	table.clear(self._activeIntents)
+end
+
+------------------------------------------------------------------------
 -- PUBLIC API
 ------------------------------------------------------------------------
 

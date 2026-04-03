@@ -25,10 +25,23 @@ function Signal:Connect(fn: (...any) -> ())
 	}
 end
 
+function Signal:Once(fn: (...any) -> ())
+	local connection
+	connection = self:Connect(function(...)
+		connection.Disconnect()
+		fn(...)
+	end)
+	return connection
+end
+
 function Signal:Fire(...)
 	for _, listener in self._listeners do
 		listener(...)
 	end
+end
+
+function Signal:GetListenerCount(): number
+	return #self._listeners
 end
 
 function Signal:Destroy()

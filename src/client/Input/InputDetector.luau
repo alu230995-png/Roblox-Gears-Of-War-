@@ -131,6 +131,10 @@ end
 -- LIFECYCLE
 ------------------------------------------------------------------------
 
+function InputDetector:Init()
+	-- Configuración realizada en constructor
+end
+
 function InputDetector:Start()
 	table.insert(
 		self._connections,

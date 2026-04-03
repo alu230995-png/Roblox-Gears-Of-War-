@@ -185,6 +185,7 @@ PlayerState.Transitions = {
 }
 
 --- Verifica si una transición de estado es válida.
+
 function PlayerState.CanTransition(from: string, to: string): boolean
 	local validTargets = PlayerState.Transitions[from]
 	if not validTargets then

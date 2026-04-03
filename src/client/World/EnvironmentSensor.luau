@@ -56,6 +56,22 @@ function EnvironmentSensor.new()
 end
 
 ------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function EnvironmentSensor:Init()
+	-- Configuración realizada en constructor
+end
+
+function EnvironmentSensor:Start()
+	-- Sin conexiones propias — Update() es llamado por el heartbeat
+end
+
+function EnvironmentSensor:Destroy()
+	-- Sin conexiones que limpiar
+end
+
+------------------------------------------------------------------------
 -- PUBLIC API
 ------------------------------------------------------------------------
 

@@ -13,26 +13,17 @@
 	  2. ¿No? ¿Puedo evadirme?  → Sí → Evade/Roll
 	  3. ¿No?                    → Idle (sin acción)
 	
-	Árboles de prioridad implementados:
-	  - CoverButton Tap: EnterCover > Evade > ExitCover > SwatTurn > RollOut
-	  - CoverButton Hold: RoadieRun > Mantle (si obstáculo bajo adelante)
-	  - Movimiento en Cover: Vault > PeekCorner > SlideAlongCover > ExitCover
-	  - Combate: BlindFire > PopUpAim > Shoot > Reload
-	
-	Fórmula general:
-	  function Resolve(intents, state, env)
-	    for priority = 1, #tree do
-	      if CheckConditions(candidate, state, env) then
-	        return candidate.action
-	      end
-	    end
-	    return "NoAction"
-	  end
+	Comunicación event-driven:
+	  - self.ActionResolved (Signal) se dispara con (action, targetState, data)
+	  - MovementController, AnimationController y CameraController escuchan
+	    este signal sin que ActionResolver sepa de su existencia.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local PlayerStateModule = require(Shared:WaitForChild("Enums"):WaitForChild("PlayerState"))
+local Constants = require(Shared:WaitForChild("Constants"))
+local Signal = require(Shared:WaitForChild("Signal"))
 
 local ActionResolver = {}
 ActionResolver.__index = ActionResolver
@@ -45,7 +36,28 @@ function ActionResolver.new(stateMachine, inputBuffer, intentMapper, environment
 	self._intents = intentMapper
 	self._env = environmentSensor
 
+	-- Signal de salida: (action: string, targetState: string?, data: any?)
+	self.ActionResolved = Signal.new()
+
 	return self
+end
+
+------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+function ActionResolver:Init()
+	-- Signal creado en constructor
+end
+
+function ActionResolver:Start()
+	-- Sin conexiones propias — Resolve() es llamado por el heartbeat
+end
+
+function ActionResolver:Destroy()
+	if self.ActionResolved then
+		self.ActionResolved:Destroy()
+	end
 end
 
 ------------------------------------------------------------------------
@@ -53,7 +65,8 @@ end
 ------------------------------------------------------------------------
 
 --- Resuelve la acción a ejecutar este frame.
---- Retorna: actionName, targetState, actionData
+--- Dispara ActionResolved signal si la acción no es NoAction.
+--- Retorna: actionName, targetState, actionData (para compatibilidad)
 function ActionResolver:Resolve(): (string, string?, any?)
 	local state = self._stateMachine:GetCurrentState()
 	local env = self._env:GetContext()
@@ -63,28 +76,37 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	-- ÁRBOL 1: Estado actual determina qué árboles evaluar
 	------------------------------------------------------------------------
 
+	local action, targetState, data
+
 	-- En estados bloqueantes (animación comprometida), no resolver nada
 	if state == "Evading" or state == "Mantling" or state == "CoverSlide" or state == "Executing" then
 		return "NoAction", nil, nil
 	end
 
-	-- DBNO: solo puede ser rescatado (no controlado por el jugador)
+	-- DBNO: solo puede ser rescatado
 	if state == "DBNO" then
-		return self:_resolveDBNO(env)
-	end
-
+		action, targetState, data = self:_resolveDBNO(env)
 	-- Estados de cover
-	if state == "CoverIdle" or state == "CoverAim" or state == "CoverBlindFire" then
-		return self:_resolveCoverState(state, env, stateConfig)
-	end
-
+	elseif state == "CoverIdle" or state == "CoverAim" or state == "CoverBlindFire" then
+		action, targetState, data = self:_resolveCoverState(state, env, stateConfig)
 	-- RoadieRun
-	if state == "RoadieRun" then
-		return self:_resolveRoadieRun(env)
+	elseif state == "RoadieRun" then
+		action, targetState, data = self:_resolveRoadieRun(env)
+	-- Estados libres: Idle, Walking, Aiming, Firing, Reloading, ActiveReloading
+	else
+		action, targetState, data = self:_resolveFreeState(state, env, stateConfig)
 	end
 
-	-- Estados libres: Idle, Walking, Aiming, Firing, Reloading, ActiveReloading
-	return self:_resolveFreeState(state, env, stateConfig)
+	-- Disparar signal para listeners (MovementController, futuro: Camera, Animation)
+	if action ~= "NoAction" then
+		self.ActionResolved:Fire(action, targetState, data)
+
+		if Constants.DEBUG_MODE then
+			print(`[GoW] {action} → {targetState or "nil"} | State: {self._stateMachine:GetCurrentState()}`)
+		end
+	end
+
+	return action, targetState, data
 end
 
 ------------------------------------------------------------------------
@@ -169,7 +191,7 @@ function ActionResolver:_resolveFreeState(state: string, env, stateConfig): (str
 	-- Prioridad 8: Melee
 	if self._buffer:HasIntent("WantsMelee") then
 		self._buffer:Consume("WantsMelee")
-		return "Melee", nil, nil -- El estado lo manejará el MovementController
+		return "Melee", nil, nil
 	end
 
 	-- Prioridad 8b: Chainsaw
@@ -186,8 +208,8 @@ function ActionResolver:_resolveFreeState(state: string, env, stateConfig): (str
 
 	-- Prioridad 10: Swap Weapon
 	if self._buffer:HasIntent("WantsSwapWeapon") then
-		local _, data = self._buffer:Consume("WantsSwapWeapon")
-		return "SwapWeapon", nil, { slot = data }
+		local _, swapData = self._buffer:Consume("WantsSwapWeapon")
+		return "SwapWeapon", nil, { slot = swapData }
 	end
 
 	-- Movimiento: si hay dirección → Walking. Si no → Idle.
@@ -200,7 +222,7 @@ function ActionResolver:_resolveFreeState(state: string, env, stateConfig): (str
 		if state == "Idle" then
 			return "StartWalking", "Walking", nil
 		end
-		-- Ya en Walking → no action needed, el movimiento es continuo
+		-- Ya en Walking → no action needed
 		return "NoAction", nil, nil
 	else
 		-- Sin movimiento
@@ -244,7 +266,6 @@ function ActionResolver:_resolveRoadieRun(env): (string, string?, any?)
 
 	-- Prioridad 4: Dejar de correr
 	if not self._intents:HasIntent("WantsRoadieRun") then
-		-- Sprint release → volver a walking o idle
 		local hasMovement = self._intents:HasIntent("WantsMoveForward")
 			or self._intents:HasIntent("WantsMoveBackward")
 			or self._intents:HasIntent("WantsMoveLeft")
@@ -370,8 +391,6 @@ end
 ------------------------------------------------------------------------
 
 function ActionResolver:_resolveDBNO(_env): (string, string?, any?)
-	-- En DBNO el jugador solo puede arrastrarse
-	-- La resurrección la maneja el servidor (otro jugador interactúa)
 	local hasMovement = self._intents:HasIntent("WantsMoveForward")
 		or self._intents:HasIntent("WantsMoveBackward")
 		or self._intents:HasIntent("WantsMoveLeft")

@@ -134,4 +134,44 @@ export type EnvironmentContext = {
 	IsFacingCover: boolean,
 }
 
+------------------------------------------------------------------------
+-- WEAPON SYSTEM (Fase 7)
+------------------------------------------------------------------------
+
+export type WeaponType = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
+
+export type WeaponConfig = {
+	Name: string,
+	Type: WeaponType,
+	Damage: number,
+	FireRate: number,
+	MagazineSize: number,
+	ReloadTime: number,
+	Range: number,
+	HeadshotMultiplier: number,
+	ActiveReloadBonus: number,
+}
+
+------------------------------------------------------------------------
+-- COMBAT (Fase 6)
+------------------------------------------------------------------------
+
+export type CombatResult = {
+	Hit: boolean,
+	Damage: number,
+	Headshot: boolean,
+	KilledTarget: boolean,
+	DBNOTarget: boolean,
+}
+
+------------------------------------------------------------------------
+-- NETWORK (Fase 6)
+------------------------------------------------------------------------
+
+export type NetworkPayload = {
+	Action: string,
+	Timestamp: number,
+	Data: { [string]: any }?,
+}
+
 return nil
