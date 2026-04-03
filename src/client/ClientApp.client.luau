@@ -12,8 +12,6 @@
 	  5. Heartbeat: game loop central (temporal — se moverá a CharacterController)
 	
 	Este archivo NO contiene lógica de gameplay. Solo bootstrapping.
-	Los callbacks de FSM se registrarán en AnimationController y CameraController
-	cuando se implementen (Fases 4 y 5).
 ]]
 
 local RunService = game:GetService("RunService")
@@ -44,20 +42,8 @@ local EnvironmentSensor = require(script.Parent.World.EnvironmentSensor)
 -- Gameplay (Capa 5)
 local ActionResolver = require(script.Parent.Gameplay.ActionResolver)
 
--- Movement (temporal — se dividirá en Character/ en fases futuras)
-local MovementController = require(script.Parent.MovementController)
-
--- Character (stub — Fase 3 refactor)
-local CharacterController = require(script.Parent.Character.CharacterController)
-
--- Camera (stub — Fase 5)
-local CameraController = require(script.Parent.Camera.CameraController)
-
--- Animation (stub — Fase 4)
-local AnimationController = require(script.Parent.Animation.AnimationController)
-
--- Network (stub — Fase 6)
-local ClientNetwork = require(script.Parent.Network.ClientNetwork)
+-- Movement (refactored — Character/Movement/ con sub-handlers)
+local MovementController = require(script.Parent.Character.Movement.MovementController)
 
 ------------------------------------------------------------------------
 -- BOOTSTRAP
@@ -66,16 +52,22 @@ local locator = ServiceLocator.new()
 
 -- Crear instancias (orden importa: dependencias primero)
 local stateMachine = StateMachine.new("Idle", PlayerState.Transitions)
+
+-- Registrar grupos HSM (orden: padres antes de hijos)
+for groupName, groupConfig in PlayerState.Groups do
+	stateMachine:RegisterGroup(groupName, {
+		Parent = groupConfig.Parent,
+		States = groupConfig.States,
+	})
+end
+stateMachine:BuildGroupHierarchy()
+
 local inputDetector = InputDetector.new()
 local envSensor = EnvironmentSensor.new()
 local intentMapper = IntentMapper.new(inputDetector, envSensor)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
 local movementController = MovementController.new(stateMachine, actionResolver)
-local characterController = CharacterController.new()
-local cameraController = CameraController.new()
-local animationController = AnimationController.new()
-local clientNetwork = ClientNetwork.new()
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
@@ -85,10 +77,6 @@ locator:Register("IntentMapper", intentMapper)
 locator:Register("InputBuffer", inputBuffer)
 locator:Register("ActionResolver", actionResolver)
 locator:Register("MovementController", movementController)
-locator:Register("CharacterController", characterController)
-locator:Register("CameraController", cameraController)
-locator:Register("AnimationController", animationController)
-locator:Register("ClientNetwork", clientNetwork)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()

@@ -166,22 +166,61 @@ PlayerState.States = {
 }
 
 --- Tabla de transiciones válidas: From → {To1, To2, ...}
+--- Las transiciones heredadas por grupo se declaran a nivel de grupo.
+--- Los estados hoja solo declaran transiciones específicas de ese estado.
 PlayerState.Transitions = {
-	Idle = { "Walking", "RoadieRun", "CoverSlide", "Evading", "Aiming", "Firing", "Reloading", "DBNO" },
-	Walking = { "Idle", "RoadieRun", "CoverSlide", "Evading", "Aiming", "Firing", "Reloading", "DBNO" },
-	RoadieRun = { "Idle", "Walking", "CoverSlide", "Evading", "Mantling", "DBNO" },
-	CoverIdle = { "CoverAim", "CoverBlindFire", "Evading", "Idle", "Mantling", "Reloading", "DBNO" },
-	CoverAim = { "CoverIdle", "Firing", "DBNO" },
-	CoverBlindFire = { "CoverIdle", "DBNO" },
-	CoverSlide = { "CoverIdle", "DBNO" },
-	Evading = { "Idle", "DBNO" },
-	Mantling = { "Idle", "DBNO" },
-	DBNO = { "Idle", "Executing" }, -- Idle = revivido
+	-- Transiciones de grupo (heredadas por todos los hijos)
+	AliveGroup = { "DBNO" },
+	FreeMovementGroup = { "CoverSlide", "Evading", "Mantling" },
+	CoverGroup = { "Evading", "Idle" },
+	ActionGroup = { "Idle" },
+
+	-- Transiciones específicas de estados hoja
+	Idle = { "Walking", "RoadieRun", "Aiming", "Firing", "Reloading" },
+	Walking = { "Idle", "RoadieRun", "Aiming", "Firing", "Reloading" },
+	RoadieRun = { "Idle", "Walking" },
+	CoverIdle = { "CoverAim", "CoverBlindFire", "Reloading", "Mantling" },
+	CoverAim = { "CoverIdle", "Firing" },
+	CoverBlindFire = { "CoverIdle" },
+	CoverSlide = { "CoverIdle" },
+	Evading = { "Idle" },
+	Mantling = { "Idle" },
+	DBNO = { "Idle", "Executing" },
 	Executing = { "Idle" },
-	Reloading = { "Idle", "ActiveReloading", "Evading", "CoverIdle", "DBNO" },
-	ActiveReloading = { "Idle", "Evading", "CoverIdle", "DBNO" },
-	Aiming = { "Idle", "Walking", "Firing", "Evading", "CoverSlide", "DBNO" },
-	Firing = { "Idle", "Aiming", "Reloading", "Evading", "DBNO" },
+	Reloading = { "Idle", "ActiveReloading", "Evading", "CoverIdle" },
+	ActiveReloading = { "Idle", "Evading", "CoverIdle" },
+	Aiming = { "Idle", "Walking", "Firing", "Evading", "CoverSlide" },
+	Firing = { "Idle", "Aiming", "Reloading", "Evading" },
+}
+
+------------------------------------------------------------------------
+-- GROUPS (HSM Hierarchy)
+------------------------------------------------------------------------
+
+--- Definición de grupos jerárquicos.
+--- Parent = grupo padre (nil = raíz)
+--- States = estados hoja que pertenecen a este grupo (y a sus hijos)
+PlayerState.Groups = {
+	AliveGroup = {
+		Parent = nil,
+		States = {
+			"Idle", "Walking", "RoadieRun", "Aiming", "Firing",
+			"CoverIdle", "CoverAim", "CoverBlindFire", "CoverSlide",
+			"Evading", "Mantling", "Reloading", "ActiveReloading",
+		},
+	},
+	FreeMovementGroup = {
+		Parent = "AliveGroup",
+		States = { "Idle", "Walking", "RoadieRun", "Aiming", "Firing", "Reloading", "ActiveReloading" },
+	},
+	CoverGroup = {
+		Parent = "AliveGroup",
+		States = { "CoverIdle", "CoverAim", "CoverBlindFire", "CoverSlide" },
+	},
+	ActionGroup = {
+		Parent = "AliveGroup",
+		States = { "Evading", "Mantling" },
+	},
 }
 
 --- Verifica si una transición de estado es válida.

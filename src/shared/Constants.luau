@@ -24,8 +24,8 @@ Constants.DEBUG_MODE = true -- Cambiar a true para logs en consola
 
 -- Velocidades base (studs/segundo en Roblox)
 -- Roblox default WalkSpeed = 16. GoW necesita sentirse más lento.
-Constants.WALK_SPEED = 12
-Constants.ROADIE_RUN_SPEED = 14.4 -- ~1.2x walk
+Constants.WALK_SPEED = 10
+Constants.ROADIE_RUN_SPEED = 22 -- ~1.8x walk
 Constants.COVER_SLIDE_SPEED = 18 -- Más rápido que roadie run
 Constants.EVADE_SPEED = 16 -- Corto y rápido, burst momentáneo
 
@@ -83,11 +83,11 @@ Constants.MANTLE_MAX_HEIGHT = 5
 -- Duración del dodge roll (segundos)
 Constants.EVADE_DURATION = 0.6
 -- Cooldown después del roll (segundos) — ventana de vulnerabilidad
-Constants.EVADE_COOLDOWN = 0.8
+Constants.EVADE_COOLDOWN = 1.2
 -- El jugador es invulnerable durante los primeros frames del roll
 Constants.EVADE_IFRAMES_DURATION = 0.25
 -- Velocidad inicial del impulso de evade (studs/s) — burst fuerte que decae
-Constants.EVADE_IMPULSE_SPEED = 30
+Constants.EVADE_IMPULSE_SPEED = 45
 -- Factor de deceleración por segundo (mayor = frena más rápido)
 Constants.EVADE_DECELERATION = 4.0
 

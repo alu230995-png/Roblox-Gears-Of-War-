@@ -39,6 +39,11 @@ function ActionResolver.new(stateMachine, inputBuffer, intentMapper, environment
 	-- Signal de salida: (action: string, targetState: string?, data: any?)
 	self.ActionResolved = Signal.new()
 
+	-- Cooldown del evade: registra el tick en que se inició el último evade.
+	-- Cooldown total = EVADE_DURATION + EVADE_COOLDOWN (el roll debe terminar
+	-- y luego esperar la ventana de vulnerabilidad antes de poder volver a evadir).
+	self._evadeStartTime = -math.huge
+
 	return self
 end
 
@@ -78,8 +83,15 @@ function ActionResolver:Resolve(): (string, string?, any?)
 
 	local action, targetState, data
 
-	-- En estados bloqueantes (animación comprometida), no resolver nada
-	if state == "Evading" or state == "Mantling" or state == "CoverSlide" or state == "Executing" then
+	-- En estados bloqueantes (animación comprometida), no resolver nada.
+	-- "Evading" se lista explícitamente además de IsInGroup como doble seguro.
+	if
+		self._stateMachine:IsInGroup("ActionGroup")
+		or state == "Evading"
+		or state == "Mantling"
+		or state == "CoverSlide"
+		or state == "Executing"
+	then
 		return "NoAction", nil, nil
 	end
 
@@ -87,7 +99,7 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	if state == "DBNO" then
 		action, targetState, data = self:_resolveDBNO(env)
 	-- Estados de cover
-	elseif state == "CoverIdle" or state == "CoverAim" or state == "CoverBlindFire" then
+	elseif self._stateMachine:IsInGroup("CoverGroup") then
 		action, targetState, data = self:_resolveCoverState(state, env, stateConfig)
 	-- RoadieRun
 	elseif state == "RoadieRun" then
@@ -132,7 +144,10 @@ function ActionResolver:_resolveFreeState(state: string, env, stateConfig): (str
 
 	-- Prioridad 3: Evade / Roll
 	if self._buffer:HasIntent("WantsEvade") then
-		if stateConfig.canEvade then
+		local evadeCooldownMet = (os.clock() - self._evadeStartTime)
+			>= (Constants.EVADE_DURATION + Constants.EVADE_COOLDOWN)
+		if stateConfig.canEvade and evadeCooldownMet then
+			self._evadeStartTime = os.clock()
 			self._buffer:Consume("WantsEvade")
 			local moveDir = env.MoveDirection
 			return "Evade", "Evading", { direction = moveDir }
@@ -260,8 +275,13 @@ function ActionResolver:_resolveRoadieRun(env): (string, string?, any?)
 
 	-- Prioridad 3: Evade durante roadie run
 	if self._buffer:HasIntent("WantsEvade") then
-		self._buffer:Consume("WantsEvade")
-		return "Evade", "Evading", { direction = env.MoveDirection }
+		local evadeCooldownMet = (os.clock() - self._evadeStartTime)
+			>= (Constants.EVADE_DURATION + Constants.EVADE_COOLDOWN)
+		if evadeCooldownMet then
+			self._evadeStartTime = os.clock()
+			self._buffer:Consume("WantsEvade")
+			return "Evade", "Evading", { direction = env.MoveDirection }
+		end
 	end
 
 	-- Prioridad 4: Dejar de correr

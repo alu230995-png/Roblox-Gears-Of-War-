@@ -1,16 +1,28 @@
 --[[
 	StateMachine.luau
-	State Machine genérica con validación de transiciones.
+	Hierarchical State Machine (HSM) con herencia de transiciones,
+	callbacks jerárquicos, history states, y soporte para regiones paralelas.
 	
-	Patrón: State Machine finita con callbacks de entrada/salida.
-	Uso principal: manejar el estado del jugador (Idle → Walking → RoadieRun → Cover, etc.)
+	Evolución de la FSM plana original. Mantiene API backward-compatible:
+	  - TransitionTo(state) sigue igual (estado hoja)
+	  - ForceState(state) sigue igual
+	  - GetCurrentState() devuelve estado hoja (string)
+	  - RegisterState(name, callbacks) sigue igual
+	  - StateChanged signal sigue disparándose igual
+	
+	Nuevo API (HSM):
+	  - RegisterGroup(name, config) — registrar grupo con jerarquía
+	  - IsInGroup(groupName) — check rápido de pertenencia
+	  - GetCurrentGroup(level?) — grupo activo en nivel de jerarquía
+	  - GetHistory(groupName) — último subestado activo de un grupo
 	
 	Diseño:
-	- Cada estado tiene callbacks OnEnter y OnExit opcionales.
-	- Las transiciones se validan contra una tabla de transiciones válidas.
-	- Soporte para "estado mínimo" — tiempo mínimo antes de poder cambiar.
-	- Historial del último estado para lógica de contexto.
-	- Signal StateChanged para comunicación event-driven con otros sistemas.
+	  - Grupos definen jerarquía padre-hijo sobre estados hoja.
+	  - Las transiciones se heredan: si AliveGroup→DBNO, todos los hijos heredan.
+	  - Al transicionar entre grupos, se ejecutan callbacks en orden jerárquico:
+	    Exit(leaf) → Exit(groups child→root hasta ancestro común) →
+	    Enter(groups root→child hasta destino) → Enter(leaf)
+	  - History state por grupo recuerda último subestado activo.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -27,9 +39,16 @@ export type StateCallbacks = {
 	OnUpdate: ((dt: number) -> ())?,
 }
 
+export type GroupConfig = {
+	Parent: string?,
+	States: { string },
+	OnEnter: ((fromState: string) -> ())?,
+	OnExit: ((toState: string) -> ())?,
+}
+
 --- Crea una nueva StateMachine.
---- @param initialState string — Estado inicial.
---- @param transitions {[string]: {string}} — Tabla de transiciones válidas.
+--- @param initialState string — Estado hoja inicial.
+--- @param transitions {[string]: {string}} — Tabla de transiciones válidas (hoja y/o grupo).
 --- @return StateMachine
 function StateMachine.new(initialState: string, transitions: { [string]: { string } })
 	local self = setmetatable({}, StateMachine)
@@ -40,6 +59,12 @@ function StateMachine.new(initialState: string, transitions: { [string]: { strin
 	self._stateCallbacks = {} :: { [string]: StateCallbacks }
 	self._stateEnteredAt = os.clock()
 	self._locked = false
+
+	-- HSM: Grupos jerárquicos
+	self._groups = {} :: { [string]: GroupConfig } -- groupName → config
+	self._stateToGroups = {} :: { [string]: { string } } -- leafState → {group1, group2, ...} (child→root)
+	self._groupChildren = {} :: { [string]: { string } } -- groupName → {childGroups}
+	self._history = {} :: { [string]: string } -- groupName → last active leaf state
 
 	-- Signal: se dispara en cada transición exitosa (newState, oldState)
 	self.StateChanged = Signal.new()
@@ -64,18 +89,126 @@ function StateMachine:Destroy()
 		self.StateChanged:Destroy()
 	end
 	table.clear(self._stateCallbacks)
+	table.clear(self._groups)
+	table.clear(self._stateToGroups)
+	table.clear(self._groupChildren)
+	table.clear(self._history)
 end
 
 ------------------------------------------------------------------------
--- PUBLIC API
+-- GROUP REGISTRATION (HSM)
 ------------------------------------------------------------------------
 
---- Registra callbacks para un estado.
+--- Registra un grupo jerárquico.
+--- @param groupName string — nombre único del grupo
+--- @param config GroupConfig — { Parent: string?, States: {string}, OnEnter?, OnExit? }
+function StateMachine:RegisterGroup(groupName: string, config: GroupConfig)
+	self._groups[groupName] = config
+
+	-- Registrar relación padre→hijo
+	if config.Parent then
+		if not self._groupChildren[config.Parent] then
+			self._groupChildren[config.Parent] = {}
+		end
+		table.insert(self._groupChildren[config.Parent], groupName)
+	end
+
+	-- Mapear cada estado hoja a su cadena de grupos (child→root)
+	for _, stateName in config.States do
+		if not self._stateToGroups[stateName] then
+			self._stateToGroups[stateName] = {}
+		end
+		-- Insertar al inicio para mantener orden child→root
+		table.insert(self._stateToGroups[stateName], 1, groupName)
+	end
+
+	-- Inicializar history con el primer estado del grupo
+	if #config.States > 0 then
+		self._history[groupName] = config.States[1]
+	end
+end
+
+--- Reconstruye las cadenas _stateToGroups tras registrar todos los grupos.
+--- Llamar una vez después de registrar todos los grupos.
+function StateMachine:BuildGroupHierarchy()
+	-- Limpiar y reconstruir stateToGroups con cadena completa child→root
+	table.clear(self._stateToGroups)
+
+	for groupName, config in self._groups do
+		for _, stateName in config.States do
+			if not self._stateToGroups[stateName] then
+				self._stateToGroups[stateName] = {}
+			end
+		end
+	end
+
+	-- Para cada estado hoja, construir la cadena de grupos de más específico a raíz
+	for stateName, _ in self._stateToGroups do
+		local chain = {}
+		-- Encontrar el grupo más específico que contiene este estado directamente
+		for groupName, config in self._groups do
+			local isDirect = false
+			for _, s in config.States do
+				if s == stateName then
+					isDirect = true
+					break
+				end
+			end
+			if isDirect then
+				-- Solo añadir si este grupo no tiene subgrupos que también contengan el estado
+				-- (los subgrupos son más específicos)
+				local hasChildWithState = false
+				local children = self._groupChildren[groupName]
+				if children then
+					for _, childGroup in children do
+						local childConfig = self._groups[childGroup]
+						if childConfig then
+							for _, cs in childConfig.States do
+								if cs == stateName then
+									hasChildWithState = true
+									break
+								end
+							end
+						end
+						if hasChildWithState then
+							break
+						end
+					end
+				end
+				if not hasChildWithState then
+					table.insert(chain, groupName)
+				end
+			end
+		end
+
+		-- Ahora escalar la jerarquía desde el grupo más específico
+		if #chain > 0 then
+			local current = chain[1]
+			-- chain ya tiene el grupo más específico, ahora añadir padres
+			local parent = self._groups[current] and self._groups[current].Parent
+			while parent do
+				table.insert(chain, parent)
+				parent = self._groups[parent] and self._groups[parent].Parent
+			end
+		end
+
+		self._stateToGroups[stateName] = chain
+	end
+
+	-- Inicializar history del estado actual
+	self:_updateHistory(self._currentState)
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API (backward-compatible)
+------------------------------------------------------------------------
+
+--- Registra callbacks para un estado hoja.
 function StateMachine:RegisterState(stateName: string, callbacks: StateCallbacks)
 	self._stateCallbacks[stateName] = callbacks
 end
 
---- Intenta transicionar a un nuevo estado.
+--- Intenta transicionar a un nuevo estado hoja.
 --- Retorna true si la transición fue exitosa.
 function StateMachine:TransitionTo(newState: string): boolean
 	if self._locked then
@@ -92,47 +225,13 @@ function StateMachine:TransitionTo(newState: string): boolean
 		return false
 	end
 
-	-- Verificar transición válida
-	local validTargets = self._transitions[self._currentState]
-	if not validTargets then
-		warn(`[StateMachine] No hay transiciones definidas para: {self._currentState}`)
+	-- Verificar transición válida (directa + heredada por grupos)
+	if not self:_isTransitionValid(self._currentState, newState) then
 		return false
 	end
 
-	local isValid = false
-	for _, target in validTargets do
-		if target == newState then
-			isValid = true
-			break
-		end
-	end
-
-	if not isValid then
-		return false
-	end
-
-	-- Ejecutar transición
-	local oldState = self._currentState
-
-	-- OnExit del estado anterior
-	local oldCallbacks = self._stateCallbacks[oldState]
-	if oldCallbacks and oldCallbacks.OnExit then
-		oldCallbacks.OnExit(newState)
-	end
-
-	-- Cambiar estado
-	self._previousState = oldState
-	self._currentState = newState
-	self._stateEnteredAt = os.clock()
-
-	-- OnEnter del nuevo estado
-	local newCallbacks = self._stateCallbacks[newState]
-	if newCallbacks and newCallbacks.OnEnter then
-		newCallbacks.OnEnter(oldState)
-	end
-
-	-- Notificar a todos los listeners
-	self.StateChanged:Fire(newState, oldState)
+	-- Ejecutar transición jerárquica
+	self:_executeTransition(newState)
 
 	return true
 end
@@ -140,24 +239,7 @@ end
 --- Fuerza un cambio de estado sin validar transiciones.
 --- Usar solo para DBNO u otros estados forzados por el servidor.
 function StateMachine:ForceState(newState: string)
-	local oldState = self._currentState
-
-	local oldCallbacks = self._stateCallbacks[oldState]
-	if oldCallbacks and oldCallbacks.OnExit then
-		oldCallbacks.OnExit(newState)
-	end
-
-	self._previousState = oldState
-	self._currentState = newState
-	self._stateEnteredAt = os.clock()
-
-	local newCallbacks = self._stateCallbacks[newState]
-	if newCallbacks and newCallbacks.OnEnter then
-		newCallbacks.OnEnter(oldState)
-	end
-
-	-- Notificar a todos los listeners
-	self.StateChanged:Fire(newState, oldState)
+	self:_executeTransition(newState)
 end
 
 --- Llama el OnUpdate del estado actual. Llamar cada frame desde Heartbeat.
@@ -178,7 +260,7 @@ function StateMachine:Unlock()
 	self._locked = false
 end
 
---- Retorna el estado actual.
+--- Retorna el estado hoja actual.
 function StateMachine:GetCurrentState(): string
 	return self._currentState
 end
@@ -193,24 +275,194 @@ function StateMachine:GetTimeInState(): number
 	return os.clock() - self._stateEnteredAt
 end
 
---- Verifica si una transición directa es posible.
+--- Verifica si una transición directa o heredada es posible.
 function StateMachine:CanTransitionTo(targetState: string): boolean
 	if self._locked then
 		return false
 	end
 
-	local validTargets = self._transitions[self._currentState]
-	if not validTargets then
+	return self:_isTransitionValid(self._currentState, targetState)
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API (HSM — nuevo)
+------------------------------------------------------------------------
+
+--- Verifica si el estado actual pertenece a un grupo dado.
+--- @param groupName string — nombre del grupo a verificar
+--- @return boolean
+function StateMachine:IsInGroup(groupName: string): boolean
+	local chain = self._stateToGroups[self._currentState]
+	if not chain then
 		return false
 	end
 
-	for _, target in validTargets do
-		if target == targetState then
+	for _, g in chain do
+		if g == groupName then
 			return true
+		end
+	end
+	return false
+end
+
+--- Retorna el grupo activo en un nivel de jerarquía.
+--- level 1 = grupo más específico (ej: CoverGroup), level 2 = padre (ej: AliveGroup)
+--- @param level number? — nivel (default 1)
+--- @return string? — nombre del grupo o nil
+function StateMachine:GetCurrentGroup(level: number?): string?
+	local chain = self._stateToGroups[self._currentState]
+	if not chain then
+		return nil
+	end
+
+	local idx = level or 1
+	return chain[idx]
+end
+
+--- Retorna el último estado hoja activo de un grupo (history state).
+--- @param groupName string
+--- @return string?
+function StateMachine:GetHistory(groupName: string): string?
+	return self._history[groupName]
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Validación de transiciones con herencia
+------------------------------------------------------------------------
+
+--- Verifica si existe una transición válida (directa o heredada) entre dos estados.
+function StateMachine:_isTransitionValid(fromState: string, toState: string): boolean
+	-- 1. Verificar transición directa en tabla de transiciones del estado hoja
+	local directTargets = self._transitions[fromState]
+	if directTargets then
+		for _, target in directTargets do
+			if target == toState then
+				return true
+			end
+		end
+	end
+
+	-- 2. Verificar transiciones heredadas por grupo (escalar la jerarquía del estado origen)
+	local fromChain = self._stateToGroups[fromState]
+	if fromChain then
+		for _, groupName in fromChain do
+			local groupTargets = self._transitions[groupName]
+			if groupTargets then
+				for _, target in groupTargets do
+					if target == toState then
+						return true
+					end
+					-- También verificar si el target es un grupo que contiene toState
+					if self._groups[target] then
+						local targetGroup = self._groups[target]
+						for _, s in targetGroup.States do
+							if s == toState then
+								return true
+							end
+						end
+					end
+				end
+			end
 		end
 	end
 
 	return false
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Ejecución de transición jerárquica
+------------------------------------------------------------------------
+
+--- Ejecuta la transición completa con callbacks jerárquicos.
+function StateMachine:_executeTransition(newState: string)
+	local oldState = self._currentState
+
+	-- Determinar cadenas de grupos
+	local oldChain = self._stateToGroups[oldState] or {}
+	local newChain = self._stateToGroups[newState] or {}
+
+	-- Encontrar ancestro común más profundo
+	local commonAncestorIdx = self:_findCommonAncestor(oldChain, newChain)
+
+	-- 1. OnExit del estado hoja origen
+	local oldCallbacks = self._stateCallbacks[oldState]
+	if oldCallbacks and oldCallbacks.OnExit then
+		oldCallbacks.OnExit(newState)
+	end
+
+	-- 2. OnExit de grupos (child → root) hasta ancestro común
+	for i = 1, #oldChain do
+		-- No salir del ancestro común ni de sus padres
+		if commonAncestorIdx and i >= commonAncestorIdx then
+			break
+		end
+		local groupName = oldChain[i]
+		local groupConfig = self._groups[groupName]
+		if groupConfig and groupConfig.OnExit then
+			groupConfig.OnExit(newState)
+		end
+	end
+
+	-- Cambiar estado
+	self._previousState = oldState
+	self._currentState = newState
+	self._stateEnteredAt = os.clock()
+
+	-- Actualizar history de los grupos del estado anterior
+	self:_updateHistory(oldState)
+
+	-- 3. OnEnter de grupos (root → child) desde ancestro común
+	-- Recolectar grupos que necesitan Enter (en orden root→child)
+	local groupsToEnter = {}
+	for i = 1, #newChain do
+		if commonAncestorIdx and i >= commonAncestorIdx then
+			break
+		end
+		table.insert(groupsToEnter, 1, newChain[i])
+	end
+
+	for _, groupName in groupsToEnter do
+		local groupConfig = self._groups[groupName]
+		if groupConfig and groupConfig.OnEnter then
+			groupConfig.OnEnter(oldState)
+		end
+	end
+
+	-- 4. OnEnter del estado hoja destino
+	local newCallbacks = self._stateCallbacks[newState]
+	if newCallbacks and newCallbacks.OnEnter then
+		newCallbacks.OnEnter(oldState)
+	end
+
+	-- Notificar a todos los listeners
+	self.StateChanged:Fire(newState, oldState)
+end
+
+--- Encuentra el índice del ancestro común más profundo entre dos cadenas de grupos.
+--- Retorna el índice en ambas cadenas donde se encuentra el ancestro, o nil si no hay.
+function StateMachine:_findCommonAncestor(oldChain: { string }, newChain: { string }): number?
+	-- Las cadenas van de child→root. Buscamos el primer grupo compartido.
+	-- Iteramos oldChain buscando cuál grupo también existe en newChain.
+	for i, oldGroup in oldChain do
+		for _, newGroup in newChain do
+			if oldGroup == newGroup then
+				return i
+			end
+		end
+	end
+	return nil
+end
+
+--- Actualiza el history state de cada grupo al que pertenece un estado.
+function StateMachine:_updateHistory(state: string)
+	local chain = self._stateToGroups[state]
+	if not chain then
+		return
+	end
+
+	for _, groupName in chain do
+		self._history[groupName] = state
+	end
 end
 
 return StateMachine

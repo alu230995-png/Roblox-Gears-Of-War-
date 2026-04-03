@@ -78,6 +78,21 @@ export type InputBinding = {
 }
 
 ------------------------------------------------------------------------
+-- HSM (Hierarchical State Machine)
+------------------------------------------------------------------------
+
+export type StateGroup = {
+	Name: string,
+	Parent: string?,
+	States: { string },
+}
+
+export type HSMCallbacks = {
+	OnEnter: ((fromState: string) -> ())?,
+	OnExit: ((toState: string) -> ())?,
+}
+
+------------------------------------------------------------------------
 -- INPUT SYSTEM (Capas 1-5)
 ------------------------------------------------------------------------
 
@@ -139,6 +154,8 @@ export type EnvironmentContext = {
 ------------------------------------------------------------------------
 
 export type WeaponType = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
+
+export type WeaponState = "WeaponIdle" | "Reloading" | "ActiveReloading" | "WeaponDrawing"
 
 export type WeaponConfig = {
 	Name: string,
