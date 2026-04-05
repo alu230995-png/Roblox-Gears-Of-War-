@@ -70,7 +70,7 @@ stateMachine:BuildGroupHierarchy()
 
 local inputDetector = InputDetector.new()
 local envSensor = EnvironmentSensor.new()
-local intentMapper = IntentMapper.new(inputDetector, envSensor)
+local intentMapper = IntentMapper.new(inputDetector)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
 local movementController = MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer)
@@ -108,16 +108,20 @@ locator:StartAll()
 -- orquestador del pipeline de input (ARQREG 06: un solo Heartbeat).
 
 RunService.Heartbeat:Connect(function(dt: number)
-	-- Paso 1: EnvironmentSensor escanea el entorno
-	local moveDir = inputDetector:GetMoveDirection()
-	envSensor:Update(moveDir)
-
-	-- Paso 2: IntentMapper traduce eventos + polling → intenciones
+	-- Paso 1: IntentMapper traduce eventos + polling → intenciones
 	intentMapper:Update()
 
-	-- Paso 3: InputBuffer almacena intents discretos y limpia expirados
+	-- Paso 2: InputBuffer almacena intents discretos y limpia expirados
 	inputBuffer:PushFromIntents(intentMapper:GetActiveIntents())
 	inputBuffer:CleanExpired()
+
+	-- Paso 3: EnvironmentSensor escanea el entorno (state-driven)
+	-- Solo hace raycasts cuando el estado lo requiere
+	local currentState = stateMachine:GetCurrentState()
+	local coverNormal = movementController:GetCoverHandler():GetNormal()
+	local wantsCoverSearch = inputBuffer:HasIntent("WantsCover")
+	local moveDir = inputDetector:GetMoveDirection()
+	envSensor:Update(currentState, coverNormal, wantsCoverSearch, moveDir)
 
 	-- Paso 4: ActionResolver evalúa intents + estado + env
 	-- Dispara ActionResolved Signal → MovementController reacciona automáticamente

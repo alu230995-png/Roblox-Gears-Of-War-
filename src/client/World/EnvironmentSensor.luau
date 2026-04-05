@@ -1,15 +1,14 @@
 --[[
 	EnvironmentSensor.luau
 	═══════════════════════════════════════════════════════════════
-	Detección de entorno mediante Raycast.
+	Detección de entorno mediante Raycast — State-Driven
 	═══════════════════════════════════════════════════════════════
 	
-	Escanea el entorno cada frame para producir un EnvironmentContext:
-	- ¿Hay cover cerca? ¿Tipo Low/High?
-	- ¿Normal de la pared? ¿Posición?
-	- ¿Cover adyacente a los lados? (swat turn)
-	- ¿Cover bajo adelante? (mantle/vault)
-	- ¿Estoy en una esquina? (peek)
+	Escaneo condicional según el estado del jugador:
+	  - wantsCoverSearch → _searchCover() (ray + sphere fallback)
+	  - RoadieRun        → _scanRoadieRunCover() (forward, rango corto, auto-entry)
+	  - CoverIdle        → _detectCorners() (2 rays laterales)
+	  - Otros estados    → 0 raycasts (solo passthrough de MoveDirection)
 	
 	Los objetos de cover deben tener el tag "CoverObject" de CollectionService
 	o el atributo IsCover = true para ser detectados.
@@ -48,28 +47,16 @@ function EnvironmentSensor.new()
 		self._filterDirty = true
 	end)
 
-	-- Contexto actual (actualizado cada frame)
+	-- Contexto actual (actualizado cada frame según estado)
 	self._context = {
 		HasCoverNearby = false,
 		CoverType = nil,
 		CoverNormal = nil,
 		CoverPosition = nil,
 		CoverInstance = nil,
-		HasAdjacentCoverLeft = false,
-		HasAdjacentCoverRight = false,
-		HasLowCoverAhead = false,
 		IsAtCornerLeft = false,
 		IsAtCornerRight = false,
 		MoveDirection = Vector2.zero,
-		IsFacingCover = false,
-		HasAlignedCoverLeft = false,
-		HasAlignedCoverRight = false,
-		AlignedCoverNormalLeft = nil,
-		AlignedCoverPositionLeft = nil,
-		AlignedCoverInstanceLeft = nil,
-		AlignedCoverNormalRight = nil,
-		AlignedCoverPositionRight = nil,
-		AlignedCoverInstanceRight = nil,
 	}
 
 	return self
@@ -107,31 +94,20 @@ function EnvironmentSensor:GetContext()
 	return self._context
 end
 
---- Actualizar el sensor. Llamar cada frame desde el orquestador.
+--- Actualizar el sensor según el estado actual del jugador.
+--- Solo lanza raycasts cuando el estado lo requiere.
+--- @param state string — estado actual de la StateMachine
+--- @param coverNormal Vector3? — normal de la cover actual (solo en CoverIdle)
+--- @param wantsCoverSearch boolean — true si el buffer tiene WantsCover y el estado lo permite
 --- @param moveDirection Vector2 — dirección de input del jugador
-function EnvironmentSensor:Update(moveDirection: Vector2)
+function EnvironmentSensor:Update(
+	state: string,
+	coverNormal: Vector3?,
+	wantsCoverSearch: boolean,
+	moveDirection: Vector2
+)
 	-- Resetear contexto
-	local ctx = self._context
-	ctx.HasCoverNearby = false
-	ctx.CoverType = nil
-	ctx.CoverNormal = nil
-	ctx.CoverPosition = nil
-	ctx.CoverInstance = nil
-	ctx.HasAdjacentCoverLeft = false
-	ctx.HasAdjacentCoverRight = false
-	ctx.HasLowCoverAhead = false
-	ctx.IsAtCornerLeft = false
-	ctx.IsAtCornerRight = false
-	ctx.MoveDirection = moveDirection
-	ctx.IsFacingCover = false
-	ctx.HasAlignedCoverLeft = false
-	ctx.HasAlignedCoverRight = false
-	ctx.AlignedCoverNormalLeft = nil
-	ctx.AlignedCoverPositionLeft = nil
-	ctx.AlignedCoverInstanceLeft = nil
-	ctx.AlignedCoverNormalRight = nil
-	ctx.AlignedCoverPositionRight = nil
-	ctx.AlignedCoverInstanceRight = nil
+	self:_resetContext(moveDirection)
 
 	-- Obtener character y HumanoidRootPart
 	local character = self._player.Character
@@ -152,158 +128,208 @@ function EnvironmentSensor:Update(moveDirection: Vector2)
 		self._filterFrameCounter = 0
 	end
 
-	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
-	local lookDir = hrp.CFrame.LookVector
-	local rightDir = hrp.CFrame.RightVector
-
-	-- 1) Spherecast frontal: cover directamente adelante
-	-- Spherecast detecta cover de forma más robusta que un Raycast puntual,
-	-- especialmente en ángulos rasantes y bordes de geometría.
-	local frontResult = self:_castSphere(origin, lookDir, Constants.COVER_SCAN_RANGE)
-	if frontResult then
-		local coverPart = frontResult.Instance
-		if self:_isCoverObject(coverPart) then
-			local snNormal, snPosition = self:_snapNormalToFace(coverPart, frontResult.Position, frontResult.Normal)
-			if snNormal then
-				ctx.HasCoverNearby = true
-				ctx.CoverNormal = snNormal
-				ctx.CoverPosition = snPosition
-				ctx.CoverInstance = coverPart
-				ctx.IsFacingCover = true
-
-				-- Determinar tipo de cover (Low/High)
-				local coverHeight = coverPart.Size.Y
-				if coverHeight <= Constants.COVER_HEIGHT_LOW_MAX then
-					ctx.CoverType = "Low"
-					ctx.HasLowCoverAhead = true
-				else
-					ctx.CoverType = "High"
-				end
-			end
-		end
+	-- Rama por estado: solo lanzar raycasts cuando es necesario
+	if wantsCoverSearch then
+		-- Petición de entrada a cover (botón presionado + estado lo permite)
+		self:_searchCover(hrp)
+	elseif state == "RoadieRun" then
+		-- Auto-detección frontal de cover mientras corre (rango corto)
+		self:_scanRoadieRunCover(hrp)
+	elseif (state == "CoverIdle" or state == "CoverWalking") and coverNormal then
+		-- Detectar esquinas para bloqueo lateral
+		self:_detectCorners(hrp, coverNormal)
 	end
-
-	-- 2) Si no encontramos cover frontal, probar diagonal izq/der
-	if not ctx.HasCoverNearby then
-		local angleRad = math.rad(Constants.COVER_MAGNETISM_ANGLE)
-		local leftDir = (lookDir * math.cos(angleRad) - rightDir * math.sin(angleRad)).Unit
-		local rightDirAngled = (lookDir * math.cos(angleRad) + rightDir * math.sin(angleRad)).Unit
-
-		local leftResult = self:_castSphere(origin, leftDir, Constants.COVER_SCAN_RANGE)
-		if leftResult and self:_isCoverObject(leftResult.Instance) then
-			local snNormal, snPosition =
-				self:_snapNormalToFace(leftResult.Instance, leftResult.Position, leftResult.Normal)
-			if snNormal then
-				ctx.HasCoverNearby = true
-				ctx.CoverNormal = snNormal
-				ctx.CoverPosition = snPosition
-				ctx.CoverInstance = leftResult.Instance
-				ctx.CoverType = self:_classifyCover(leftResult.Instance)
-				ctx.IsFacingCover = true
-			end
-		end
-
-		if not ctx.HasCoverNearby then
-			local rightResult = self:_castSphere(origin, rightDirAngled, Constants.COVER_SCAN_RANGE)
-			if rightResult and self:_isCoverObject(rightResult.Instance) then
-				local snNormal, snPosition =
-					self:_snapNormalToFace(rightResult.Instance, rightResult.Position, rightResult.Normal)
-				if snNormal then
-					ctx.HasCoverNearby = true
-					ctx.CoverNormal = snNormal
-					ctx.CoverPosition = snPosition
-					ctx.CoverInstance = rightResult.Instance
-					ctx.CoverType = self:_classifyCover(rightResult.Instance)
-					ctx.IsFacingCover = true
-				end
-			end
-		end
-	end
-
-	-- 3) Detectar cover adyacente (para swat turn) — solo si ya estamos en cover range
-	if ctx.HasCoverNearby then
-		local leftAdj = self:_castRay(origin, -rightDir, Constants.COVER_ADJACENT_SCAN_RANGE)
-		if leftAdj and self:_isCoverObject(leftAdj.Instance) and leftAdj.Instance ~= ctx.CoverInstance then
-			ctx.HasAdjacentCoverLeft = true
-		end
-
-		local rightAdj = self:_castRay(origin, rightDir, Constants.COVER_ADJACENT_SCAN_RANGE)
-		if rightAdj and self:_isCoverObject(rightAdj.Instance) and rightAdj.Instance ~= ctx.CoverInstance then
-			ctx.HasAdjacentCoverRight = true
-		end
-	end
-
-	-- 4) Detectar cover alineada (CoverSwap / wall bounce)
-	-- Raycast lateral ampliado para encontrar covers cuya normal sea ~paralela a la actual.
-	if ctx.HasCoverNearby and ctx.CoverNormal then
-		local wallParallel = ctx.CoverNormal:Cross(Vector3.yAxis).Unit
-		if wallParallel.Magnitude < 0.1 then
-			wallParallel = Vector3.xAxis
-		end
-
-		-- Izquierda: raycast a lo largo de la pared en -wallParallel
-		local leftAligned = self:_castRay(origin, -wallParallel, Constants.COVER_SWAP_MAX_DISTANCE)
-		if leftAligned and self:_isCoverObject(leftAligned.Instance) and leftAligned.Instance ~= ctx.CoverInstance then
-			local snNormal, snPosition =
-				self:_snapNormalToFace(leftAligned.Instance, leftAligned.Position, leftAligned.Normal)
-			if snNormal then
-				local dotNormals = ctx.CoverNormal:Dot(snNormal)
-				if dotNormals >= Constants.COVER_SWAP_ALIGNMENT_DOT then
-					ctx.HasAlignedCoverLeft = true
-					ctx.AlignedCoverNormalLeft = snNormal
-					ctx.AlignedCoverPositionLeft = snPosition
-					ctx.AlignedCoverInstanceLeft = leftAligned.Instance
-				end
-			end
-		end
-
-		-- Derecha: raycast a lo largo de la pared en +wallParallel
-		local rightAligned = self:_castRay(origin, wallParallel, Constants.COVER_SWAP_MAX_DISTANCE)
-		if
-			rightAligned
-			and self:_isCoverObject(rightAligned.Instance)
-			and rightAligned.Instance ~= ctx.CoverInstance
-		then
-			local snNormal, snPosition =
-				self:_snapNormalToFace(rightAligned.Instance, rightAligned.Position, rightAligned.Normal)
-			if snNormal then
-				local dotNormals = ctx.CoverNormal:Dot(snNormal)
-				if dotNormals >= Constants.COVER_SWAP_ALIGNMENT_DOT then
-					ctx.HasAlignedCoverRight = true
-					ctx.AlignedCoverNormalRight = snNormal
-					ctx.AlignedCoverPositionRight = snPosition
-					ctx.AlignedCoverInstanceRight = rightAligned.Instance
-				end
-			end
-		end
-	end
-
-	-- 5) Detectar esquinas (peek corners)
-	-- Si el raycast lateral NO golpea nada → estamos al borde de la pared → esquina
-	if ctx.HasCoverNearby and ctx.CoverNormal then
-		-- Calcular dirección paralela a la pared
-		local wallParallel = ctx.CoverNormal:Cross(Vector3.yAxis).Unit
-		if wallParallel.Magnitude < 0.1 then
-			wallParallel = Vector3.xAxis
-		end
-
-		-- Raycast a lo largo de la pared en ambas direcciones
-		local cornerRange = Constants.COVER_CORNER_DETECTION_RANGE
-		local leftCorner = self:_castRay(origin, -wallParallel, cornerRange)
-		local rightCorner = self:_castRay(origin, wallParallel, cornerRange)
-
-		-- Si NO hay pared en esa dirección → es una esquina
-		if not leftCorner or not self:_isCoverObject(leftCorner.Instance) then
-			ctx.IsAtCornerLeft = true
-		end
-		if not rightCorner or not self:_isCoverObject(rightCorner.Instance) then
-			ctx.IsAtCornerRight = true
-		end
-	end
+	-- Otros estados: 0 raycasts, contexto vacío
 end
 
 ------------------------------------------------------------------------
--- INTERNAL
+-- INTERNAL: Scan Methods
+------------------------------------------------------------------------
+
+--- Búsqueda on-demand de cover cercana (petición del jugador).
+--- Dirección: moveDirection si hay input, sino lookVector del rootpart.
+--- Método: ray primero, spherecast como fallback.
+function EnvironmentSensor:_searchCover(hrp: BasePart)
+	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
+
+	-- Dirección de búsqueda: input del jugador o look vector
+	local humanoid = hrp.Parent and hrp.Parent:FindFirstChild("Humanoid") :: Humanoid?
+	local searchDir: Vector3
+	if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+		searchDir = humanoid.MoveDirection
+	else
+		searchDir = hrp.CFrame.LookVector
+	end
+
+	-- Aplanar al plano horizontal
+	local flatDir = Vector3.new(searchDir.X, 0, searchDir.Z)
+	if flatDir.Magnitude < 0.001 then
+		return
+	end
+	flatDir = flatDir.Unit
+
+	-- Intento 1: Raycast preciso
+	local rayResult = self:_castRay(origin, flatDir, Constants.COVER_SCAN_RANGE)
+	if rayResult and self:_isCoverObject(rayResult.Instance) then
+		if self:_populateCoverContext(rayResult) then
+			return
+		end
+	end
+
+	-- Intento 2: Spherecast (más tolerante en bordes y ángulos rasantes)
+	local sphereResult = self:_castSphere(origin, flatDir, Constants.COVER_SCAN_RANGE)
+	if sphereResult and self:_isCoverObject(sphereResult.Instance) then
+		self:_populateCoverContext(sphereResult)
+	end
+end
+
+--- Escaneo per-frame durante RoadieRun. Dirección: lookVector.
+--- Rango corto (COVER_AUTO_DETECT_DIST) porque auto-entra sin botón.
+function EnvironmentSensor:_scanRoadieRunCover(hrp: BasePart)
+	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
+	local lookDir = hrp.CFrame.LookVector
+
+	-- Intento 1: Raycast preciso a rango corto
+	local rayResult = self:_castRay(origin, lookDir, Constants.COVER_AUTO_DETECT_DIST)
+	if rayResult and self:_isCoverObject(rayResult.Instance) then
+		if self:_populateCoverContext(rayResult) then
+			return
+		end
+	end
+
+	-- Intento 2: Spherecast a rango corto
+	local sphereResult = self:_castSphere(origin, lookDir, Constants.COVER_AUTO_DETECT_DIST)
+	if sphereResult and self:_isCoverObject(sphereResult.Instance) then
+		self:_populateCoverContext(sphereResult)
+	end
+end
+
+function EnvironmentSensor:_detectCorners(hrp: BasePart, coverNormal: Vector3)
+	-- Origen base (posición del jugador + offset vertical al torso)
+	local playerOrigin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
+	local ctx = self._context
+
+	-- Vector paralelo a la pared: Up × N = apunta a la DERECHA del jugador
+	-- (coverNormal:Cross(yAxis) apuntaba a la IZQUIERDA — bug de inversión)
+	local wallParallel = Vector3.yAxis:Cross(coverNormal)
+	if wallParallel.Magnitude < 0.1 then
+		wallParallel = Vector3.xAxis
+	else
+		wallParallel = wallParallel.Unit
+	end
+
+	-- Distancia lateral a la que queremos revisar si hay esquina
+	local cornerRange = Constants.COVER_CORNER_DETECTION_RANGE
+
+	-- La distancia del rayo hacia la pared. Le sumamos 1 stud extra para
+	-- asegurar que golpee la pared sin importar pequeñas irregularidades.
+	local rayDistanceToWall = Constants.COVER_OFFSET + 1
+
+	-- ==========================================
+	-- SENSOR IZQUIERDO
+	-- ==========================================
+	-- Movemos el origen hacia la izquierda del jugador
+	local leftOrigin = playerOrigin + (-wallParallel * cornerRange)
+
+	-- Lanzamos el rayo HACIA LA PARED (-coverNormal)
+	local leftResult = self:_castRay(leftOrigin, -coverNormal, rayDistanceToWall)
+
+	-- Si NO golpea nada, o si lo que golpea no es cobertura -> ES UNA ESQUINA
+	ctx.IsAtCornerLeft = not leftResult or not self:_isCoverObject(leftResult.Instance)
+
+	-- ==========================================
+	-- SENSOR DERECHO
+	-- ==========================================
+	-- Movemos el origen hacia la derecha del jugador
+	local rightOrigin = playerOrigin + (wallParallel * cornerRange)
+
+	-- Lanzamos el rayo HACIA LA PARED (-coverNormal)
+	local rightResult = self:_castRay(rightOrigin, -coverNormal, rayDistanceToWall)
+
+	ctx.IsAtCornerRight = not rightResult or not self:_isCoverObject(rightResult.Instance)
+end
+
+--- Chequea si hay una esquina interna (pared perpendicular) en la dirección de movimiento.
+--- Llamado por InCover durante CoverWalking — solo dispara si hay movimiento significativo.
+---
+--- @param hrp BasePart — HumanoidRootPart
+--- @param currentNormal Vector3 — normal actual de la cover
+--- @param wallParallel Vector3 — vector paralelo a la pared (Unit)
+--- @param movementScale number — dot product del movimiento sobre wallParallel
+--- @return Vector3? newNormal — normal snapeada de la nueva pared (nil si no hay transición)
+--- @return Vector3? newPosition — posición snapeada en la nueva pared
+--- @return BasePart? newInstance — la nueva instancia de cover
+function EnvironmentSensor:CheckInnerCorner(
+	hrp: BasePart,
+	currentNormal: Vector3,
+	wallParallel: Vector3,
+	movementScale: number
+): (Vector3?, Vector3?, BasePart?)
+	if math.abs(movementScale) < 0.1 then
+		return nil, nil, nil
+	end
+
+	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
+	local rayDirection = wallParallel * math.sign(movementScale)
+	local checkDistance = Constants.COVER_TRANSITION_TRIGGER_DIST
+
+	local rayResult = self:_castRay(origin, rayDirection, checkDistance)
+	if not rayResult or not self:_isCoverObject(rayResult.Instance) then
+		return nil, nil, nil
+	end
+
+	-- Verificar que sea un ángulo significativo (dot < 0.5 ≈ >60°)
+	local newNormal, newPosition =
+		self:_snapNormalToFace(rayResult.Instance, rayResult.Position, rayResult.Normal)
+	if not newNormal then
+		return nil, nil, nil
+	end
+
+	-- Si las normales son muy similares (misma pared), no es transición
+	if math.abs(currentNormal:Dot(newNormal)) > Constants.COVER_TRANSITION_DOT_THRESHOLD then
+		return nil, nil, nil
+	end
+
+	return newNormal, newPosition, rayResult.Instance
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Helpers
+------------------------------------------------------------------------
+
+--- Valida un RaycastResult y popula el contexto con datos de cover.
+--- @return boolean — true si se pobló exitosamente
+function EnvironmentSensor:_populateCoverContext(result: RaycastResult): boolean
+	local coverPart = result.Instance
+	local snNormal, snPosition = self:_snapNormalToFace(coverPart, result.Position, result.Normal)
+	if not snNormal then
+		return false
+	end
+
+	local ctx = self._context
+	ctx.HasCoverNearby = true
+	ctx.CoverNormal = snNormal
+	ctx.CoverPosition = snPosition
+	ctx.CoverInstance = coverPart
+	ctx.CoverType = self:_classifyCover(coverPart)
+	return true
+end
+
+--- Resetea todos los campos del contexto al inicio de cada frame.
+function EnvironmentSensor:_resetContext(moveDirection: Vector2)
+	local ctx = self._context
+	ctx.HasCoverNearby = false
+	ctx.CoverType = nil
+	ctx.CoverNormal = nil
+	ctx.CoverPosition = nil
+	ctx.CoverInstance = nil
+	ctx.IsAtCornerLeft = false
+	ctx.IsAtCornerRight = false
+	ctx.MoveDirection = moveDirection
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Raycast Infrastructure
 ------------------------------------------------------------------------
 
 --- Convierte la normal cruda del raycast a una normal pura snappada al eje

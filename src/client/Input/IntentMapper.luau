@@ -34,11 +34,10 @@
 local IntentMapper = {}
 IntentMapper.__index = IntentMapper
 
-function IntentMapper.new(inputDetector, environmentSensor)
+function IntentMapper.new(inputDetector)
 	local self = setmetatable({}, IntentMapper)
 
 	self._inputDetector = inputDetector
-	self._envSensor = environmentSensor
 
 	-- Intenciones activas este frame: { [intentName] = { active, data } }
 	self._activeIntents = {}
@@ -76,14 +75,13 @@ function IntentMapper:Update(): { [string]: { Active: boolean, Data: any? } }
 
 	-- 1) Procesar eventos discretos del InputDetector
 	local events = self._inputDetector:DrainEvents()
-	local env = self._envSensor:GetContext()
 
 	for _, event in events do
-		self:_processEvent(event, env)
+		self:_processEvent(event)
 	end
 
 	-- 2) Evaluar estados continuos (polling)
-	self:_processContinuousState(env)
+	self:_processContinuousState()
 
 	return self._activeIntents
 end
@@ -112,22 +110,20 @@ end
 -- INTERNAL: Procesar un evento discreto
 ------------------------------------------------------------------------
 
-function IntentMapper:_processEvent(event, env)
+function IntentMapper:_processEvent(event)
 	local name = event.Name
 	local mode = event.Mode
 
 	-- CoverButton (Space / A) — el corazón contexto-sensitivo de GoW
 	if name == "CoverButton" then
 		if mode == "Tap" then
-			if env.HasCoverNearby then
-				-- ¿Es cover bajo y estamos moviendos hacia él? → WantsMantle (vault)
-				if env.CoverType == "Low" and env.HasLowCoverAhead and env.MoveDirection.Y > 0.5 then
-					self:_setIntent("WantsMantle", true)
-				else
-					self:_setIntent("WantsCover", true)
-				end
-			else
-				self:_setIntent("WantsEvade", true)
+			-- Siempre generar WantsCover. ActionResolver decide cover vs evade
+			-- según si EnvironmentSensor encontró cover o no.
+			self:_setIntent("WantsCover", true)
+			-- Si el jugador se mueve hacia adelante, también generar WantsMantle
+			local moveDir = self._inputDetector:GetMoveDirection()
+			if moveDir.Y > 0.3 then
+				self:_setIntent("WantsMantle", true)
 			end
 		elseif mode == "HoldStart" then
 			-- Hold = RoadieRun
@@ -214,7 +210,7 @@ end
 -- INTERNAL: Estado continuo (polling cada frame)
 ------------------------------------------------------------------------
 
-function IntentMapper:_processContinuousState(env)
+function IntentMapper:_processContinuousState()
 	local detector = self._inputDetector
 	local moveDir = detector:GetMoveDirection()
 

@@ -9,7 +9,7 @@
 	  - RollOutOfCover: igual que Evade pero dirección = coverNormal opuesta
 	  - Mantle: Lock SM → timer de animación → Unlock → Idle
 	
-	Necesita referencia a CoverHandler para:
+	Necesita referencia a CoverMain para:
 	  - RollOutOfCover: leer GetNormal() como dirección de salida
 	  - Mantle/Vault: limpiar cover state via ResetCover()
 ]]

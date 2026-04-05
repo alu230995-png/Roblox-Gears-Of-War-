@@ -14,6 +14,21 @@ local Players = game:GetService("Players")
 local RotationHandler = {}
 RotationHandler.__index = RotationHandler
 
+--- Estados en los que la rotación está controlada por el cover snap / normal.
+--- El input del jugador NO debe rotar al personaje en estos estados.
+local COVER_LOCKED_STATES: { [string]: boolean } = {
+	Evading = true,
+	CoverEntering = true,
+	CoverSlide = true,
+	CoverIdle = true,
+	CoverWalking = true,
+	CoverRunning = true,
+	CoverCorners = true,
+	CoverBlindFire = true,
+	CoverExiting = true,
+	CoverSwap = true,
+}
+
 function RotationHandler.new()
 	local self = setmetatable({}, RotationHandler)
 	self._player = Players.LocalPlayer
@@ -36,8 +51,9 @@ function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?
 		return
 	end
 
-	-- En cover: rotación la gestiona el cover snap
-	if (state == "CoverIdle" or state == "CoverBlindFire") and coverNormal then
+	-- En estados de cover: rotación la gestiona el cover snap / handler
+	-- No aplicar rotación por input — el personaje solo mira hacia la normal
+	if COVER_LOCKED_STATES[state] then
 		return
 	end
 

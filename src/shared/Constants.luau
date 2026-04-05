@@ -64,8 +64,6 @@ Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
 ------------------------------------------------------------------------
 -- Velocidad del snap magnético hacia la pared (studs/seg)
 Constants.COVER_SNAP_SPEED = 24
--- Ángulo de magnetismo (grados) — cono frente al jugador
-Constants.COVER_MAGNETISM_ANGLE = 45
 -- Velocidad al salir de cover
 Constants.COVER_EXIT_SPEED = 10
 -- Altura mínima de cover (studs) — si es menor, se puede mantlear
@@ -78,6 +76,12 @@ Constants.COVER_OFFSET = 1.8
 Constants.COVER_CORNER_MARGIN = 1.4
 -- Tolerancia horizontal para considerar que el snap completó (studs)
 Constants.COVER_COMPLETION_XZ = 0.15
+-- Velocidad lateral en cover walking (studs/seg) — movimiento sobre el Tangent rail
+Constants.COVER_WALK_SPEED = 15
+-- Distancia máxima pared↔jugador antes de corrección de posición (studs)
+-- Wall-glue: si el motor de física empuja al personaje más allá de este umbral,
+-- se fuerza la posición de vuelta al plano de la pared.
+Constants.COVER_GLUE_MAX_DIST = 0.3
 -- Velocidad mínima al final del ease-out (fracción del max, 0..1)
 -- Evita que el personaje se arrastre los últimos studs
 Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.8
@@ -91,6 +95,14 @@ Constants.COVER_STUCK_TIMEOUT = 1.8
 Constants.COVER_AUTO_DETECT_DIST = 3.0
 -- Radio del spherecast de detección de cover (studs)
 Constants.COVER_SPHERECAST_RADIUS = 0.2
+
+------------------------------------------------------------------------
+-- COVER TRANSITION (cambio de riel en esquinas internas)
+------------------------------------------------------------------------
+-- Distancia del ray lateral para disparar la transición inner (studs)
+Constants.COVER_TRANSITION_TRIGGER_DIST = 1.5
+-- Umbral de |dot(N_old, N_new)| para considerar paredes perpendiculares
+Constants.COVER_TRANSITION_DOT_THRESHOLD = 0.5
 
 ------------------------------------------------------------------------
 -- EVADE / ROLL
@@ -186,8 +198,6 @@ Constants.BUFFER_TTL_DEFAULT = 0.1
 Constants.COVER_SCAN_RANGE = 30
 -- Altura máxima de cover bajo — vault-able (studs)
 Constants.COVER_HEIGHT_LOW_MAX = 3.5
--- Rango para detectar cover adyacente (swat turn)
-Constants.COVER_ADJACENT_SCAN_RANGE = 5.0
 -- Offset vertical del raycast desde HumanoidRootPart (ligero offset hacia torso)
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 -- Cantidad de rayos laterales para detección de esquinas
@@ -203,15 +213,8 @@ Constants.COVER_CORNER_PUSH_IN = 1.0
 
 -- Dot product threshold para cancelar CoverEntering con movimiento trasero.
 -- Valor positivo = jugador alejándose de la cover (moveDir · coverNormal > umbral).
-Constants.COVER_ENTRY_CANCEL_DOT = 0.8
--- Distancia máxima de raycasts laterales para detectar cover alineada (studs).
-Constants.COVER_SWAP_MAX_DISTANCE = 8.0
--- Dot mínimo entre normals de dos covers para considerarlas alineadas.
--- 0.7 ≈ hasta ~45° de diferencia angular.
-Constants.COVER_SWAP_ALIGNMENT_DOT = 0.7
+Constants.COVER_ENTRY_CANCEL_DOT = 0.85
 -- Duración de la animación de salida de cover (segundos).
 Constants.COVER_EXIT_DURATION = 0.25
--- Duración de la animación de CoverSwap entre covers (segundos).
-Constants.COVER_SWAP_DURATION = 0.4
 
 return Constants

@@ -5,7 +5,7 @@
 	═══════════════════════════════════════════════════════════════
 	
 	Recibe la acción resuelta por ActionResolver y la delega al
-	sub-handler correspondiente (CoverHandler, EvadeHandler).
+	sub-handler correspondiente (CoverMain, EvadeHandler).
 	Gestiona:
 	  - Delegación de acciones a sub-handlers
 	  - RoadieRun velocity (AssemblyLinearVelocity directa)
@@ -22,7 +22,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 
 -- Sub-handlers (siblings en el mismo folder Movement/)
-local CoverHandler = require(script.Parent.CoverHandler)
+local CoverMain = require(script.Parent.Cover)
 local EvadeHandler = require(script.Parent.EvadeHandler)
 local RotationHandler = require(script.Parent.RotationHandler)
 local SpeedMap = require(script.Parent.SpeedMap)
@@ -40,7 +40,7 @@ function MovementController.new(stateMachine, actionResolver, environmentSensor,
 	self._player = Players.LocalPlayer
 
 	-- Sub-handlers
-	self._coverHandler = CoverHandler.new(stateMachine)
+	self._coverHandler = CoverMain.new(stateMachine, environmentSensor)
 	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
 	self._rotationHandler = RotationHandler.new()
 
@@ -146,7 +146,7 @@ end
 -- PUBLIC: Sub-handler access (para Camera/Animation futuros)
 ------------------------------------------------------------------------
 
---- Retorna el CoverHandler para que otros sistemas lean estado de cover.
+--- Retorna el CoverMain para que otros sistemas lean estado de cover.
 function MovementController:GetCoverHandler()
 	return self._coverHandler
 end

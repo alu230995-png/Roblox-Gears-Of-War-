@@ -80,24 +80,28 @@ local FREE_STATE_RULES = {
 	{
 		id = "Mantle",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsMantle") and ctx.Env.HasLowCoverAhead and ctx.Env.HasCoverNearby
+	return ctx.Buffer:HasIntent("WantsMantle") and ctx.Env.HasCoverNearby and ctx.Env.CoverType == "Low"
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsMantle")
-			return "Mantle", "Mantling", nil
+	ctx.Buffer:Consume("WantsMantle")
+	ctx.Buffer:Consume("WantsCover")
+	return "Mantle", "Mantling", nil
 		end,
 	},
 
-	-- Prio 3: Evade / Roll
+	-- Prio 3: Evade / Roll (también se activa con WantsCover si no hay cover cerca)
 	{
 		id = "Evade",
 		check = function(resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsEvade") and ctx.StateConfig.canEvade and isEvadeCooldownMet(resolver)
+	local wantsEvade = ctx.Buffer:HasIntent("WantsEvade")
+	local coverFallback = ctx.Buffer:HasIntent("WantsCover") and not ctx.Env.HasCoverNearby
+	return (wantsEvade or coverFallback) and ctx.StateConfig.canEvade and isEvadeCooldownMet(resolver)
 		end,
 		execute = function(resolver, ctx)
-			resolver._evadeStartTime = os.clock()
-			ctx.Buffer:Consume("WantsEvade")
-			return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
+	resolver._evadeStartTime = os.clock()
+	ctx.Buffer:Consume("WantsEvade")
+	ctx.Buffer:Consume("WantsCover")
+	return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
 		end,
 	},
 
@@ -105,12 +109,12 @@ local FREE_STATE_RULES = {
 	{
 		id = "StartRoadieRun",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsRoadieRun")
-				and ctx.StateConfig.canSprint
-				and (ctx.State == "Idle" or ctx.State == "Walking")
+	return ctx.Intents:HasIntent("WantsRoadieRun")
+		and ctx.StateConfig.canSprint
+		and (ctx.State == "Idle" or ctx.State == "Walking")
 		end,
 		execute = function()
-			return "StartRoadieRun", "RoadieRun", nil
+	return "StartRoadieRun", "RoadieRun", nil
 		end,
 	},
 
@@ -118,12 +122,12 @@ local FREE_STATE_RULES = {
 	{
 		id = "StartAim",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsAim")
-				and ctx.StateConfig.canShoot
-				and (ctx.State == "Idle" or ctx.State == "Walking")
+	return ctx.Intents:HasIntent("WantsAim")
+		and ctx.StateConfig.canShoot
+		and (ctx.State == "Idle" or ctx.State == "Walking")
 		end,
 		execute = function()
-			return "StartAim", "Aiming", nil
+	return "StartAim", "Aiming", nil
 		end,
 	},
 
@@ -131,10 +135,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "StopAim",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsStopAim") and ctx.State == "Aiming"
+	return ctx.Intents:HasIntent("WantsStopAim") and ctx.State == "Aiming"
 		end,
 		execute = function()
-			return "StopAim", "Idle", nil
+	return "StopAim", "Idle", nil
 		end,
 	},
 
@@ -142,10 +146,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "Shoot",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsShoot") and ctx.StateConfig.canShoot and ctx.State == "Aiming"
+	return ctx.Intents:HasIntent("WantsShoot") and ctx.StateConfig.canShoot and ctx.State == "Aiming"
 		end,
 		execute = function()
-			return "Shoot", "Firing", nil
+	return "Shoot", "Firing", nil
 		end,
 	},
 
@@ -153,10 +157,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "StopShoot",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsStopShoot") and ctx.State == "Firing"
+	return ctx.Intents:HasIntent("WantsStopShoot") and ctx.State == "Firing"
 		end,
 		execute = function()
-			return "StopShoot", "Aiming", nil
+	return "StopShoot", "Aiming", nil
 		end,
 	},
 
@@ -164,17 +168,17 @@ local FREE_STATE_RULES = {
 	{
 		id = "Reload",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsReload")
+	return ctx.Buffer:HasIntent("WantsReload")
 		end,
 		execute = function(_resolver, ctx)
-			if ctx.State == "Reloading" then
-				ctx.Buffer:Consume("WantsReload")
-				return "ActiveReload", "ActiveReloading", nil
-			elseif ctx.StateConfig.canMove then
-				ctx.Buffer:Consume("WantsReload")
-				return "Reload", "Reloading", nil
-			end
-			return "NoAction", nil, nil
+	if ctx.State == "Reloading" then
+		ctx.Buffer:Consume("WantsReload")
+		return "ActiveReload", "ActiveReloading", nil
+	elseif ctx.StateConfig.canMove then
+		ctx.Buffer:Consume("WantsReload")
+		return "Reload", "Reloading", nil
+	end
+	return "NoAction", nil, nil
 		end,
 	},
 
@@ -182,11 +186,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Melee",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsMelee")
+	return ctx.Buffer:HasIntent("WantsMelee")
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsMelee")
-			return "Melee", nil, nil
+	ctx.Buffer:Consume("WantsMelee")
+	return "Melee", nil, nil
 		end,
 	},
 
@@ -194,11 +198,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Chainsaw",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsChainsaw")
+	return ctx.Buffer:HasIntent("WantsChainsaw")
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsChainsaw")
-			return "Chainsaw", nil, nil
+	ctx.Buffer:Consume("WantsChainsaw")
+	return "Chainsaw", nil, nil
 		end,
 	},
 
@@ -206,11 +210,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Interact",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsInteract")
+	return ctx.Buffer:HasIntent("WantsInteract")
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsInteract")
-			return "Interact", nil, nil
+	ctx.Buffer:Consume("WantsInteract")
+	return "Interact", nil, nil
 		end,
 	},
 
@@ -218,11 +222,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "SwapWeapon",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsSwapWeapon")
+	return ctx.Buffer:HasIntent("WantsSwapWeapon")
 		end,
 		execute = function(_resolver, ctx)
-			local _, swapData = ctx.Buffer:Consume("WantsSwapWeapon")
-			return "SwapWeapon", nil, { slot = swapData }
+	local _, swapData = ctx.Buffer:Consume("WantsSwapWeapon")
+	return "SwapWeapon", nil, { slot = swapData }
 		end,
 	},
 
@@ -230,33 +234,43 @@ local FREE_STATE_RULES = {
 	{
 		id = "Movement",
 		check = function()
-			return true -- Siempre se evalúa como fallback
+	return true -- Siempre se evalúa como fallback
 		end,
 		execute = function(_resolver, ctx)
-			if ctx.HasMovement then
-				if ctx.State == "Idle" then
-					return "StartWalking", "Walking", nil
-				end
-			else
-				if ctx.State == "Walking" then
-					return "StopWalking", "Idle", nil
-				end
-			end
-			return "NoAction", nil, nil
+	if ctx.HasMovement then
+		if ctx.State == "Idle" then
+			return "StartWalking", "Walking", nil
+		end
+	else
+		if ctx.State == "Walking" then
+			return "StopWalking", "Idle", nil
+		end
+	end
+	return "NoAction", nil, nil
 		end,
 	},
 }
 
 --- ROADIE RUN RULES
 local ROADIE_RUN_RULES = {
-	-- Prio 1: Cover durante roadie run → CoverSlide (la más rápida del juego)
+	-- Prio 1: Auto-mantle (cover bajo detectado al frente → vault automático)
+	{
+		id = "AutoMantle",
+		check = function(_resolver, ctx)
+			return ctx.Env.HasCoverNearby and ctx.Env.CoverType == "Low"
+		end,
+		execute = function()
+			return "Mantle", "Mantling", nil
+		end,
+	},
+
+	-- Prio 2: Auto-entry cover (cover alto detectado al frente → CoverSlide sin botón)
 	{
 		id = "SlideIntoCover",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsCover") and ctx.Env.HasCoverNearby
+			return ctx.Env.HasCoverNearby
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover")
 			return "SlideIntoCover",
 				"CoverSlide",
 				{
@@ -268,41 +282,18 @@ local ROADIE_RUN_RULES = {
 		end,
 	},
 
-	-- Prio 2a: Mantle con input explícito
-	{
-		id = "MantleExplicit",
-		check = function(_resolver, ctx)
-			return ctx.Env.HasLowCoverAhead and ctx.Env.HasCoverNearby and ctx.Buffer:HasIntent("WantsMantle")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsMantle")
-			return "Mantle", "Mantling", nil
-		end,
-	},
-
-	-- Prio 2b: Auto-mantle (corriendo directo a cover bajo)
-	{
-		id = "AutoMantle",
-		check = function(_resolver, ctx)
-			return ctx.Env.HasLowCoverAhead
-				and ctx.Env.HasCoverNearby
-				and ctx.Env.MoveDirection.Y > 0.5
-				and ctx.Env.IsFacingCover
-		end,
-		execute = function()
-			return "Mantle", "Mantling", nil
-		end,
-	},
-
-	-- Prio 3: Evade durante roadie run
+	-- Prio 3: Evade durante roadie run (también con WantsCover fallback)
 	{
 		id = "EvadeRoadie",
 		check = function(resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsEvade") and isEvadeCooldownMet(resolver)
+			local wantsEvade = ctx.Buffer:HasIntent("WantsEvade")
+			local coverFallback = ctx.Buffer:HasIntent("WantsCover") and not ctx.Env.HasCoverNearby
+			return (wantsEvade or coverFallback) and isEvadeCooldownMet(resolver)
 		end,
 		execute = function(resolver, ctx)
 			resolver._evadeStartTime = os.clock()
 			ctx.Buffer:Consume("WantsEvade")
+			ctx.Buffer:Consume("WantsCover")
 			return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
 		end,
 	},
@@ -399,29 +390,7 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 4a: CoverSwap Left (aligned cover)
-	{
-		id = "CoverSwapLeft",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveLeft") and ctx.Env.HasAlignedCoverLeft and ctx.Env.IsAtCornerLeft
-		end,
-		execute = function(_resolver, ctx)
-			return "CoverSwap", "CoverSwap", { direction = "Left", envContext = ctx.Env }
-		end,
-	},
-
-	-- Prio 4b: CoverSwap Right (aligned cover)
-	{
-		id = "CoverSwapRight",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveRight") and ctx.Env.HasAlignedCoverRight and ctx.Env.IsAtCornerRight
-		end,
-		execute = function(_resolver, ctx)
-			return "CoverSwap", "CoverSwap", { direction = "Right", envContext = ctx.Env }
-		end,
-	},
-
-	-- Prio 5: Aim (pop-up / peek)
+	-- Prio 4: Aim (pop-up / peek)
 	{
 		id = "PopUpAim",
 		check = function(_resolver, ctx)
@@ -432,7 +401,7 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 6: Blind Fire (explicit)
+	-- Prio 5: Blind Fire (explicit)
 	{
 		id = "BlindFire",
 		check = function(_resolver, ctx)
@@ -443,7 +412,7 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 7: Shoot sin aim (= blind fire)
+	-- Prio 6: Shoot sin aim (= blind fire)
 	{
 		id = "ShootAsBlindFire",
 		check = function(_resolver, ctx)
@@ -454,7 +423,7 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 8: Reload en cover
+	-- Prio 7: Reload en cover
 	{
 		id = "ReloadInCover",
 		check = function(_resolver, ctx)
@@ -466,47 +435,15 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 9a: Slide lateral izquierda
+	-- Prio 8: Start CoverWalking (cualquier input de movimiento)
+	-- La proyección Dot en UpdateWalking filtra según la dirección real de la cámara.
 	{
-		id = "CoverSlideLeft",
+		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveLeft") and not ctx.Env.IsAtCornerLeft
+			return hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-			return "CoverSlideLeft", nil, nil
-		end,
-	},
-
-	-- Prio 9b: Slide lateral derecha
-	{
-		id = "CoverSlideRight",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveRight") and not ctx.Env.IsAtCornerRight
-		end,
-		execute = function()
-			return "CoverSlideRight", nil, nil
-		end,
-	},
-
-	-- Prio 10a: Peek esquina izquierda
-	{
-		id = "PeekCornerLeft",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveLeft") and ctx.Env.IsAtCornerLeft
-		end,
-		execute = function()
-			return "PeekCornerLeft", nil, nil
-		end,
-	},
-
-	-- Prio 10b: Peek esquina derecha
-	{
-		id = "PeekCornerRight",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsMoveRight") and ctx.Env.IsAtCornerRight
-		end,
-		execute = function()
-			return "PeekCornerRight", nil, nil
+			return "StartCoverWalking", "CoverWalking", nil
 		end,
 	},
 }
@@ -524,14 +461,113 @@ local DBNO_RULES = {
 	},
 }
 
+--- COVER WALKING RULES (movimiento lateral activo sobre la pared)
+--- Transiciones disponibles mientras el jugador se desplaza en cover.
+local COVER_WALKING_RULES = {
+	-- Prio 1: Exit cover
+	{
+		id = "ExitCover",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsExitCover")
+			return "ExitCover", "CoverExiting", nil
+		end,
+	},
+
+	-- Prio 2: Roll out of cover
+	{
+		id = "RollOutOfCover",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsEvade")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsEvade")
+			return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
+		end,
+	},
+
+	-- Prio 3: Vault (cover bajo + forward + cover/mantle button)
+	{
+		id = "Vault",
+		check = function(_resolver, ctx)
+			return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
+				and ctx.Env.CoverType == "Low"
+				and ctx.Env.MoveDirection.Y > 0.3
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover")
+			ctx.Buffer:Consume("WantsMantle")
+			return "Vault", "Mantling", nil
+		end,
+	},
+
+	-- Prio 4: Aim (pop-up / peek)
+	{
+		id = "PopUpAim",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsAim")
+		end,
+		execute = function()
+			return "PopUpAim", "CoverAim", nil
+		end,
+	},
+
+	-- Prio 5: Blind Fire
+	{
+		id = "BlindFire",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsBlindFire")
+				or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
+		end,
+		execute = function()
+			return "BlindFire", "CoverBlindFire", nil
+		end,
+	},
+
+	-- Prio 6: Reload en cover
+	{
+		id = "ReloadInCover",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsReload")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsReload")
+			return "Reload", "Reloading", nil
+		end,
+	},
+
+	-- Prio 7: Stop CoverWalking → CoverIdle (sin ningún input de movimiento)
+	{
+		id = "StopCoverWalking",
+		check = function(_resolver, ctx)
+			return not hasMovementIntent(ctx.Intents)
+		end,
+		execute = function()
+			return "StopCoverWalking", "CoverIdle", nil
+		end,
+	},
+
+	-- Prio 8: Start CoverRunning (sprint intent mientras camina en cover)
+	{
+		id = "StartCoverRunning",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsRoadieRun")
+		end,
+		execute = function()
+			return "StartCoverRunning", "CoverRunning", nil
+		end,
+	},
+}
+
 --- Mapa de sub-estado de cover → rule table correspondiente
---- Los nuevos estados de cover (CoverWalking, CoverRunning, CoverCorners)
---- usan COVER_IDLE_RULES como fallback hasta que tengan reglas propias.
+--- Los nuevos estados de cover (CoverCorners) usan COVER_IDLE_RULES como fallback.
 local COVER_SUB_RULES = {
 	CoverAim = COVER_AIM_RULES,
 	CoverBlindFire = COVER_BLINDFIRE_RULES,
 	CoverIdle = COVER_IDLE_RULES,
-	CoverWalking = COVER_IDLE_RULES,
+	CoverWalking = COVER_WALKING_RULES,
 	CoverRunning = COVER_IDLE_RULES,
 	CoverCorners = COVER_IDLE_RULES,
 }

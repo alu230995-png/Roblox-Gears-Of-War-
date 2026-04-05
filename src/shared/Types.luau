@@ -149,22 +149,9 @@ export type EnvironmentContext = {
 	CoverNormal: Vector3?,
 	CoverPosition: Vector3?,
 	CoverInstance: BasePart?,
-	HasAdjacentCoverLeft: boolean,
-	HasAdjacentCoverRight: boolean,
-	HasLowCoverAhead: boolean,
 	IsAtCornerLeft: boolean,
 	IsAtCornerRight: boolean,
 	MoveDirection: Vector2,
-	IsFacingCover: boolean,
-	-- Aligned cover detection (CoverSwap / wall bounce)
-	HasAlignedCoverLeft: boolean,
-	HasAlignedCoverRight: boolean,
-	AlignedCoverNormalLeft: Vector3?,
-	AlignedCoverPositionLeft: Vector3?,
-	AlignedCoverInstanceLeft: BasePart?,
-	AlignedCoverNormalRight: Vector3?,
-	AlignedCoverPositionRight: Vector3?,
-	AlignedCoverInstanceRight: BasePart?,
 }
 
 ------------------------------------------------------------------------
