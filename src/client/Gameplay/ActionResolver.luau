@@ -488,18 +488,117 @@ local COVER_WALKING_RULES = {
 		end,
 	},
 
-	-- Prio 3: Vault (cover bajo + forward + cover/mantle button)
+	-- Prio 3: Block Space Tap — tap está deshabilitado mientras caminas en cover.
+	-- Solo Hold (WantsRoadieRun) es válido. Consume el intent para que no filtre
+	-- al buffer y sea recogido al transicionar a CoverIdle.
 	{
-		id = "Vault",
+		id = "BlockCoverTap",
 		check = function(_resolver, ctx)
-			return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
-				and ctx.Env.CoverType == "Low"
-				and ctx.Env.MoveDirection.Y > 0.3
+	return ctx.Buffer:HasIntent("WantsCover")
+		end,
+		execute = function(_resolver, ctx)
+	ctx.Buffer:Consume("WantsCover")
+	ctx.Buffer:Consume("WantsMantle")
+	return "NoAction", nil, nil
+		end,
+	},
+
+	-- Prio 4: Aim (pop-up / peek)
+	{
+		id = "PopUpAim",
+		check = function(_resolver, ctx)
+	return ctx.Intents:HasIntent("WantsAim")
+		end,
+		execute = function()
+	return "PopUpAim", "CoverAim", nil
+		end,
+	},
+
+	-- Prio 5: Blind Fire
+	{
+		id = "BlindFire",
+		check = function(_resolver, ctx)
+	return ctx.Intents:HasIntent("WantsBlindFire")
+		or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
+		end,
+		execute = function()
+	return "BlindFire", "CoverBlindFire", nil
+		end,
+	},
+
+	-- Prio 6: Reload en cover
+	{
+		id = "ReloadInCover",
+		check = function(_resolver, ctx)
+	return ctx.Buffer:HasIntent("WantsReload")
+		end,
+		execute = function(_resolver, ctx)
+	ctx.Buffer:Consume("WantsReload")
+	return "Reload", "Reloading", nil
+		end,
+	},
+
+	-- Prio 7: Stop CoverWalking → CoverIdle (sin ningún input de movimiento)
+	{
+		id = "StopCoverWalking",
+		check = function(_resolver, ctx)
+	return not hasMovementIntent(ctx.Intents)
+		end,
+		execute = function()
+	return "StopCoverWalking", "CoverIdle", nil
+		end,
+	},
+
+	-- Prio 8: Start CoverRunning (sprint intent mientras camina en cover)
+	{
+		id = "StartCoverRunning",
+		check = function(_resolver, ctx)
+	return ctx.Intents:HasIntent("WantsRoadieRun")
+		end,
+		execute = function()
+	return "StartCoverRunning", "CoverRunning", nil
+		end,
+	},
+}
+
+--- COVER RUNNING RULES (sprint lateral sobre la pared)
+--- Transiciones disponibles mientras el jugador corre en cover.
+local COVER_RUNNING_RULES = {
+	-- Prio 1: Exit cover
+	{
+		id = "ExitCover",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsExitCover")
+			return "ExitCover", "CoverExiting", nil
+		end,
+	},
+
+	-- Prio 2: Roll out of cover
+	{
+		id = "RollOutOfCover",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsEvade")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsEvade")
+			return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
+		end,
+	},
+
+	-- Prio 3: Block Space Tap — tap está deshabilitado mientras corres en cover.
+	-- Solo Hold mantiene CoverRunning. Consume el intent para evitar leak al buffer.
+	{
+		id = "BlockCoverTap",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsCover")
 		end,
 		execute = function(_resolver, ctx)
 			ctx.Buffer:Consume("WantsCover")
 			ctx.Buffer:Consume("WantsMantle")
-			return "Vault", "Mantling", nil
+			return "NoAction", nil, nil
 		end,
 	},
 
@@ -538,25 +637,25 @@ local COVER_WALKING_RULES = {
 		end,
 	},
 
-	-- Prio 7: Stop CoverWalking → CoverIdle (sin ningún input de movimiento)
+	-- Prio 7: Soltar sprint + aún moviéndose → CoverWalking
 	{
-		id = "StopCoverWalking",
+		id = "SlowDownToWalking",
+		check = function(_resolver, ctx)
+			return not ctx.Intents:HasIntent("WantsRoadieRun") and hasMovementIntent(ctx.Intents)
+		end,
+		execute = function()
+			return "StopCoverRunning", "CoverWalking", nil
+		end,
+	},
+
+	-- Prio 8: Sin movimiento → CoverIdle
+	{
+		id = "StopCoverRunning",
 		check = function(_resolver, ctx)
 			return not hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-			return "StopCoverWalking", "CoverIdle", nil
-		end,
-	},
-
-	-- Prio 8: Start CoverRunning (sprint intent mientras camina en cover)
-	{
-		id = "StartCoverRunning",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsRoadieRun")
-		end,
-		execute = function()
-			return "StartCoverRunning", "CoverRunning", nil
+			return "StopCoverRunning", "CoverIdle", nil
 		end,
 	},
 }
@@ -568,7 +667,7 @@ local COVER_SUB_RULES = {
 	CoverBlindFire = COVER_BLINDFIRE_RULES,
 	CoverIdle = COVER_IDLE_RULES,
 	CoverWalking = COVER_WALKING_RULES,
-	CoverRunning = COVER_IDLE_RULES,
+	CoverRunning = COVER_RUNNING_RULES,
 	CoverCorners = COVER_IDLE_RULES,
 }
 

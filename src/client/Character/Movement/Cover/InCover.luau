@@ -90,7 +90,7 @@ end
 ---
 --- @param _dt number — delta time
 --- @param _envContext table? — EnvironmentContext del EnvironmentSensor
-function InCover:UpdateWalking(_dt: number, _envContext: any?)
+function InCover:UpdateWalking(dt: number, _envContext: any?)
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
@@ -136,9 +136,7 @@ function InCover:UpdateWalking(_dt: number, _envContext: any?)
 			self._state.coverInstance = newInstance
 			self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
 
-			-- B) Rotar al personaje para que mire opuesto a la nueva normal
-			local pos = hrp.Position
-			hrp.CFrame = CFrame.lookAt(pos, pos + newNormal)
+			-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
 
 			-- C) Recalcular el riel y la proyección con la nueva normal
 			coverNormal = newNormal
@@ -170,6 +168,27 @@ function InCover:UpdateWalking(_dt: number, _envContext: any?)
 
 	-- 7. WALL-GLUE: corregir posición cada frame
 	self:_applyWallGlue(hrp)
+
+	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover (evita snap brusco en esquinas)
+	self:_smoothRotation(hrp, dt)
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Smooth Rotation (lerp hacia la normal de cover)
+------------------------------------------------------------------------
+
+--- Interpola la orientación del HRP hacia coverNormal cada frame.
+--- Usa exponential smoothing independiente del framerate.
+function InCover:_smoothRotation(hrp: BasePart, dt: number)
+	local coverNormal = self._state.coverNormal
+	if not coverNormal then
+		return
+	end
+
+	local pos = hrp.Position
+	local targetCF = CFrame.lookAt(pos, pos + coverNormal)
+	local alpha = 1 - math.exp(-Constants.CORNER_TURN_SPEED * dt)
+	hrp.CFrame = hrp.CFrame:Lerp(targetCF, alpha)
 end
 
 ------------------------------------------------------------------------

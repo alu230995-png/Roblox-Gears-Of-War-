@@ -135,7 +135,7 @@ function EnvironmentSensor:Update(
 	elseif state == "RoadieRun" then
 		-- Auto-detección frontal de cover mientras corre (rango corto)
 		self:_scanRoadieRunCover(hrp)
-	elseif (state == "CoverIdle" or state == "CoverWalking") and coverNormal then
+	elseif (state == "CoverIdle" or state == "CoverWalking" or state == "CoverRunning") and coverNormal then
 		-- Detectar esquinas para bloqueo lateral
 		self:_detectCorners(hrp, coverNormal)
 	end

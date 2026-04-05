@@ -78,6 +78,8 @@ Constants.COVER_CORNER_MARGIN = 1.4
 Constants.COVER_COMPLETION_XZ = 0.15
 -- Velocidad lateral en cover walking (studs/seg) — movimiento sobre el Tangent rail
 Constants.COVER_WALK_SPEED = 15
+-- Velocidad lateral en cover running (studs/seg) — un poco más rápido que walk
+Constants.COVER_RUN_SPEED = 20
 -- Distancia máxima pared↔jugador antes de corrección de posición (studs)
 -- Wall-glue: si el motor de física empuja al personaje más allá de este umbral,
 -- se fuerza la posición de vuelta al plano de la pared.
@@ -103,6 +105,9 @@ Constants.COVER_SPHERECAST_RADIUS = 0.2
 Constants.COVER_TRANSITION_TRIGGER_DIST = 1.5
 -- Umbral de |dot(N_old, N_new)| para considerar paredes perpendiculares
 Constants.COVER_TRANSITION_DOT_THRESHOLD = 0.5
+-- Velocidad del lerp de rotación al girar en esquina interna (mayor = más rápido)
+-- Con 15, ~90% del giro se completa en ~0.15 s → suave pero responsivo.
+Constants.CORNER_TURN_SPEED = 15
 
 ------------------------------------------------------------------------
 -- EVADE / ROLL

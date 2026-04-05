@@ -44,6 +44,8 @@ local COVER_ACTIONS: { [string]: boolean } = {
 	SlideIntoCover = true,
 	ExitCover = true,
 	Vault = true,
+	StartCoverRunning = true,
+	StopCoverRunning = true,
 }
 
 ------------------------------------------------------------------------
@@ -156,6 +158,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	if
 		currentState == "CoverIdle"
 		or currentState == "CoverWalking"
+		or currentState == "CoverRunning"
 		or currentState == "CoverAim"
 		or currentState == "CoverBlindFire"
 	then
@@ -222,65 +225,75 @@ end
 CoverMain._handlers = {
 	--- Entrada a cover caminando. Estado: CoverEntering.
 	EnterCover = function(self, data)
-		if not data then
-			return
-		end
+	if not data then
+		return
+	end
 
-		-- Escribir estado compartido
-		self._coverState.coverNormal = data.coverNormal
-		self._coverState.coverPosition = data.coverPos
-		self._coverState.coverInstance = data.coverInstance
-		self._coverState.coverType = data.coverType
+	-- Escribir estado compartido
+	self._coverState.coverNormal = data.coverNormal
+	self._coverState.coverPosition = data.coverPos
+	self._coverState.coverInstance = data.coverInstance
+	self._coverState.coverType = data.coverType
 
-		-- Delegar entering al sub-módulo
-		self._enteringCover:Begin(data)
+	-- Delegar entering al sub-módulo
+	self._enteringCover:Begin(data)
 	end,
 
 	--- Slide rápido desde RoadieRun. Estado: CoverSlide.
 	SlideIntoCover = function(self, data)
-		if not data then
-			return
+	if not data then
+		return
+	end
+
+	self._coverState.coverNormal = data.coverNormal
+	self._coverState.coverPosition = data.coverPos
+	self._coverState.coverInstance = data.coverInstance
+	self._coverState.coverType = data.coverType
+
+	self._enteringCover:BeginSlide(data)
+
+	-- CoverSlide dura poco, luego transiciona a CoverIdle
+	self:_startTimer(0.3, function()
+		self._enteringCover:Cancel()
+		if not self._stateMachine:TransitionTo("CoverIdle") then
+			self._pendingCoverIdleTransition = true
 		end
-
-		self._coverState.coverNormal = data.coverNormal
-		self._coverState.coverPosition = data.coverPos
-		self._coverState.coverInstance = data.coverInstance
-		self._coverState.coverType = data.coverType
-
-		self._enteringCover:BeginSlide(data)
-
-		-- CoverSlide dura poco, luego transiciona a CoverIdle
-		self:_startTimer(0.3, function()
-			self._enteringCover:Cancel()
-			if not self._stateMachine:TransitionTo("CoverIdle") then
-				self._pendingCoverIdleTransition = true
-			end
-		end)
+	end)
 	end,
 
 	--- Salida de cover. Estado: CoverExiting.
 	ExitCover = function(self, _data)
-		self._isExiting = true
-		self._enteringCover:Cancel()
-		self._cornerCover:Reset()
-		self._coverRunning:Stop()
-		self:_clearCoverState()
+	self._isExiting = true
+	self._enteringCover:Cancel()
+	self._cornerCover:Reset()
+	self._coverRunning:Stop()
+	self:_clearCoverState()
 
-		self:_startTimer(Constants.COVER_EXIT_DURATION, function()
-			self._isExiting = false
-			if not self._stateMachine:TransitionTo("Idle") then
-				self._pendingIdleTransition = true
-			end
-		end)
+	self:_startTimer(Constants.COVER_EXIT_DURATION, function()
+		self._isExiting = false
+		if not self._stateMachine:TransitionTo("Idle") then
+			self._pendingIdleTransition = true
+		end
+	end)
 	end,
 
 	--- Vault sobre cover bajo.
 	Vault = function(self, _data)
-		self._enteringCover:Cancel()
-		self._coverState.coverType = nil
-		self._coverState.wallRight = nil
-		self._cornerCover:Reset()
-		self._coverRunning:Stop()
+	self._enteringCover:Cancel()
+	self._coverState.coverType = nil
+	self._coverState.wallRight = nil
+	self._cornerCover:Reset()
+	self._coverRunning:Stop()
+	end,
+
+	--- Inicia CoverRunning (sprint en cover).
+	StartCoverRunning = function(self, _data)
+	self._coverRunning:Begin()
+	end,
+
+	--- Detiene CoverRunning (suelta sprint o deja de moverse).
+	StopCoverRunning = function(self, _data)
+	self._coverRunning:Stop()
 	end,
 }
 

@@ -23,7 +23,7 @@ local MAP = {
 	CoverExiting = Constants.WALK_SPEED * 0.6,
 	CoverSwap = Constants.COVER_SLIDE_SPEED,
 	CoverWalking = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en InCover
-	CoverRunning = Constants.WALK_SPEED * 0.8,
+	CoverRunning = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en CoverRunning
 	CoverCorners = Constants.WALK_SPEED * 0.3,
 	Evading = 0, -- Controlado por impulso decreciente
 	CoverIdle = 0, -- WalkSpeed=0: wall-glue + velocidad=0 (reposo total)
