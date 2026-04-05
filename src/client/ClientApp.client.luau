@@ -45,6 +45,12 @@ local ActionResolver = require(script.Parent.Gameplay.ActionResolver)
 -- Movement (refactored — Character/Movement/ con sub-handlers)
 local MovementController = require(script.Parent.Character.Movement.MovementController)
 
+-- Animation (Fase 4 — skeleton funcional)
+local AnimationController = require(script.Parent.Animation.AnimationController)
+
+-- Camera (Fase 5 — skeleton funcional)
+local CameraController = require(script.Parent.Camera.CameraController)
+
 ------------------------------------------------------------------------
 -- BOOTSTRAP
 ------------------------------------------------------------------------
@@ -67,7 +73,9 @@ local envSensor = EnvironmentSensor.new()
 local intentMapper = IntentMapper.new(inputDetector, envSensor)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
-local movementController = MovementController.new(stateMachine, actionResolver)
+local movementController = MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer)
+local animationController = AnimationController.new(stateMachine, actionResolver)
+local cameraController = CameraController.new(stateMachine, actionResolver)
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
@@ -77,6 +85,8 @@ locator:Register("IntentMapper", intentMapper)
 locator:Register("InputBuffer", inputBuffer)
 locator:Register("ActionResolver", actionResolver)
 locator:Register("MovementController", movementController)
+locator:Register("AnimationController", animationController)
+locator:Register("CameraController", cameraController)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()
@@ -85,7 +95,8 @@ locator:InitAll()
 -- Después de Start:
 --   InputDetector escucha UIS events (su propio Heartbeat interno)
 --   MovementController escucha ActionResolver.ActionResolved via Signal
---   [Futuro: Camera/Animation escucharán StateChanged y ActionResolved]
+--   AnimationController escucha StateChanged + ActionResolved
+--   CameraController escucha StateChanged + ActionResolved + Heartbeat propio
 locator:StartAll()
 
 ------------------------------------------------------------------------

@@ -12,6 +12,12 @@ export type PlayerState =
 	| "CoverAim"
 	| "CoverBlindFire"
 	| "CoverSlide"
+	| "CoverEntering"
+	| "CoverWalking"
+	| "CoverRunning"
+	| "CoverExiting"
+	| "CoverCorners"
+	| "CoverSwap"
 	| "Evading"
 	| "Mantling"
 	| "DBNO"
@@ -20,6 +26,9 @@ export type PlayerState =
 	| "ActiveReloading"
 	| "Aiming"
 	| "Firing"
+	| "Death"
+	| "Spectator"
+	| "Lobby"
 
 export type InputAction =
 	"MoveForward"
@@ -147,6 +156,15 @@ export type EnvironmentContext = {
 	IsAtCornerRight: boolean,
 	MoveDirection: Vector2,
 	IsFacingCover: boolean,
+	-- Aligned cover detection (CoverSwap / wall bounce)
+	HasAlignedCoverLeft: boolean,
+	HasAlignedCoverRight: boolean,
+	AlignedCoverNormalLeft: Vector3?,
+	AlignedCoverPositionLeft: Vector3?,
+	AlignedCoverInstanceLeft: BasePart?,
+	AlignedCoverNormalRight: Vector3?,
+	AlignedCoverPositionRight: Vector3?,
+	AlignedCoverInstanceRight: BasePart?,
 }
 
 ------------------------------------------------------------------------
@@ -179,6 +197,21 @@ export type CombatResult = {
 	Headshot: boolean,
 	KilledTarget: boolean,
 	DBNOTarget: boolean,
+}
+
+------------------------------------------------------------------------
+-- ACTION RESOLVER (Capa 5)
+------------------------------------------------------------------------
+
+--- Contexto snapshot construido una vez por frame en ActionResolver:Resolve().
+--- Agrupa buffer, intents, environment, estado y config para las reglas de resolución.
+export type ResolverContext = {
+	State: string,
+	StateConfig: any,
+	Env: EnvironmentContext,
+	Buffer: any, -- InputBuffer instance
+	Intents: any, -- IntentMapper instance
+	HasMovement: boolean,
 }
 
 ------------------------------------------------------------------------

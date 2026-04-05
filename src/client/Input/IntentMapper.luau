@@ -119,7 +119,6 @@ function IntentMapper:_processEvent(event, env)
 	-- CoverButton (Space / A) — el corazón contexto-sensitivo de GoW
 	if name == "CoverButton" then
 		if mode == "Tap" then
-			-- ¿Hay cover cerca? → WantsCover. ¿No? → WantsEvade
 			if env.HasCoverNearby then
 				-- ¿Es cover bajo y estamos moviendos hacia él? → WantsMantle (vault)
 				if env.CoverType == "Low" and env.HasLowCoverAhead and env.MoveDirection.Y > 0.5 then
@@ -245,9 +244,11 @@ function IntentMapper:_processContinuousState(env)
 		self:_setIntent("WantsBlindFire", true)
 	end
 
-	-- Exit cover: si estamos en cover y moveDirection es "hacia atrás" (alejarse)
-	-- El ActionResolver evaluará esto junto al estado actual
-	if env.HasCoverNearby and moveDir.Y < -0.5 then
+	-- Exit cover: moveDirection "hacia atrás" = quiere salir de cover.
+	-- No requiere env.HasCoverNearby: en CoverIdle el personaje mira hacia afuera
+	-- de la pared, así que el EnvironmentSensor no detecta la cover detrás.
+	-- El ActionResolver ya filtra por estado (COVER_IDLE_RULES solo aplica en CoverGroup).
+	if moveDir.Y < -0.5 then
 		self:_setIntent("WantsExitCover", true)
 	end
 end

@@ -30,11 +30,13 @@ local SpeedMap = require(script.Parent.SpeedMap)
 local MovementController = {}
 MovementController.__index = MovementController
 
-function MovementController.new(stateMachine, actionResolver)
+function MovementController.new(stateMachine, actionResolver, environmentSensor, inputBuffer)
 	local self = setmetatable({}, MovementController)
 
 	self._stateMachine = stateMachine
 	self._actionResolver = actionResolver
+	self._envSensor = environmentSensor
+	self._inputBuffer = inputBuffer
 	self._player = Players.LocalPlayer
 
 	-- Sub-handlers
@@ -116,12 +118,19 @@ end
 
 --- Update cada frame. Maneja timers y lógica continua.
 function MovementController:Update(dt: number)
+	-- Cover redirect: solo permitir chain si el jugador pulsa cover de nuevo
+	local wantsCoverRedirect = false
+	local currentState = self._stateMachine:GetCurrentState()
+	if currentState == "CoverEntering" and self._inputBuffer and self._inputBuffer:HasIntent("WantsCover") then
+		self._inputBuffer:Consume("WantsCover")
+		wantsCoverRedirect = true
+	end
+
 	-- Sub-handlers
-	self._coverHandler:Update(dt)
+	self._coverHandler:Update(dt, self._envSensor:GetContext(), wantsCoverRedirect)
 	self._evadeHandler:Update(dt)
 
 	-- RoadieRun: velocidad constante hacia el input o look vector (auto-forward GoW)
-	local currentState = self._stateMachine:GetCurrentState()
 	if currentState == "RoadieRun" then
 		self:_updateRoadieRun()
 	end

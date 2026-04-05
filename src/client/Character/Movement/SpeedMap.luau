@@ -19,6 +19,12 @@ local MAP = {
 	Walking = Constants.WALK_SPEED,
 	RoadieRun = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en MovementController
 	CoverSlide = Constants.COVER_SLIDE_SPEED,
+	CoverEntering = 0, -- WalkSpeed=0: posición controlada 100% por CoverHandler._updateEntering
+	CoverExiting = Constants.WALK_SPEED * 0.6,
+	CoverSwap = Constants.COVER_SLIDE_SPEED,
+	CoverWalking = Constants.WALK_SPEED * 0.5,
+	CoverRunning = Constants.WALK_SPEED * 0.8,
+	CoverCorners = Constants.WALK_SPEED * 0.3,
 	Evading = 0, -- Controlado por impulso decreciente
 	CoverIdle = Constants.WALK_SPEED * 0.5,
 	CoverAim = 0,
@@ -30,6 +36,9 @@ local MAP = {
 	Firing = Constants.WALK_SPEED * 0.5,
 	Reloading = Constants.WALK_SPEED * 0.8,
 	ActiveReloading = Constants.WALK_SPEED * 0.8,
+	Death = 0,
+	Spectator = 0,
+	Lobby = 0,
 }
 
 --- Retorna la WalkSpeed que corresponde a un estado.

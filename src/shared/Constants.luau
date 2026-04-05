@@ -26,7 +26,7 @@ Constants.DEBUG_MODE = true -- Cambiar a true para logs en consola
 -- Roblox default WalkSpeed = 16. GoW necesita sentirse más lento.
 Constants.WALK_SPEED = 10
 Constants.ROADIE_RUN_SPEED = 22 -- ~1.8x walk
-Constants.COVER_SLIDE_SPEED = 18 -- Más rápido que roadie run
+Constants.COVER_SLIDE_SPEED = 10 -- Más rápido que roadie run
 Constants.EVADE_SPEED = 16 -- Corto y rápido, burst momentáneo
 
 -- Aceleración / Desaceleración (studs/s²)
@@ -62,11 +62,8 @@ Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
 ------------------------------------------------------------------------
 -- COVER SYSTEM
 ------------------------------------------------------------------------
-
--- Rango de detección de covertura (studs)
-Constants.COVER_DETECTION_RANGE = 8
--- Velocidad del snap magnético hacia la pared
-Constants.COVER_SNAP_SPEED = 30
+-- Velocidad del snap magnético hacia la pared (studs/seg)
+Constants.COVER_SNAP_SPEED = 24
 -- Ángulo de magnetismo (grados) — cono frente al jugador
 Constants.COVER_MAGNETISM_ANGLE = 45
 -- Velocidad al salir de cover
@@ -75,6 +72,25 @@ Constants.COVER_EXIT_SPEED = 10
 Constants.COVER_MIN_HEIGHT = 3
 -- Altura para mantle (studs)
 Constants.MANTLE_MAX_HEIGHT = 5
+-- Distancia jugador ↔ pared de cover al hacer snap (studs)
+Constants.COVER_OFFSET = 1.8
+-- Margen desde aristas del Part para corner clamp (studs)
+Constants.COVER_CORNER_MARGIN = 1.4
+-- Tolerancia horizontal para considerar que el snap completó (studs)
+Constants.COVER_COMPLETION_XZ = 0.15
+-- Velocidad mínima al final del ease-out (fracción del max, 0..1)
+-- Evita que el personaje se arrastre los últimos studs
+Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.8
+-- Blend de rotación al INICIO de entering (0..1) — empieza suave
+Constants.COVER_ROTATION_BLEND_MIN = 0.08
+-- Blend de rotación al FINAL de entering (0..1) — termina agresivo
+Constants.COVER_ROTATION_BLEND_MAX = 0.35
+-- Timeout antes de cancelar entering por atasco (segundos)
+Constants.COVER_STUCK_TIMEOUT = 1.8
+-- Distancia del spherecast de auto-detección mientras corre (studs)
+Constants.COVER_AUTO_DETECT_DIST = 3.0
+-- Radio del spherecast de detección de cover (studs)
+Constants.COVER_SPHERECAST_RADIUS = 0.2
 
 ------------------------------------------------------------------------
 -- EVADE / ROLL
@@ -149,7 +165,7 @@ Constants.MELEE_HOLD_THRESHOLD = 0.5 -- 500ms para chainsaw vs melee
 -- antes de llegar a la pared).
 ------------------------------------------------------------------------
 
-Constants.BUFFER_TTL_COVER = 0.12 -- 120ms
+Constants.BUFFER_TTL_COVER = 0.3 -- 300ms — magnetismo generoso estilo GoW
 Constants.BUFFER_TTL_EVADE = 0.08 -- 80ms — menos tolerante
 Constants.BUFFER_TTL_ROADIE_RUN = 0.05 -- 50ms — casi inmediato
 Constants.BUFFER_TTL_SHOOT = 0.0 -- inmediato, sin buffer
@@ -167,14 +183,35 @@ Constants.BUFFER_TTL_DEFAULT = 0.1
 ------------------------------------------------------------------------
 
 -- Rango inmediato para entrar en cover (studs)
-Constants.COVER_SCAN_RANGE = 2.5
+Constants.COVER_SCAN_RANGE = 30
 -- Altura máxima de cover bajo — vault-able (studs)
 Constants.COVER_HEIGHT_LOW_MAX = 3.5
 -- Rango para detectar cover adyacente (swat turn)
 Constants.COVER_ADJACENT_SCAN_RANGE = 5.0
--- Offset vertical del raycast desde HumanoidRootPart
-Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0, 0)
+-- Offset vertical del raycast desde HumanoidRootPart (ligero offset hacia torso)
+Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 -- Cantidad de rayos laterales para detección de esquinas
 Constants.COVER_CORNER_RAY_ANGLE = 60 -- grados
+-- Rango de detección de esquinas (peek corners), studs
+Constants.COVER_CORNER_DETECTION_RANGE = 2.0
+-- Push-in (studs) cuando el hit cae justo en el borde del Part (anti-esquina)
+Constants.COVER_CORNER_PUSH_IN = 1.0
+
+------------------------------------------------------------------------
+-- COVER ENTRY / EXIT / SWAP
+------------------------------------------------------------------------
+
+-- Dot product threshold para cancelar CoverEntering con movimiento trasero.
+-- Valor positivo = jugador alejándose de la cover (moveDir · coverNormal > umbral).
+Constants.COVER_ENTRY_CANCEL_DOT = 0.8
+-- Distancia máxima de raycasts laterales para detectar cover alineada (studs).
+Constants.COVER_SWAP_MAX_DISTANCE = 8.0
+-- Dot mínimo entre normals de dos covers para considerarlas alineadas.
+-- 0.7 ≈ hasta ~45° de diferencia angular.
+Constants.COVER_SWAP_ALIGNMENT_DOT = 0.7
+-- Duración de la animación de salida de cover (segundos).
+Constants.COVER_EXIT_DURATION = 0.25
+-- Duración de la animación de CoverSwap entre covers (segundos).
+Constants.COVER_SWAP_DURATION = 0.4
 
 return Constants
