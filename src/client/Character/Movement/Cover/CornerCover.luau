@@ -81,4 +81,42 @@ function CornerCover:Reset()
 	self._atCornerLeft = false
 end
 
+--- Comprueba si hay una cobertura adyacente alineada para hacer Cover Swap.
+--- Solo se ejecuta cuando el jugador está en esquina y presiona hacia el vacío.
+---
+--- @param lateralAmount number — dot product con wallRight (+derecha, -izquierda)
+--- @param envSensor any — EnvironmentSensor con CheckSwapCover()
+--- @param hrp BasePart — HumanoidRootPart
+--- @return table? — { newPart, newNormal, hitPosition, moveDir } o nil
+function CornerCover:CheckSwapTrigger(lateralAmount: number, envSensor: any, hrp: BasePart): any?
+	-- Solo intentar swap si el movimiento está bloqueado por una esquina
+	if not self:IsBlocked(lateralAmount) then
+		return nil
+	end
+
+	local coverNormal = self._state.coverNormal
+	local wallRight = self._state.wallRight
+	local coverInstance = self._state.coverInstance
+
+	if not coverNormal or not wallRight or not coverInstance then
+		return nil
+	end
+
+	local moveDir = if lateralAmount > 0 then 1 else -1
+
+	local newPart, newNormal, hitPosition =
+		envSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance)
+
+	if not newPart or not newNormal or not hitPosition then
+		return nil
+	end
+
+	return {
+		newPart = newPart,
+		newNormal = newNormal,
+		hitPosition = hitPosition,
+		moveDir = moveDir,
+	}
+end
+
 return CornerCover

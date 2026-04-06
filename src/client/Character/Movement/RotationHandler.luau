@@ -10,6 +10,9 @@
 ]]
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
 
 local RotationHandler = {}
 RotationHandler.__index = RotationHandler
@@ -63,7 +66,7 @@ function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?
 	end
 
 	-- En estados normales: rotar hacia la dirección de movimiento
-	if humanoid.MoveDirection.Magnitude > 0.1 then
+	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
 		local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + humanoid.MoveDirection)
 		hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, math.min(10 * dt, 1))
 	end

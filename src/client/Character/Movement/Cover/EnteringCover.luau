@@ -176,7 +176,7 @@ function EnteringCover:_clampHitToFace(
 ): Vector3
 	-- Up × N = vector que apunta a la DERECHA del jugador mirando la pared
 	local wallRight = Vector3.yAxis:Cross(wallNormal)
-	if wallRight.Magnitude < 0.001 then
+	if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
 		return hitPos
 	end
 	wallRight = wallRight.Unit
@@ -208,11 +208,14 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 	local character = rootPart.Parent
 	groundParams.FilterDescendantsInstances = if character then { character } else {}
 
-	local playerGround = workspace:Raycast(rootPart.Position, Vector3.new(0, -10, 0), groundParams)
-	local hipHeight = if playerGround then (rootPart.Position.Y - playerGround.Position.Y) else 3.0
+	local playerGround =
+		workspace:Raycast(rootPart.Position, Vector3.new(0, -Constants.COVER_GROUND_RAY_DOWN, 0), groundParams)
+	local hipHeight = if playerGround
+		then (rootPart.Position.Y - playerGround.Position.Y)
+		else Constants.COVER_DEFAULT_HIP_HEIGHT
 
-	local destProbe = Vector3.new(rawTarget.X, rawTarget.Y + 5, rawTarget.Z)
-	local destGround = workspace:Raycast(destProbe, Vector3.new(0, -15, 0), groundParams)
+	local destProbe = Vector3.new(rawTarget.X, rawTarget.Y + Constants.COVER_DEST_PROBE_UP, rawTarget.Z)
+	local destGround = workspace:Raycast(destProbe, Vector3.new(0, -Constants.COVER_DEST_RAY_DOWN, 0), groundParams)
 	local destGroundY = if destGround then destGround.Position.Y else (rootPart.Position.Y - hipHeight)
 
 	local targetPos = Vector3.new(rawTarget.X, destGroundY + hipHeight, rawTarget.Z)
@@ -221,7 +224,7 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 
 	-- Up × N = vector que apunta a la DERECHA del jugador mirando la pared
 	local wallRight = Vector3.yAxis:Cross(wallNormal)
-	if wallRight.Magnitude < 0.001 then
+	if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
 		wallRight = Vector3.xAxis
 	else
 		wallRight = wallRight.Unit
@@ -232,8 +235,8 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 		0,
 		rootPart.Position.Z
 	)).Magnitude
-	if initialDist < 0.5 then
-		initialDist = 0.5
+	if initialDist < Constants.COVER_MIN_SNAP_DIST then
+		initialDist = Constants.COVER_MIN_SNAP_DIST
 	end
 
 	return {
@@ -265,7 +268,7 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 	end
 
 	local moveDir = humanoid.MoveDirection
-	if moveDir.Magnitude > 0.1 and self._cancelNormal then
+	if moveDir.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD and self._cancelNormal then
 		local awayDot = moveDir:Dot(self._cancelNormal)
 		if awayDot > Constants.COVER_ENTRY_CANCEL_DOT then
 			return "cancel"

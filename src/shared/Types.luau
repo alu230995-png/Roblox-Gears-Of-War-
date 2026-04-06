@@ -30,6 +30,7 @@ export type PlayerState =
 	| "Spectator"
 	| "Lobby"
 
+-- RESERVED Phase 3 — not yet used
 export type InputAction =
 	"MoveForward"
 	| "MoveBackward"
@@ -46,6 +47,7 @@ export type InputAction =
 	| "SwapWeapon"
 	| "MeleeChainsaw"
 
+-- RESERVED Phase 3 — not yet used
 export type MovementConfig = {
 	WalkSpeed: number,
 	RoadieRunSpeed: number,
@@ -58,6 +60,7 @@ export type MovementConfig = {
 	JumpPower: number,
 }
 
+-- RESERVED Phase 5 — not yet used
 export type CameraBobConfig = {
 	Enabled: boolean,
 	Frequency: number,
@@ -66,6 +69,7 @@ export type CameraBobConfig = {
 	RoadieRunMultiplier: number,
 }
 
+-- RESERVED Phase 3 — not yet used
 export type CoverSnapConfig = {
 	MaxDetectionRange: number,
 	SnapSpeed: number,
@@ -73,12 +77,14 @@ export type CoverSnapConfig = {
 	ExitSpeed: number,
 }
 
+-- RESERVED Phase 3 — not yet used
 export type StateTransition = {
 	From: PlayerState,
 	To: PlayerState,
 	Condition: string,
 }
 
+-- RESERVED Phase 3 — not yet used
 export type InputBinding = {
 	Action: InputAction,
 	KeyCode: Enum.KeyCode?,
@@ -90,12 +96,14 @@ export type InputBinding = {
 -- HSM (Hierarchical State Machine)
 ------------------------------------------------------------------------
 
+-- RESERVED Phase 3 — not yet used
 export type StateGroup = {
 	Name: string,
 	Parent: string?,
 	States: { string },
 }
 
+-- RESERVED Phase 3 — not yet used
 export type HSMCallbacks = {
 	OnEnter: ((fromState: string) -> ())?,
 	OnExit: ((toState: string) -> ())?,
@@ -105,6 +113,7 @@ export type HSMCallbacks = {
 -- INPUT SYSTEM (Capas 1-5)
 ------------------------------------------------------------------------
 
+-- RESERVED Phase 3 — not yet used
 export type RawInputEvent = {
 	Name: string,
 	Mode: string, -- "Tap" | "HoldStart" | "Release" | "Pressed" | "Released"
@@ -135,6 +144,7 @@ export type Intent =
 	| "WantsMantle"
 	| "WantsExitCover"
 
+-- RESERVED Phase 3 — not yet used (only referenced in comments)
 export type BufferEntry = {
 	Intent: Intent,
 	Timestamp: number,
@@ -155,7 +165,7 @@ export type EnvironmentContext = {
 }
 
 ------------------------------------------------------------------------
--- WEAPON SYSTEM (Fase 7)
+-- WEAPON SYSTEM — RESERVED Phase 7 — not yet used
 ------------------------------------------------------------------------
 
 export type WeaponType = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
@@ -175,7 +185,7 @@ export type WeaponConfig = {
 }
 
 ------------------------------------------------------------------------
--- COMBAT (Fase 6)
+-- COMBAT — RESERVED Phase 6 — not yet used
 ------------------------------------------------------------------------
 
 export type CombatResult = {
@@ -202,7 +212,7 @@ export type ResolverContext = {
 }
 
 ------------------------------------------------------------------------
--- NETWORK (Fase 6)
+-- NETWORK — RESERVED Phase 6 — not yet used
 ------------------------------------------------------------------------
 
 export type NetworkPayload = {

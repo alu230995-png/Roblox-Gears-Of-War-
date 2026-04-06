@@ -31,6 +31,10 @@
 	  ej: WantsMoveForward + WantsCover = el resolver decide qué hacer
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
+
 local IntentMapper = {}
 IntentMapper.__index = IntentMapper
 
@@ -122,7 +126,7 @@ function IntentMapper:_processEvent(event)
 			self:_setIntent("WantsCover", true)
 			-- Si el jugador se mueve hacia adelante, también generar WantsMantle
 			local moveDir = self._inputDetector:GetMoveDirection()
-			if moveDir.Y > 0.3 then
+			if moveDir.Y > Constants.ROADIE_RUN_INPUT_THRESHOLD then
 				self:_setIntent("WantsMantle", true)
 			end
 		elseif mode == "HoldStart" then
@@ -215,10 +219,10 @@ function IntentMapper:_processContinuousState()
 	local moveDir = detector:GetMoveDirection()
 
 	-- Movimiento (WASD) → intenciones de movimiento
-	self:_setIntent("WantsMoveForward", moveDir.Y > 0.1)
-	self:_setIntent("WantsMoveBackward", moveDir.Y < -0.1)
-	self:_setIntent("WantsMoveLeft", moveDir.X < -0.1)
-	self:_setIntent("WantsMoveRight", moveDir.X > 0.1)
+	self:_setIntent("WantsMoveForward", moveDir.Y > Constants.MOVE_DIRECTION_THRESHOLD)
+	self:_setIntent("WantsMoveBackward", moveDir.Y < -Constants.MOVE_DIRECTION_THRESHOLD)
+	self:_setIntent("WantsMoveLeft", moveDir.X < -Constants.MOVE_DIRECTION_THRESHOLD)
+	self:_setIntent("WantsMoveRight", moveDir.X > Constants.MOVE_DIRECTION_THRESHOLD)
 
 	-- Sprint continuo: si Shift está held O CoverButton está held (pasado threshold)
 	if detector:IsRawHeld("SprintModifier") then

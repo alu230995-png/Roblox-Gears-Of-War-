@@ -18,6 +18,7 @@
 ]]
 
 local CollectionService = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38,7 +39,7 @@ function EnvironmentSensor.new()
 	-- Cache de filtro de cover objects (se reconstruye solo cuando cambian tags/atributos)
 	self._filterDirty = true
 	self._filterFrameCounter = 0
-	self._filterRefreshInterval = 45 -- frames entre re-escaneos periódicos
+	self._filterRefreshInterval = Constants.ENV_FILTER_REFRESH_FRAMES
 
 	self._tagAddedConn = CollectionService:GetInstanceAddedSignal("CoverObject"):Connect(function()
 		self._filterDirty = true
@@ -129,14 +130,20 @@ function EnvironmentSensor:Update(
 	end
 
 	-- Rama por estado: solo lanzar raycasts cuando es necesario
+	local inCoverState = (state == "CoverIdle" or state == "CoverWalking" or state == "CoverRunning")
+
 	if wantsCoverSearch then
 		-- Petición de entrada a cover (botón presionado + estado lo permite)
 		self:_searchCover(hrp)
 	elseif state == "RoadieRun" then
 		-- Auto-detección frontal de cover mientras corre (rango corto)
 		self:_scanRoadieRunCover(hrp)
-	elseif (state == "CoverIdle" or state == "CoverWalking" or state == "CoverRunning") and coverNormal then
-		-- Detectar esquinas para bloqueo lateral
+	end
+
+	-- Detectar esquinas siempre que estés en cover (independiente de wantsCoverSearch)
+	-- Esto garantiza que IsAtCornerLeft/Right estén actualizados en el mismo frame
+	-- que WantsCover entra al buffer → Cover Swap puede evaluar correctamente.
+	if inCoverState and coverNormal then
 		self:_detectCorners(hrp, coverNormal)
 	end
 	-- Otros estados: 0 raycasts, contexto vacío
@@ -155,7 +162,7 @@ function EnvironmentSensor:_searchCover(hrp: BasePart)
 	-- Dirección de búsqueda: input del jugador o look vector
 	local humanoid = hrp.Parent and hrp.Parent:FindFirstChild("Humanoid") :: Humanoid?
 	local searchDir: Vector3
-	if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+	if humanoid and humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
 		searchDir = humanoid.MoveDirection
 	else
 		searchDir = hrp.CFrame.LookVector
@@ -163,7 +170,7 @@ function EnvironmentSensor:_searchCover(hrp: BasePart)
 
 	-- Aplanar al plano horizontal
 	local flatDir = Vector3.new(searchDir.X, 0, searchDir.Z)
-	if flatDir.Magnitude < 0.001 then
+	if flatDir.Magnitude < Constants.ZERO_MAGNITUDE then
 		return
 	end
 	flatDir = flatDir.Unit
@@ -212,7 +219,7 @@ function EnvironmentSensor:_detectCorners(hrp: BasePart, coverNormal: Vector3)
 	-- Vector paralelo a la pared: Up × N = apunta a la DERECHA del jugador
 	-- (coverNormal:Cross(yAxis) apuntaba a la IZQUIERDA — bug de inversión)
 	local wallParallel = Vector3.yAxis:Cross(coverNormal)
-	if wallParallel.Magnitude < 0.1 then
+	if wallParallel.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
 		wallParallel = Vector3.xAxis
 	else
 		wallParallel = wallParallel.Unit
@@ -265,7 +272,7 @@ function EnvironmentSensor:CheckInnerCorner(
 	wallParallel: Vector3,
 	movementScale: number
 ): (Vector3?, Vector3?, BasePart?)
-	if math.abs(movementScale) < 0.1 then
+	if math.abs(movementScale) < Constants.LATERAL_TRIGGER_THRESHOLD then
 		return nil, nil, nil
 	end
 
@@ -279,8 +286,7 @@ function EnvironmentSensor:CheckInnerCorner(
 	end
 
 	-- Verificar que sea un ángulo significativo (dot < 0.5 ≈ >60°)
-	local newNormal, newPosition =
-		self:_snapNormalToFace(rayResult.Instance, rayResult.Position, rayResult.Normal)
+	local newNormal, newPosition = self:_snapNormalToFace(rayResult.Instance, rayResult.Position, rayResult.Normal)
 	if not newNormal then
 		return nil, nil, nil
 	end
@@ -291,6 +297,203 @@ function EnvironmentSensor:CheckInnerCorner(
 	end
 
 	return newNormal, newPosition, rayResult.Instance
+end
+
+--- Chequea si hay una cobertura adyacente alineada al otro lado del hueco (Cover Swap).
+--- Algoritmo de 5 pasos:
+---   1. Rayo de detección en dirección de input → interruptor de existencia (normal de impacto DESECHADA)
+---   2. Extracción geométrica de 4 normales laterales desde CFrame del Part golpeado
+---   3. Construcción de tangentes (rieles) por cara: T = Up × N
+---   4. Prueba de alineación: dot product tangente actual vs 4 tangentes → mejor match ≥ 0.9
+---   5. Coplanaridad: |(P_nueva - P_actual) · N_actual| < umbral
+---
+--- @param hrp BasePart — HumanoidRootPart
+--- @param coverNormal Vector3 — normal de la cover actual
+--- @param wallRight Vector3 — tangente de la cover actual (riel de referencia)
+--- @param moveDir number — +1 (derecha) o -1 (izquierda)
+--- @param currentCoverInstance BasePart — la cover en la que está el jugador
+--- @param inputDirection Vector3 — humanoid.MoveDirection del jugador (dirección del rayo)
+--- @return BasePart? newCoverPart — la nueva cobertura detectada (nil si no hay)
+--- @return Vector3? newCoverNormal — normal geométrica ganadora de la nueva cover
+--- @return Vector3? hitPosition — punto de impacto del rayo
+function EnvironmentSensor:CheckSwapCover(
+	hrp: BasePart,
+	coverNormal: Vector3,
+	wallRight: Vector3,
+	moveDir: number,
+	currentCoverInstance: BasePart,
+	inputDirection: Vector3
+): (BasePart?, Vector3?, Vector3?)
+	-- ═══════════════════════════════════════════════════════════
+	-- PASO 1: Disparo de detección (normal de impacto DESECHADA)
+	-- Solo sirve como interruptor de existencia: ¿hay una Part
+	-- catalogada como "CoverObject" en la dirección de input?
+	-- ═══════════════════════════════════════════════════════════
+	local character = self._player.Character
+	if not character then
+		return nil, nil, nil
+	end
+
+	local swapParams = RaycastParams.new()
+	swapParams.FilterType = Enum.RaycastFilterType.Exclude
+	swapParams.FilterDescendantsInstances = { character, currentCoverInstance }
+
+	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
+
+	local flatInput = Vector3.new(inputDirection.X, 0, inputDirection.Z)
+	if flatInput.Magnitude < Constants.ZERO_MAGNITUDE then
+		flatInput = wallRight * moveDir
+	else
+		flatInput = flatInput.Unit
+	end
+	local rayDirection = flatInput * Constants.COVER_SWAP_MAX_DISTANCE
+
+	local hitResult = workspace:Raycast(origin, rayDirection, swapParams)
+
+	if Constants.DEBUG_MODE then
+		local rayLen = rayDirection.Magnitude
+		local endPt = origin + rayDirection
+		local midPt = (origin + endPt) / 2
+		local debugRay = Instance.new("Part")
+		debugRay.Name = "DEBUG_SwapRay"
+		debugRay.Anchored = true
+		debugRay.CanCollide = false
+		debugRay.CanQuery = false
+		debugRay.CastShadow = false
+		debugRay.Size = Vector3.new(0.06, 0.06, rayLen)
+		debugRay.CFrame = CFrame.new(midPt, endPt)
+		debugRay.Color = Color3.fromRGB(200, 110, 30)
+		debugRay.Material = Enum.Material.Neon
+		debugRay.Parent = workspace
+		Debris:AddItem(debugRay, 1.5)
+
+		print(string.format(
+			"[SwapRay] P1 origen=(%.1f,%.1f,%.1f) inputDir=(%.2f,%.2f,%.2f) dist=%.1f",
+			origin.X, origin.Y, origin.Z,
+			flatInput.X, flatInput.Y, flatInput.Z,
+			Constants.COVER_SWAP_MAX_DISTANCE
+		))
+
+		if hitResult then
+			print(string.format(
+				"[SwapRay] P1 HIT %s en (%.1f,%.1f,%.1f) — normal de impacto DESECHADA",
+				hitResult.Instance.Name,
+				hitResult.Position.X, hitResult.Position.Y, hitResult.Position.Z
+			))
+			local hitSphere = Instance.new("Part")
+			hitSphere.Name = "DEBUG_SwapHit"
+			hitSphere.Shape = Enum.PartType.Ball
+			hitSphere.Anchored = true
+			hitSphere.CanCollide = false
+			hitSphere.CanQuery = false
+			hitSphere.CastShadow = false
+			hitSphere.Size = Vector3.one * 0.45
+			hitSphere.Position = hitResult.Position
+			hitSphere.Color = Color3.fromRGB(220, 30, 30)
+			hitSphere.Material = Enum.Material.Neon
+			hitSphere.Parent = workspace
+			Debris:AddItem(hitSphere, 1.5)
+		else
+			print("[SwapRay] P1 MISS — sin geometría de cover en dirección de input")
+		end
+	end
+
+	if not hitResult or not self:_isCoverObject(hitResult.Instance) then
+		if Constants.DEBUG_MODE and hitResult then
+			print(string.format("[SwapRay] P1 RECHAZADO — %s no es CoverObject", hitResult.Instance.Name))
+		end
+		return nil, nil, nil
+	end
+
+	local newPart = hitResult.Instance :: BasePart
+
+	-- ═══════════════════════════════════════════════════════════
+	-- PASO 2: Extracción geométrica de normales laterales
+	-- Usamos el CFrame del Part para obtener 4 normales perfectas.
+	-- No dependemos de la normal espuria del raycast.
+	-- ═══════════════════════════════════════════════════════════
+	local cf = newPart.CFrame
+	local faceNormals = {
+		cf.LookVector, -- Adelante
+		-cf.LookVector, -- Atrás
+		cf.RightVector, -- Derecha
+		-cf.RightVector, -- Izquierda
+	}
+
+	-- ═══════════════════════════════════════════════════════════
+	-- PASO 3 + 4: Tangentes y prueba de alineación
+	-- Para cada cara: T = Up × N, luego dot(T, wallRight_actual).
+	-- La cara con mayor alineación (≥ threshold) gana.
+	-- ═══════════════════════════════════════════════════════════
+	local bestDot = -math.huge
+	local bestNormal: Vector3? = nil
+
+	for _, faceN in faceNormals do
+		local tangent = Vector3.yAxis:Cross(faceN)
+		if tangent.Magnitude >= Constants.ZERO_MAGNITUDE then
+			tangent = tangent.Unit
+			local dot = tangent:Dot(wallRight)
+			if Constants.DEBUG_MODE then
+				print(string.format(
+					"[SwapRay] P4 cara normal=(%.2f,%.2f,%.2f) tangente dot=%.3f",
+					faceN.X, faceN.Y, faceN.Z, dot
+				))
+			end
+			if dot > bestDot then
+				bestDot = dot
+				bestNormal = faceN
+			end
+		end
+	end
+
+	if Constants.DEBUG_MODE then
+		print(string.format(
+			"[SwapRay] P4 Mejor alineación: dot=%.3f (min=%.2f) → %s",
+			bestDot,
+			Constants.COVER_SWAP_ALIGNMENT_THRESHOLD,
+			if bestDot >= Constants.COVER_SWAP_ALIGNMENT_THRESHOLD then "OK" else "RECHAZADO"
+		))
+	end
+
+	if bestDot < Constants.COVER_SWAP_ALIGNMENT_THRESHOLD or not bestNormal then
+		return nil, nil, nil
+	end
+
+	-- ═══════════════════════════════════════════════════════════
+	-- PASO 5: Validación de coplanaridad (filtro de profundidad)
+	-- Desfase = |(Centro_nueva - Centro_actual) · N_actual|
+	-- Si es cercano a 0 → misma pared plana dividida por un hueco.
+	-- ═══════════════════════════════════════════════════════════
+	local currentCenter = currentCoverInstance.Position
+	local newCenter = newPart.Position
+	local depthOffset = math.abs((newCenter - currentCenter):Dot(coverNormal))
+
+	if Constants.DEBUG_MODE then
+		print(string.format(
+			"[SwapRay] P5 Coplanaridad: desfase=%.2f studs (max=%.2f) → %s",
+			depthOffset,
+			Constants.COVER_SWAP_COPLANARITY_THRESHOLD,
+			if depthOffset <= Constants.COVER_SWAP_COPLANARITY_THRESHOLD then "OK" else "RECHAZADO"
+		))
+	end
+
+	if depthOffset > Constants.COVER_SWAP_COPLANARITY_THRESHOLD then
+		return nil, nil, nil
+	end
+
+	-- ═══════════════════════════════════════════════════════════
+	-- VÁLIDO — Normal ganadora del Paso 4 + coplanaridad del Paso 5
+	-- ═══════════════════════════════════════════════════════════
+	if Constants.DEBUG_MODE then
+		print(string.format(
+			"[SwapRay] SWAP VÁLIDO → %s | normal=(%.2f,%.2f,%.2f) | alineación=%.3f | desfase=%.2f",
+			newPart.Name,
+			bestNormal.X, bestNormal.Y, bestNormal.Z,
+			bestDot, depthOffset
+		))
+	end
+
+	return newPart, bestNormal, hitResult.Position
 end
 
 ------------------------------------------------------------------------
@@ -366,12 +569,12 @@ function EnvironmentSensor:_snapNormalToFace(
 	-- Solo nos interesan caras laterales (X/Z). Si la normal es casi vertical → no es cover
 	local absX = math.abs(localNormal.X)
 	local absZ = math.abs(localNormal.Z)
-	if absX < 0.01 and absZ < 0.01 then
+	if absX < Constants.ENV_CORNER_EPSILON and absZ < Constants.ENV_CORNER_EPSILON then
 		return nil, nil
 	end
 
 	-- FASE 2: Detectar eje dominante con tie-breaker
-	local TIE_THRESHOLD = 0.15
+	local TIE_THRESHOLD = Constants.ENV_CORNER_NORMAL_TIE_THRESHOLD
 	local snappedLocalNormal: Vector3
 	local slideAxis: string -- "X" o "Z": eje a lo largo del cual el jugador se desliza
 
@@ -403,7 +606,7 @@ function EnvironmentSensor:_snapNormalToFace(
 
 	-- Si el hit estaba justo en el borde → empujar hacia el centro del Part
 	if slideAxis == "X" then
-		if math.abs(localHit.X) > (halfSize.X - margin - 0.01) then
+		if math.abs(localHit.X) > (halfSize.X - margin - Constants.ENV_CORNER_EPSILON) then
 			clampedHit = Vector3.new(
 				math.clamp(clampedHit.X, -halfSize.X + pushIn, halfSize.X - pushIn),
 				clampedHit.Y,
@@ -411,7 +614,7 @@ function EnvironmentSensor:_snapNormalToFace(
 			)
 		end
 	else
-		if math.abs(localHit.Z) > (halfSize.Z - margin - 0.01) then
+		if math.abs(localHit.Z) > (halfSize.Z - margin - Constants.ENV_CORNER_EPSILON) then
 			clampedHit = Vector3.new(
 				clampedHit.X,
 				clampedHit.Y,
@@ -424,7 +627,7 @@ function EnvironmentSensor:_snapNormalToFace(
 	local worldNormal = cf:VectorToWorldSpace(snappedLocalNormal)
 	-- Asegurar horizontal puro (por si el Part está levemente inclinado)
 	worldNormal = Vector3.new(worldNormal.X, 0, worldNormal.Z)
-	if worldNormal.Magnitude < 0.001 then
+	if worldNormal.Magnitude < Constants.ZERO_MAGNITUDE then
 		return nil, nil
 	end
 	worldNormal = worldNormal.Unit
@@ -485,7 +688,7 @@ end
 --- Ignora el componente Y de la dirección para mantener el cast horizontal.
 function EnvironmentSensor:_castSphere(origin: Vector3, direction: Vector3, distance: number): RaycastResult?
 	local dir2D = Vector3.new(direction.X, 0, direction.Z)
-	if dir2D.Magnitude < 0.001 then
+	if dir2D.Magnitude < Constants.ZERO_MAGNITUDE then
 		return nil
 	end
 	dir2D = dir2D.Unit * distance

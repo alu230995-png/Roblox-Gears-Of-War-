@@ -85,7 +85,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 
 	-- 1. CALCULAR EL RIEL: wallRight = Up × N → apunta a la DERECHA del jugador
 	local wallRight = Vector3.yAxis:Cross(coverNormal)
-	if wallRight.Magnitude < 0.001 then
+	if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
 		hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 		self:_applyWallGlue(hrp)
 		return
@@ -95,7 +95,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 	-- 2. OBTENER DIRECCIÓN: MoveDirection (input) o Camera LookVector (fallback auto-forward)
 	local humanoid = hrp.Parent and hrp.Parent:FindFirstChild("Humanoid") :: Humanoid?
 	local moveDirWorld = Vector3.zero
-	if humanoid and humanoid.MoveDirection.Magnitude > 0.01 then
+	if humanoid and humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		moveDirWorld = humanoid.MoveDirection
 	else
 		-- Fallback: usar Camera LookVector aplanado (auto-forward estilo RoadieRun)
@@ -103,7 +103,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 		if camera then
 			local lookDir = camera.CFrame.LookVector
 			local flat = Vector3.new(lookDir.X, 0, lookDir.Z)
-			if flat.Magnitude > 0.001 then
+			if flat.Magnitude > Constants.ZERO_MAGNITUDE then
 				moveDirWorld = flat.Unit
 			end
 		end
@@ -114,7 +114,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 
 	-- 4. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
 	local sensor = self._state.envSensor
-	if sensor and math.abs(movementScale) > 0.1 then
+	if sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
 		local newNormal, newPosition, newInstance = sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
 
 		if newNormal then
@@ -129,7 +129,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 			-- C) Recalcular el riel y la proyección con la nueva normal
 			coverNormal = newNormal
 			wallRight = Vector3.yAxis:Cross(coverNormal)
-			if wallRight.Magnitude < 0.001 then
+			if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
 				hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 				self:_applyWallGlue(hrp)
 				return
@@ -140,14 +140,14 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 	end
 
 	-- 5. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
-	if self._cornerCover and math.abs(movementScale) > 0.01 then
+	if self._cornerCover and math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		if self._cornerCover:IsBlocked(movementScale) then
 			movementScale = 0
 		end
 	end
 
 	-- 6. APLICAR VELOCIDAD sobre el riel (COVER_RUN_SPEED — más rápido que COVER_WALK_SPEED)
-	if math.abs(movementScale) > 0.01 then
+	if math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		local velocity = wallRight * movementScale * Constants.COVER_RUN_SPEED
 		hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, hrp.AssemblyLinearVelocity.Y, velocity.Z)
 	else

@@ -98,7 +98,7 @@ function EvadeHandler:Update(dt: number)
 				self._evadeDirection.Z * self._evadeSpeed
 			)
 			self._evadeSpeed *= (1 - Constants.EVADE_DECELERATION * dt)
-			if self._evadeSpeed < 0.5 then
+			if self._evadeSpeed < Constants.EVADE_MIN_SPEED then
 				self._evadeSpeed = 0
 			end
 		end
@@ -116,92 +116,92 @@ end
 
 EvadeHandler._handlers = {
 	Evade = function(self, _data)
-		self._stateMachine:Lock()
+	self._stateMachine:Lock()
 
-		local character = self._player.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
-		if hrp and humanoid then
-			-- Dirección: hacia donde camina, o forward si está quieto
-			if humanoid.MoveDirection.Magnitude > 0.1 then
-				self._evadeDirection = humanoid.MoveDirection.Unit
-			else
-				local look = hrp.CFrame.LookVector
-				self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
-			end
-			self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-			-- Impulso inmediato — no esperar al primer tick de Update
-			hrp.AssemblyLinearVelocity = Vector3.new(
-				self._evadeDirection.X * self._evadeSpeed,
-				hrp.AssemblyLinearVelocity.Y,
-				self._evadeDirection.Z * self._evadeSpeed
-			)
+	local character = self._player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
+	if hrp and humanoid then
+		-- Dirección: hacia donde camina, o forward si está quieto
+		if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
+			self._evadeDirection = humanoid.MoveDirection.Unit
+		else
+			local look = hrp.CFrame.LookVector
+			self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
 		end
+		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+		-- Impulso inmediato — no esperar al primer tick de Update
+		hrp.AssemblyLinearVelocity = Vector3.new(
+			self._evadeDirection.X * self._evadeSpeed,
+			hrp.AssemblyLinearVelocity.Y,
+			self._evadeDirection.Z * self._evadeSpeed
+		)
+	end
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	RollOutOfCover = function(self, _data)
-		-- Limpiar estado de cover antes del roll
-		local coverNormal = self._coverHandler:GetNormal()
-		self._coverHandler:ResetCover()
+	-- Limpiar estado de cover antes del roll
+	local coverNormal = self._coverHandler:GetNormal()
+	self._coverHandler:ResetCover()
 
-		-- Dirección: alejarse de la pared (cover normal)
-		if coverNormal then
-			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
-		else
-			local character = self._player.Character
-			local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if hrp then
-				local look = hrp.CFrame.LookVector
-				self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
-			end
-		end
-
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-
-		-- Impulso inmediato al salir de cover
+	-- Dirección: alejarse de la pared (cover normal)
+	if coverNormal then
+		self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+	else
 		local character = self._player.Character
 		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if hrp and self._evadeDirection then
-			hrp.AssemblyLinearVelocity = Vector3.new(
-				self._evadeDirection.X * self._evadeSpeed,
-				hrp.AssemblyLinearVelocity.Y,
-				self._evadeDirection.Z * self._evadeSpeed
-			)
+		if hrp then
+			local look = hrp.CFrame.LookVector
+			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
 		end
+	end
 
-		self._stateMachine:Lock()
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+
+	-- Impulso inmediato al salir de cover
+	local character = self._player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if hrp and self._evadeDirection then
+		hrp.AssemblyLinearVelocity = Vector3.new(
+			self._evadeDirection.X * self._evadeSpeed,
+			hrp.AssemblyLinearVelocity.Y,
+			self._evadeDirection.Z * self._evadeSpeed
+		)
+	end
+
+	self._stateMachine:Lock()
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	Mantle = function(self, _data)
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		-- Timer: animación de mantle
-		self:_startTimer(0.6, function()
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	-- Timer: animación de mantle
+	self:_startTimer(Constants.MANTLE_DURATION, function()
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	Vault = function(self, _data)
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
 		-- Timer: animación de vault (más corto que mantle)
-		self:_startTimer(0.5, function()
+		self:_startTimer(Constants.VAULT_DURATION, function()
 			self._stateMachine:Unlock()
 			self._stateMachine:TransitionTo("Idle")
 		end)

@@ -247,15 +247,15 @@ PlayerState.Transitions = {
 	CoverIdle = { "CoverAim", "CoverBlindFire", "CoverWalking", "CoverCorners", "CoverSwap", "Reloading", "Mantling" },
 	CoverAim = { "CoverIdle", "Firing" },
 	CoverBlindFire = { "CoverIdle" },
-	CoverWalking = { "CoverIdle", "CoverRunning", "CoverAim", "CoverBlindFire" },
+	CoverWalking = { "CoverIdle", "CoverRunning", "CoverAim", "CoverBlindFire", "CoverSwap" },
 	CoverRunning = { "CoverWalking", "CoverIdle" },
-	CoverCorners = { "CoverIdle", "CoverAim", "CoverBlindFire", "Idle" },
+	CoverCorners = { "CoverIdle", "CoverAim", "CoverBlindFire", "Idle", "CoverSwap" },
 
 	-- Transiciones específicas — Action Group
 	CoverSlide = { "CoverIdle" },
 	CoverEntering = { "CoverIdle", "Idle" },
 	CoverExiting = { "Idle" },
-	CoverSwap = { "CoverIdle" },
+	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking" },
 	Evading = { "Idle" },
 	Mantling = { "Idle" },
 	Executing = { "Idle" },

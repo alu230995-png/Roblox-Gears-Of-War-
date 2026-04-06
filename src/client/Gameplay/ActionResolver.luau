@@ -50,6 +50,145 @@ local function isEvadeCooldownMet(resolver): boolean
 end
 
 ------------------------------------------------------------------------
+-- HELPER: Cover Swap — Escaneo Pasivo + Gatillo de Acción
+------------------------------------------------------------------------
+-- Arquitectura de 2 fases:
+--   Fase A (Escaneo pasivo): Mientras el jugador está en esquina y mantiene
+--     input lateral hacia el vacío, el sistema lanza el rayo de detección
+--     frame a frame. No desplaza al jugador; solo reporta si hay cover válida.
+--   Fase B (Gatillo manual): Al pulsar el botón de acción (Space tap /
+--     WantsCover), el sistema evalúa:
+--       - Si hay escaneo positivo → Cover Swap.
+--       - Si no hay cover válida → se ignora (protección contra salto suicida).
+------------------------------------------------------------------------
+local Players = game:GetService("Players")
+
+-- Throttle: evitar spam en consola (imprime como máximo cada 0.3 s)
+local _swapDebugLastPrint = 0
+
+--- Fase A: Escaneo pasivo — se ejecuta cada frame cuando el jugador está
+--- en esquina y tiene input lateral hacia el vacío.
+--- @return table? swapData — { newPart, newNormal, hitPosition, moveDir } o nil
+local function _scanCoverSwap(ctx): any?
+	local env = ctx.Env
+	local coverHandler = ctx.CoverHandler
+	if not coverHandler or not ctx.EnvSensor then
+		return nil
+	end
+
+	local coverNormal = coverHandler:GetNormal()
+	local wallRight = coverHandler:GetWallRight()
+	if not coverNormal or not wallRight then
+		return nil
+	end
+
+	-- Detectar dirección lateral del input
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return nil
+	end
+	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	if not humanoid or humanoid.MoveDirection.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+		return nil
+	end
+
+	local movementScale = humanoid.MoveDirection:Dot(wallRight)
+	if math.abs(movementScale) < Constants.LATERAL_TRIGGER_THRESHOLD then
+		return nil
+	end
+
+	-- Verificar que estamos en una esquina bloqueada en esa dirección
+	local atCorner = (movementScale > 0 and env.IsAtCornerRight) or (movementScale < 0 and env.IsAtCornerLeft)
+
+	if Constants.DEBUG_MODE then
+		local now = os.clock()
+		if now - _swapDebugLastPrint > 0.3 then
+			_swapDebugLastPrint = now
+			print(
+				string.format(
+					"[CoverSwap] Escaneo pasivo: scale=%.2f | esquina=%s (izq=%s, der=%s)",
+					movementScale,
+					tostring(atCorner),
+					tostring(env.IsAtCornerLeft),
+					tostring(env.IsAtCornerRight)
+				)
+			)
+		end
+	end
+
+	if not atCorner then
+		return nil
+	end
+
+	-- Lanzar rayo de detección (escaneo pasivo frame a frame)
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return nil
+	end
+
+	local moveDir = if movementScale > 0 then 1 else -1
+	local coverInstance = coverHandler._coverState and coverHandler._coverState.coverInstance
+	if not coverInstance then
+		return nil
+	end
+
+	local newPart, newNormal, hitPos =
+		ctx.EnvSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance, humanoid.MoveDirection)
+
+	if newPart and newNormal and hitPos then
+		if Constants.DEBUG_MODE then
+			print(
+				string.format(
+					"[CoverSwap] Escaneo POSITIVO — newPart=%s | hitPos=(%.1f,%.1f,%.1f) | dir=%s",
+					newPart.Name,
+					hitPos.X,
+					hitPos.Y,
+					hitPos.Z,
+					if moveDir > 0 then "→" else "←"
+				)
+			)
+		end
+		return {
+			newPart = newPart,
+			newNormal = newNormal,
+			hitPosition = hitPos,
+			moveDir = moveDir,
+		}
+	end
+
+	return nil
+end
+
+--- Fase B: Check completo — escaneo pasivo + gatillo de botón (WantsCover tap).
+--- Si el escaneo reporta cover válida Y el jugador presionó el botón → true.
+--- Si no hay cover o no hay botón → false (protección contra salto suicida).
+local function _checkCoverSwap(ctx): boolean
+	local scanData = _scanCoverSwap(ctx)
+	if not scanData then
+		return false
+	end
+
+	-- Gatillo manual: el jugador debe presionar el botón de acción (Space tap)
+	if not ctx.Buffer:HasIntent("WantsCover") then
+		if Constants.DEBUG_MODE then
+			local now = os.clock()
+			if now - _swapDebugLastPrint > 0.3 then
+				_swapDebugLastPrint = now
+				print("[CoverSwap] Escaneo POSITIVO pero NO hay WantsCover — esperando botón…")
+			end
+		end
+		return false
+	end
+
+	if Constants.DEBUG_MODE then
+		print("[CoverSwap] GATILLO ACTIVADO — Escaneo + WantsCover → ejecutando Cover Swap!")
+	end
+
+	ctx._swapData = scanData
+	return true
+end
+
+------------------------------------------------------------------------
 -- RULE TABLES (module-level constants — creadas una sola vez)
 ------------------------------------------------------------------------
 -- Cada regla: { id: string, check: (resolver, ctx) → bool, execute: (resolver, ctx) → (string, string?, any?) }
@@ -80,12 +219,12 @@ local FREE_STATE_RULES = {
 	{
 		id = "Mantle",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsMantle") and ctx.Env.HasCoverNearby and ctx.Env.CoverType == "Low"
+			return ctx.Buffer:HasIntent("WantsMantle") and ctx.Env.HasCoverNearby and ctx.Env.CoverType == "Low"
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsMantle")
-	ctx.Buffer:Consume("WantsCover")
-	return "Mantle", "Mantling", nil
+			ctx.Buffer:Consume("WantsMantle")
+			ctx.Buffer:Consume("WantsCover")
+			return "Mantle", "Mantling", nil
 		end,
 	},
 
@@ -93,15 +232,15 @@ local FREE_STATE_RULES = {
 	{
 		id = "Evade",
 		check = function(resolver, ctx)
-	local wantsEvade = ctx.Buffer:HasIntent("WantsEvade")
-	local coverFallback = ctx.Buffer:HasIntent("WantsCover") and not ctx.Env.HasCoverNearby
-	return (wantsEvade or coverFallback) and ctx.StateConfig.canEvade and isEvadeCooldownMet(resolver)
+			local wantsEvade = ctx.Buffer:HasIntent("WantsEvade")
+			local coverFallback = ctx.Buffer:HasIntent("WantsCover") and not ctx.Env.HasCoverNearby
+			return (wantsEvade or coverFallback) and ctx.StateConfig.canEvade and isEvadeCooldownMet(resolver)
 		end,
 		execute = function(resolver, ctx)
-	resolver._evadeStartTime = os.clock()
-	ctx.Buffer:Consume("WantsEvade")
-	ctx.Buffer:Consume("WantsCover")
-	return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
+			resolver._evadeStartTime = os.clock()
+			ctx.Buffer:Consume("WantsEvade")
+			ctx.Buffer:Consume("WantsCover")
+			return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
 		end,
 	},
 
@@ -109,12 +248,12 @@ local FREE_STATE_RULES = {
 	{
 		id = "StartRoadieRun",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsRoadieRun")
-		and ctx.StateConfig.canSprint
-		and (ctx.State == "Idle" or ctx.State == "Walking")
+			return ctx.Intents:HasIntent("WantsRoadieRun")
+				and ctx.StateConfig.canSprint
+				and (ctx.State == "Idle" or ctx.State == "Walking")
 		end,
 		execute = function()
-	return "StartRoadieRun", "RoadieRun", nil
+			return "StartRoadieRun", "RoadieRun", nil
 		end,
 	},
 
@@ -122,12 +261,12 @@ local FREE_STATE_RULES = {
 	{
 		id = "StartAim",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsAim")
-		and ctx.StateConfig.canShoot
-		and (ctx.State == "Idle" or ctx.State == "Walking")
+			return ctx.Intents:HasIntent("WantsAim")
+				and ctx.StateConfig.canShoot
+				and (ctx.State == "Idle" or ctx.State == "Walking")
 		end,
 		execute = function()
-	return "StartAim", "Aiming", nil
+			return "StartAim", "Aiming", nil
 		end,
 	},
 
@@ -135,10 +274,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "StopAim",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsStopAim") and ctx.State == "Aiming"
+			return ctx.Intents:HasIntent("WantsStopAim") and ctx.State == "Aiming"
 		end,
 		execute = function()
-	return "StopAim", "Idle", nil
+			return "StopAim", "Idle", nil
 		end,
 	},
 
@@ -146,10 +285,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "Shoot",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsShoot") and ctx.StateConfig.canShoot and ctx.State == "Aiming"
+			return ctx.Intents:HasIntent("WantsShoot") and ctx.StateConfig.canShoot and ctx.State == "Aiming"
 		end,
 		execute = function()
-	return "Shoot", "Firing", nil
+			return "Shoot", "Firing", nil
 		end,
 	},
 
@@ -157,10 +296,10 @@ local FREE_STATE_RULES = {
 	{
 		id = "StopShoot",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsStopShoot") and ctx.State == "Firing"
+			return ctx.Intents:HasIntent("WantsStopShoot") and ctx.State == "Firing"
 		end,
 		execute = function()
-	return "StopShoot", "Aiming", nil
+			return "StopShoot", "Aiming", nil
 		end,
 	},
 
@@ -168,17 +307,17 @@ local FREE_STATE_RULES = {
 	{
 		id = "Reload",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsReload")
+			return ctx.Buffer:HasIntent("WantsReload")
 		end,
 		execute = function(_resolver, ctx)
-	if ctx.State == "Reloading" then
-		ctx.Buffer:Consume("WantsReload")
-		return "ActiveReload", "ActiveReloading", nil
-	elseif ctx.StateConfig.canMove then
-		ctx.Buffer:Consume("WantsReload")
-		return "Reload", "Reloading", nil
-	end
-	return "NoAction", nil, nil
+			if ctx.State == "Reloading" then
+				ctx.Buffer:Consume("WantsReload")
+				return "ActiveReload", "ActiveReloading", nil
+			elseif ctx.StateConfig.canMove then
+				ctx.Buffer:Consume("WantsReload")
+				return "Reload", "Reloading", nil
+			end
+			return "NoAction", nil, nil
 		end,
 	},
 
@@ -186,11 +325,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Melee",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsMelee")
+			return ctx.Buffer:HasIntent("WantsMelee")
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsMelee")
-	return "Melee", nil, nil
+			ctx.Buffer:Consume("WantsMelee")
+			return "Melee", nil, nil
 		end,
 	},
 
@@ -198,11 +337,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Chainsaw",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsChainsaw")
+			return ctx.Buffer:HasIntent("WantsChainsaw")
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsChainsaw")
-	return "Chainsaw", nil, nil
+			ctx.Buffer:Consume("WantsChainsaw")
+			return "Chainsaw", nil, nil
 		end,
 	},
 
@@ -210,11 +349,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "Interact",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsInteract")
+			return ctx.Buffer:HasIntent("WantsInteract")
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsInteract")
-	return "Interact", nil, nil
+			ctx.Buffer:Consume("WantsInteract")
+			return "Interact", nil, nil
 		end,
 	},
 
@@ -222,11 +361,11 @@ local FREE_STATE_RULES = {
 	{
 		id = "SwapWeapon",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsSwapWeapon")
+			return ctx.Buffer:HasIntent("WantsSwapWeapon")
 		end,
 		execute = function(_resolver, ctx)
-	local _, swapData = ctx.Buffer:Consume("WantsSwapWeapon")
-	return "SwapWeapon", nil, { slot = swapData }
+			local _, swapData = ctx.Buffer:Consume("WantsSwapWeapon")
+			return "SwapWeapon", nil, { slot = swapData }
 		end,
 	},
 
@@ -234,19 +373,19 @@ local FREE_STATE_RULES = {
 	{
 		id = "Movement",
 		check = function()
-	return true -- Siempre se evalúa como fallback
+			return true -- Siempre se evalúa como fallback
 		end,
 		execute = function(_resolver, ctx)
-	if ctx.HasMovement then
-		if ctx.State == "Idle" then
-			return "StartWalking", "Walking", nil
-		end
-	else
-		if ctx.State == "Walking" then
-			return "StopWalking", "Idle", nil
-		end
-	end
-	return "NoAction", nil, nil
+			if ctx.HasMovement then
+				if ctx.State == "Idle" then
+					return "StartWalking", "Walking", nil
+				end
+			else
+				if ctx.State == "Walking" then
+					return "StopWalking", "Idle", nil
+				end
+			end
+			return "NoAction", nil, nil
 		end,
 	},
 }
@@ -381,12 +520,27 @@ local COVER_IDLE_RULES = {
 		check = function(_resolver, ctx)
 			return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
 				and ctx.Env.CoverType == "Low"
-				and ctx.Env.MoveDirection.Y > 0.3
+				and ctx.Env.MoveDirection.Y > Constants.ROADIE_RUN_INPUT_THRESHOLD
 		end,
 		execute = function(_resolver, ctx)
 			ctx.Buffer:Consume("WantsCover")
 			ctx.Buffer:Consume("WantsMantle")
 			return "Vault", "Mantling", nil
+		end,
+	},
+
+	-- Prio 3b: Cover Swap (salto entre coberturas adyacentes en esquina)
+	-- Requiere: escaneo pasivo positivo (input lateral en esquina) + botón de acción (Space tap).
+	-- Si el escaneo no encuentra cover válida, el botón se ignora (protección anti-suicidio).
+	{
+		id = "CoverSwapIdle",
+		check = function(_resolver, ctx)
+			return _checkCoverSwap(ctx)
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover")
+			ctx.Buffer:Consume("WantsMantle")
+			return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
 
@@ -488,29 +642,42 @@ local COVER_WALKING_RULES = {
 		end,
 	},
 
-	-- Prio 3: Block Space Tap — tap está deshabilitado mientras caminas en cover.
+	-- Prio 3: Cover Swap (salto entre coberturas adyacentes mientras caminas en esquina)
+	-- Se evalúa ANTES de BlockCoverTap para que WantsCover no se consuma prematuramente.
+	-- Requiere: escaneo pasivo positivo + botón de acción (Space tap).
+	{
+		id = "CoverSwapWalking",
+		check = function(_resolver, ctx)
+			return _checkCoverSwap(ctx)
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover")
+			ctx.Buffer:Consume("WantsMantle")
+			return "CoverSwap", "CoverSwap", ctx._swapData
+		end,
+	},
+	-- Prio 3b: Block Space Tap — tap está deshabilitado mientras caminas en cover.
 	-- Solo Hold (WantsRoadieRun) es válido. Consume el intent para que no filtre
 	-- al buffer y sea recogido al transicionar a CoverIdle.
 	{
 		id = "BlockCoverTap",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsCover")
+			return ctx.Buffer:HasIntent("WantsCover")
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsCover")
-	ctx.Buffer:Consume("WantsMantle")
-	return "NoAction", nil, nil
+			ctx.Buffer:Consume("WantsCover")
+			ctx.Buffer:Consume("WantsMantle")
+			return "NoAction", nil, nil
 		end,
 	},
-
 	-- Prio 4: Aim (pop-up / peek)
 	{
 		id = "PopUpAim",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsAim")
+			return ctx.Intents:HasIntent("WantsAim")
 		end,
 		execute = function()
-	return "PopUpAim", "CoverAim", nil
+			return "PopUpAim", "CoverAim", nil
 		end,
 	},
 
@@ -518,11 +685,11 @@ local COVER_WALKING_RULES = {
 	{
 		id = "BlindFire",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsBlindFire")
-		or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
+			return ctx.Intents:HasIntent("WantsBlindFire")
+				or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
 		end,
 		execute = function()
-	return "BlindFire", "CoverBlindFire", nil
+			return "BlindFire", "CoverBlindFire", nil
 		end,
 	},
 
@@ -530,11 +697,11 @@ local COVER_WALKING_RULES = {
 	{
 		id = "ReloadInCover",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsReload")
+			return ctx.Buffer:HasIntent("WantsReload")
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsReload")
-	return "Reload", "Reloading", nil
+			ctx.Buffer:Consume("WantsReload")
+			return "Reload", "Reloading", nil
 		end,
 	},
 
@@ -542,10 +709,10 @@ local COVER_WALKING_RULES = {
 	{
 		id = "StopCoverWalking",
 		check = function(_resolver, ctx)
-	return not hasMovementIntent(ctx.Intents)
+			return not hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-	return "StopCoverWalking", "CoverIdle", nil
+			return "StopCoverWalking", "CoverIdle", nil
 		end,
 	},
 
@@ -553,10 +720,10 @@ local COVER_WALKING_RULES = {
 	{
 		id = "StartCoverRunning",
 		check = function(_resolver, ctx)
-	return ctx.Intents:HasIntent("WantsRoadieRun")
+			return ctx.Intents:HasIntent("WantsRoadieRun")
 		end,
 		execute = function()
-	return "StartCoverRunning", "CoverRunning", nil
+			return "StartCoverRunning", "CoverRunning", nil
 		end,
 	},
 }
@@ -660,6 +827,20 @@ local COVER_RUNNING_RULES = {
 	},
 }
 
+--- COVER SWAP RULES (animación comprometida — ActionGroup)
+--- Única cancelación: hold Space → CoverRunning.
+local COVER_SWAP_RULES = {
+	{
+		id = "CancelSwapToRun",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsRoadieRun")
+		end,
+		execute = function()
+			return "StartCoverRunning", "CoverRunning", nil
+		end,
+	},
+}
+
 --- Mapa de sub-estado de cover → rule table correspondiente
 --- Los nuevos estados de cover (CoverCorners) usan COVER_IDLE_RULES como fallback.
 local COVER_SUB_RULES = {
@@ -669,6 +850,7 @@ local COVER_SUB_RULES = {
 	CoverWalking = COVER_WALKING_RULES,
 	CoverRunning = COVER_RUNNING_RULES,
 	CoverCorners = COVER_IDLE_RULES,
+	CoverSwap = COVER_SWAP_RULES,
 }
 
 ------------------------------------------------------------------------
@@ -684,6 +866,7 @@ function ActionResolver.new(stateMachine, inputBuffer, intentMapper, environment
 	self._buffer = inputBuffer
 	self._intents = intentMapper
 	self._env = environmentSensor
+	self._coverHandler = nil -- Inyectado después via SetCoverHandler()
 
 	-- Signal de salida: (action: string, targetState: string?, data: any?)
 	self.ActionResolved = Signal.new()
@@ -708,6 +891,13 @@ function ActionResolver:Start()
 	-- Sin conexiones propias — Resolve() es llamado por el heartbeat
 end
 
+--- Inyecta la referencia al CoverHandler (CoverMain) después de su creación.
+--- Necesario porque MovementController crea CoverMain internamente y
+--- MovementController a su vez recibe ActionResolver → dependencia circular.
+function ActionResolver:SetCoverHandler(coverHandler)
+	self._coverHandler = coverHandler
+end
+
 function ActionResolver:Destroy()
 	if self.ActionResolved then
 		self.ActionResolved:Destroy()
@@ -725,7 +915,11 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	local state = self._stateMachine:GetCurrentState()
 
 	-- En estados bloqueantes (animación comprometida) o inactivos, no resolver nada.
-	if self._stateMachine:IsInGroup("ActionGroup") or self._stateMachine:IsInGroup("InactiveGroup") then
+	-- Excepción: CoverSwap permite cancelación via hold Space → CoverRunning.
+	if self._stateMachine:IsInGroup("InactiveGroup") then
+		return "NoAction", nil, nil
+	end
+	if self._stateMachine:IsInGroup("ActionGroup") and state ~= "CoverSwap" then
 		return "NoAction", nil, nil
 	end
 
@@ -759,6 +953,8 @@ function ActionResolver:_buildContext(state: string)
 		State = state,
 		StateConfig = PlayerStateModule.GetState(state),
 		Env = self._env:GetContext(),
+		EnvSensor = self._env,
+		CoverHandler = self._coverHandler,
 		Buffer = self._buffer,
 		Intents = self._intents,
 		HasMovement = hasMovementIntent(self._intents),
@@ -773,6 +969,11 @@ end
 function ActionResolver:_selectRules(state: string, _ctx)
 	if state == "DBNO" then
 		return DBNO_RULES
+	end
+
+	-- CoverSwap es ActionGroup pero tiene su propia tabla de reglas (cancelación)
+	if state == "CoverSwap" then
+		return COVER_SWAP_RULES
 	end
 
 	if self._stateMachine:IsInGroup("CoverGroup") then

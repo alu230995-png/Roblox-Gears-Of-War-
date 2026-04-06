@@ -74,6 +74,7 @@ local intentMapper = IntentMapper.new(inputDetector)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
 local movementController = MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer)
+actionResolver:SetCoverHandler(movementController:GetCoverHandler())
 local animationController = AnimationController.new(stateMachine, actionResolver)
 local cameraController = CameraController.new(stateMachine, actionResolver)
 

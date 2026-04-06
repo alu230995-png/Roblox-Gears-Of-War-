@@ -61,16 +61,17 @@ end
 --- Conecta al Signal ActionResolved del ActionResolver.
 --- MovementController reacciona a acciones resueltas sin acoplamiento directo.
 function MovementController:Start()
-	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(
-		function(action: string, targetState: string?, data: any?)
-			self:ExecuteAction(action, targetState, data)
-		end
-	)
+	-- Inyectar CoverHandler al resolver (necesario para CoverSwap)
+	self._actionResolver:SetCoverHandler(self._coverHandler)
+
+	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(function(action, targetState, data)
+		self:ExecuteAction(action, targetState, data)
+	end)
 end
 
 function MovementController:Destroy()
 	for _, conn in self._connections do
-		conn.Disconnect()
+		conn:Disconnect()
 	end
 	table.clear(self._connections)
 end
@@ -126,20 +127,21 @@ function MovementController:Update(dt: number)
 		wantsCoverRedirect = true
 	end
 
-	-- Sub-handlers
+	local stateBefore = self._stateMachine:GetCurrentState()
+
 	self._coverHandler:Update(dt, self._envSensor:GetContext(), wantsCoverRedirect)
 	self._evadeHandler:Update(dt)
 
-	-- RoadieRun: velocidad constante hacia el input o look vector (auto-forward GoW)
 	if currentState == "RoadieRun" then
 		self:_updateRoadieRun()
 	end
 
-	-- Rotación del personaje
 	self._rotationHandler:Update(dt, currentState, self._coverHandler:GetNormal())
 
-	-- Re-aplicar speed (por si un timer de sub-handler transicionó estado)
-	self:_applyMovementSpeed()
+	-- Solo re-aplicar si el estado cambió internamente en un sub-handler
+	if self._stateMachine:GetCurrentState() ~= stateBefore then
+		self:_applyMovementSpeed()
+	end
 end
 
 ------------------------------------------------------------------------
@@ -188,7 +190,7 @@ function MovementController:_updateRoadieRun()
 
 	-- Elegir dirección base: input activo o look vector
 	local rawDir: Vector3
-	if humanoid.MoveDirection.Magnitude > 0.1 then
+	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
 		rawDir = humanoid.MoveDirection
 	else
 		rawDir = hrp.CFrame.LookVector
@@ -196,7 +198,7 @@ function MovementController:_updateRoadieRun()
 
 	-- Aplanar al plano horizontal y normalizar
 	local flatDir = Vector3.new(rawDir.X, 0, rawDir.Z)
-	if flatDir.Magnitude < 0.001 then
+	if flatDir.Magnitude < Constants.ZERO_MAGNITUDE then
 		return
 	end
 	flatDir = flatDir.Unit

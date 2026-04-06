@@ -31,6 +31,7 @@ local EnteringCover = require(script.EnteringCover)
 local InCover = require(script.InCover)
 local CoverRunning = require(script.CoverRunning)
 local CornerCover = require(script.CornerCover)
+local CoverSwapController = require(script.CoverSwapController)
 
 local CoverMain = {}
 CoverMain.__index = CoverMain
@@ -46,6 +47,7 @@ local COVER_ACTIONS: { [string]: boolean } = {
 	Vault = true,
 	StartCoverRunning = true,
 	StopCoverRunning = true,
+	CoverSwap = true,
 }
 
 ------------------------------------------------------------------------
@@ -74,6 +76,7 @@ function CoverMain.new(stateMachine, environmentSensor)
 	self._enteringCover = EnteringCover.new(self._coverState)
 	self._inCover = InCover.new(self._coverState, self._cornerCover)
 	self._coverRunning = CoverRunning.new(self._coverState, self._cornerCover)
+	self._coverSwapController = CoverSwapController.new(self._coverState)
 
 	-- Flags de transición pendiente
 	self._pendingCoverIdleTransition = false
@@ -179,6 +182,17 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	if self._coverRunning:IsActive() then
 		self._coverRunning:Update(dt, envContext)
 	end
+
+	-- COVER SWAP: movimiento Bézier entre coberturas adyacentes
+	if self._coverSwapController:IsActive() then
+		local swapResult = self._coverSwapController:Update(dt)
+		if swapResult == "complete" then
+			-- coverState ya está actualizado por el controller (orden crítico)
+			if not self._stateMachine:TransitionTo("CoverIdle") then
+				self._pendingCoverIdleTransition = true
+			end
+		end
+	end
 end
 
 --- Retorna la normal de la pared de cover actual (nil si no está en cover).
@@ -209,6 +223,7 @@ end
 --- Limpia todo el estado de cover (usado por EvadeHandler al hacer RollOutOfCover).
 function CoverMain:ResetCover()
 	self._enteringCover:Cancel()
+	self._coverSwapController:Cancel()
 	self._pendingCoverIdleTransition = false
 	self._pendingIdleTransition = false
 	self._isExiting = false
@@ -288,12 +303,22 @@ CoverMain._handlers = {
 
 	--- Inicia CoverRunning (sprint en cover).
 	StartCoverRunning = function(self, _data)
+	-- Cancelar swap en progreso si se activa CoverRunning (hold Space durante swap)
+	self._coverSwapController:Cancel()
 	self._coverRunning:Begin()
 	end,
 
 	--- Detiene CoverRunning (suelta sprint o deja de moverse).
 	StopCoverRunning = function(self, _data)
 	self._coverRunning:Stop()
+	end,
+
+	--- Cover Swap: salto entre coberturas adyacentes desde esquina.
+	CoverSwap = function(self, data)
+	if not data then
+		return
+	end
+	self._coverSwapController:Begin(data)
 	end,
 }
 
