@@ -229,8 +229,18 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 		initialDist = Constants.COVER_MIN_SNAP_DIST
 	end
 
+	-- Approach CFrame: mirar HACIA el punto de destino (anticipación visual)
+	local toTarget = Vector3.new(targetPos.X - rootPart.Position.X, 0, targetPos.Z - rootPart.Position.Z)
+	local approachCFrame
+	if toTarget.Magnitude > 0.1 then
+		approachCFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + toTarget.Unit)
+	else
+		approachCFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + wallNormal)
+	end
+
 	return {
 		snapCFrame = snapCFrame,
+		approachCFrame = approachCFrame,
 		wallNormal = wallNormal,
 		wallRight = wallRight,
 		coverPart = coverPart,
@@ -299,26 +309,36 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 		newPos = Vector3.new(currentPos.X + step.X, currentPos.Y, currentPos.Z + step.Z)
 	end
 
-	-- ── 3. ROTACIÓN solo al final (último 50% del recorrido) ───
+	-- ── 3. ROTACIÓN EN DOS FASES ──────────────────────────────────
+	--
+	-- Fase 1 (Approach Alignment): t < 0.7
+	--   El personaje rota rápido hacia el PUNTO DE DESTINO.
+	--   Anticipación visual: "he decidido ir hacia esa cobertura".
+	--
+	-- Fase 2 (Normal Snapping): t >= 0.7
+	--   Transición de orientación desde approach hacia la NORMAL de la pared.
+	--   Al completar, el personaje mira exactamente en la dirección de la normal.
 
-	local ROTATION_START = Constants.COVER_START_ROTATION_BLEND
+	local NORMAL_ROT_START = Constants.COVER_NORMAL_ROT_START
 
-	if t >= ROTATION_START then
-		-- Remapear t: 0.7→1.0 se convierte en 0→1 para la rotación
-		local rotT = (t - ROTATION_START) / (1 - ROTATION_START)
-		-- QuadOut para la rotación también
-		local rotEase = 1 - (1 - rotT) * (1 - rotT)
+	if t < NORMAL_ROT_START then
+		-- Fase 1: Rotar hacia el punto de destino (approach)
+		local approachRot = data.approachCFrame.Rotation
+		local currentRot = rootPart.CFrame.Rotation
+		local blended = currentRot:Lerp(approachRot, 1 - math.exp(-Constants.COVER_APPROACH_ROT_SPEED * dt))
+		rootPart.CFrame = CFrame.new(newPos) * blended
+	else
+		-- Fase 2: Transición de approach → normal de la pared
+		local rotT = (t - NORMAL_ROT_START) / (1 - NORMAL_ROT_START)
+		local rotEase = 1 - (1 - rotT) * (1 - rotT) -- QuadOut
 
 		local rotBlend = Constants.COVER_ROTATION_BLEND_MIN
 			+ (Constants.COVER_ROTATION_BLEND_MAX - Constants.COVER_ROTATION_BLEND_MIN) * rotEase
 
 		local currentRot = rootPart.CFrame.Rotation
-		local targetRot = targetCF.Rotation
+		local targetRot = targetCF.Rotation -- normal de la pared
 		local blendedRot = currentRot:Lerp(targetRot, rotBlend)
 		rootPart.CFrame = CFrame.new(newPos) * blendedRot
-	else
-		-- Sin rotación: mantener orientación actual, solo mover posición
-		rootPart.CFrame = CFrame.new(newPos) * rootPart.CFrame.Rotation
 	end
 
 	-- ── 4. COMPROBACIÓN DE COMPLETADO ─────────────────────────────

@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -80,12 +80,13 @@ Constants.GRAVITY = 220
 Constants.JUMP_POWER = 0
 
 ------------------------------------------------------------------------
--- 5. CAMERA — FOV, bob, offsets por estado
+-- 5. CAMERA
 ------------------------------------------------------------------------
 
--- FOV base y variantes
+-- FOV
 Constants.DEFAULT_FOV = 70
 Constants.ROADIE_RUN_FOV = 80
+Constants.CAMERA_FOV_LERP_SPEED = 5
 
 -- Offsets de FOV por estado (sumados a DEFAULT_FOV)
 Constants.CAMERA_FOV_COVER_AIM_OFFSET = -5
@@ -95,13 +96,78 @@ Constants.CAMERA_FOV_FIRING_OFFSET = -8
 Constants.CAMERA_FOV_DBNO_OFFSET = -5
 Constants.CAMERA_FOV_DEATH_OFFSET = -10
 
--- Camera Bob
+-- Camera offsets por estado (Vector3)
+Constants.CAMERA_DEFAULT_OFFSET = Vector3.new(1.5, 2, -4)
+Constants.CAMERA_COVER_OFFSET = Vector3.new(0, 2, -3)
+Constants.CAMERA_AIM_OFFSET = Vector3.new(0, 1.5, -2)
+Constants.CAMERA_DBNO_OFFSET = Vector3.new(0, 1, -2)
+Constants.CAMERA_DEATH_OFFSET = Vector3.new(0, 3, -6)
+
+-- Sensibilidad de cámara por estado (multiplicador sobre delta del mouse)
+Constants.CAM_SENSITIVITY_DEFAULT = 1.0
+Constants.CAM_SENSITIVITY_WALK = 1.0
+Constants.CAM_SENSITIVITY_ROADIE = 0.2
+Constants.CAM_SENSITIVITY_COVER = 1.0
+Constants.CAM_SENSITIVITY_AIM = 0.5
+Constants.CAM_SENSITIVITY_DBNO = 0.4
+
+-- Camera bob
 Constants.CAMERA_BOB_ENABLED = true
 Constants.CAMERA_BOB_FREQUENCY = 8
 Constants.CAMERA_BOB_AMPLITUDE_X = 0.3
 Constants.CAMERA_BOB_AMPLITUDE_Y = 0.5
 Constants.CAMERA_BOB_ROADIE_MULTIPLIER = 2.5
 Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
+
+-- Spring Arm (anti-colisión)
+Constants.CAM_ARM_LENGTH = 8.0
+Constants.CAM_ARM_SPHERE_RADIUS = 0.3
+Constants.CAM_ARM_PULL_SPEED = 20
+Constants.CAM_ARM_PUSH_SPEED = 6
+Constants.CAM_ARM_PIVOT_OFFSET = Vector3.new(0, 1.5, 0)
+
+-- Shoulder Offset
+Constants.CAM_SHOULDER_RIGHT = 1.5
+Constants.CAM_SHOULDER_LEFT = -1.5
+Constants.CAM_SHOULDER_LERP_SPEED = 4
+
+-- Dynamic Framing en Cover
+Constants.CAM_COVER_PITCH = -8
+Constants.CAM_COVER_FRAME_SPEED = 3
+
+-- Camera Shakes — Impulse
+Constants.CAM_SHAKE_IMPULSE_DECAY = 5.0
+Constants.CAM_SHAKE_IMPULSE_ATTACK = 18
+-- Camera Shakes — Noise Loop
+Constants.CAM_SHAKE_NOISE_SPEED = 12
+Constants.CAM_SHAKE_NOISE_ROADIE_X = 0.04
+Constants.CAM_SHAKE_NOISE_ROADIE_Y = 0.03
+
+-- Camera Shakes — State-entry impulses (radianes)
+Constants.CAM_SHAKE_EVADE_X = 0.012 -- temblor leve al iniciar evading
+Constants.CAM_SHAKE_EVADE_Y = 0.018
+Constants.CAM_SHAKE_COVER_ENTER_X = 0.04 -- micro-temblor al entrar en cover
+Constants.CAM_SHAKE_COVER_ENTER_Y = 0.03
+
+-- Movement follow-yaw (la cámara rota suavemente hacia la dirección de movimiento)
+Constants.CAM_FOLLOW_YAW_WALK = 0 -- walking: cámara no sigue (strafe puro)
+Constants.CAM_FOLLOW_YAW_RUN = 2 -- roadie run: cámara sigue detrás del personaje (heavy phase)
+Constants.CAM_FOLLOW_YAW_RUN_SNAP = 2.5 -- roadie run: cámara sigue rápido durante Quick Snap
+Constants.CAM_FOLLOW_YAW_EVADE = 0 -- evade: cámara no sigue (strafe-locked)
+Constants.CAM_FOLLOW_YAW_COVER_WALK = 0.0 -- no seguir en cover (el snap controla)
+
+-- RoadieRun rotation (personaje rota hacia input, no cámara)
+Constants.ROADIE_SNAP_SPEED = 25 -- Quick Snap: velocidad de rotación al iniciar roadie run
+Constants.ROADIE_STEER_SPEED = 1.8 -- Heavy Steering: velocidad de giro durante carrera (muy lento = pesado)
+Constants.ROADIE_SNAP_DURATION = 0.25 -- Duración del Quick Snap antes de pasar a Heavy Steering
+
+-- Pitch damping al correr (multiplicador extra sobre pitch, más bajo = más pesado)
+Constants.CAM_PITCH_DAMP_WALK = 0.7
+Constants.CAM_PITCH_DAMP_ROADIE = 0.35
+
+-- Mouse rotation pitch clamp (grados)
+Constants.CAM_PITCH_MIN = -80
+Constants.CAM_PITCH_MAX = 80
 
 ------------------------------------------------------------------------
 -- 6. COVER SYSTEM — snap, walking, running, wall-glue, entering
@@ -110,8 +176,8 @@ Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
 -- Snap magnético
 Constants.COVER_SNAP_SPEED = 24 -- Velocidad máxima del snap en studs/segundo — qué tan rápido se mueve al inicio
 Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.6 -- Fracción mínima de esa velocidad al llegar — nunca baja de 24 × 0.6 = 14.4 studs/s
-Constants.COVER_OFFSET = 1.8 -- Distancia en studs desde la pared hasta el centro del personaje — el gap entre espalda y cover
-Constants.COVER_COMPLETION_XZ = 0.15 -- Radio de tolerancia en studs para considerar el snap "completado"
+Constants.COVER_OFFSET = 2 -- Distancia en studs desde la pared hasta el centro del personaje — el gap entre espalda y cover
+Constants.COVER_COMPLETION_XZ = 1 -- Radio de tolerancia en studs para considerar el snap "completado"
 Constants.COVER_CORNER_MARGIN = 1.4 -- Margen en studs desde el borde del Part — evita que el snap quede en la arista
 
 -- Walking / Running lateral
@@ -121,9 +187,10 @@ Constants.COVER_RUN_SPEED = 20
 -- Wall-glue: corrección de posición contra la pared
 Constants.COVER_GLUE_MAX_DIST = 0.3
 
--- Entering: rotación progresiva
-Constants.COVER_START_ROTATION_BLEND = 0.7 -- empezar a rotar al 70% del recorrido
-Constants.COVER_ROTATION_BLEND_MIN = 0.05 -- al entrar en la zona de rotación (t=0.7), el Lerp usa factor 8% — giro muy lento al inicio
+-- Entering: rotación en dos fases
+Constants.COVER_APPROACH_ROT_SPEED = 12 -- Fase 1: velocidad de rotación hacia el punto de impacto
+Constants.COVER_NORMAL_ROT_START = 0.8 -- Fase 2: empezar a rotar hacia la normal al 80% del recorrido
+Constants.COVER_ROTATION_BLEND_MIN = 0.05 -- al entrar en la zona de rotación (t=0.8), el Lerp usa factor 8% — giro muy lento al inicio
 Constants.COVER_ROTATION_BLEND_MAX = 0.32 -- al llegar al destino (t=1.0), el Lerp usa factor 35% — giro más agresivo al final
 Constants.COVER_STUCK_TIMEOUT = 1.8
 

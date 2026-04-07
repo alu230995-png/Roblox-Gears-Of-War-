@@ -59,10 +59,11 @@ local COVER_ACTIONS: { [string]: boolean } = {
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function CoverMain.new(stateMachine, environmentSensor)
+function CoverMain.new(stateMachine, environmentSensor, cameraController)
 	local self = setmetatable({}, CoverMain)
 
 	self._stateMachine = stateMachine
+	self._cameraController = cameraController
 
 	-- Estado compartido: todos los sub-módulos leen/escriben vía esta tabla
 	self._coverState = {
@@ -74,6 +75,7 @@ function CoverMain.new(stateMachine, environmentSensor)
 		stateMachine = stateMachine,
 		player = Players.LocalPlayer,
 		envSensor = environmentSensor, -- referencia al EnvironmentSensor para CheckInnerCorner
+		cameraController = cameraController, -- referencia para shoulder swap en InCover
 	}
 
 	-- Sub-módulos (orden importa: CornerCover primero, InCover lo usa)
@@ -127,6 +129,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 		if self._stateMachine:TransitionTo("CoverIdle") then
 			self._pendingCoverIdleTransition = false
 			self._pendingIdleTransition = false
+			self._inCover:NotifyEnterFromSnap()
 		end
 	elseif self._pendingIdleTransition then
 		if self._stateMachine:TransitionTo("Idle") then
@@ -194,6 +197,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 		local swapResult = self._coverSwapController:Update(dt)
 		if swapResult == "complete" then
 			-- coverState ya está actualizado por el controller (orden crítico)
+			self._inCover:NotifyEnterFromSnap()
 			if not self._stateMachine:TransitionTo("CoverIdle") then
 				self._pendingCoverIdleTransition = true
 			end
@@ -260,6 +264,11 @@ CoverMain._handlers = {
 	self._coverState.coverInstance = data.coverInstance
 	self._coverState.coverType = data.coverType
 
+	-- Notificar a la cámara la normal de cover para Dynamic Framing
+	if self._cameraController then
+		self._cameraController:SetCoverNormal(data.coverNormal)
+	end
+
 	-- Delegar entering al sub-módulo
 	self._enteringCover:Begin(data)
 	end,
@@ -275,11 +284,17 @@ CoverMain._handlers = {
 	self._coverState.coverInstance = data.coverInstance
 	self._coverState.coverType = data.coverType
 
+	-- Notificar a la cámara la normal de cover para Dynamic Framing
+	if self._cameraController then
+		self._cameraController:SetCoverNormal(data.coverNormal)
+	end
+
 	self._enteringCover:Begin(data)
 
 	-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
 	self:_startTimer(COVER_SLIDE_DURATION, function()
 		self._enteringCover:Cancel()
+		self._inCover:NotifyEnterFromSnap()
 		if not self._stateMachine:TransitionTo("CoverIdle") then
 			self._pendingCoverIdleTransition = true
 		end

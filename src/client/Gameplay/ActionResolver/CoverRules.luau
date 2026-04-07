@@ -135,46 +135,49 @@ CoverRules.BlindFire = {
 
 CoverRules.Idle = {
 	ExitCover, -- Prio 1
-	RollOutOfCover, -- Prio 2
 
-	-- Prio 3: Vault (cover bajo + forward + cover/mantle button)
+	-- Prio 2: Vault (cover bajo + forward + cover/mantle button)
 	{
 		id = "Vault",
 		check = function(_resolver, ctx)
-			return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
-				and ctx.Env.CoverType == "Low"
-				and ctx.Env.MoveDirection.Y > Constants.FORWARD_INPUT_THRESHOLD
+	return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
+		and ctx.Env.CoverType == "Low"
+		and ctx.Env.MoveDirection.Y > Constants.FORWARD_INPUT_THRESHOLD
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-			return "Vault", "Mantling", nil
+	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+	return "Vault", "Mantling", nil
 		end,
 	},
 
-	-- Prio 3b: Cover Swap (salto entre coberturas adyacentes en esquina)
+	-- Prio 3: Cover Swap (salto entre coberturas adyacentes en esquina)
+	-- Evaluado ANTES de RollOutOfCover: CoverButton.Tap inyecta WantsCover +
+	-- WantsEvade en el mismo batch. Si hay swap válido, batch consumption
+	-- limpia WantsEvade. Si no hay swap, RollOutOfCover lo captura abajo.
 	{
 		id = "CoverSwapIdle",
 		check = function(resolver, ctx)
-			return Helpers.checkCoverSwap(resolver, ctx)
+	return Helpers.checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-			return "CoverSwap", "CoverSwap", ctx._swapData
+	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+	return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
 
-	PopUpAim, -- Prio 4
-	BlindFire, -- Prio 5 (cubre BlindFire explícito + ShootAsBlindFire)
-	ReloadInCover, -- Prio 6
+	RollOutOfCover, -- Prio 4 (fallback si no hay vault ni swap)
+	PopUpAim, -- Prio 5
+	BlindFire, -- Prio 6 (cubre BlindFire explícito + ShootAsBlindFire)
+	ReloadInCover, -- Prio 7
 
-	-- Prio 7: Start CoverWalking (cualquier input de movimiento)
+	-- Prio 8: Start CoverWalking (cualquier input de movimiento)
 	{
 		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
-			return Helpers.hasMovementIntent(ctx.Intents)
+	return Helpers.hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-			return "StartCoverWalking", "CoverWalking", nil
+	return "StartCoverWalking", "CoverWalking", nil
 		end,
 	},
 }
@@ -185,24 +188,24 @@ CoverRules.Idle = {
 
 CoverRules.Walking = {
 	ExitCover, -- Prio 1
-	RollOutOfCover, -- Prio 2
 
-	-- Prio 3: Cover Swap (se evalúa ANTES de BlockCoverTap)
+	-- Prio 2: Cover Swap (antes de RollOutOfCover por misma razón que Idle)
 	{
 		id = "CoverSwapWalking",
 		check = function(resolver, ctx)
-			return Helpers.checkCoverSwap(resolver, ctx)
+	return Helpers.checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-			return "CoverSwap", "CoverSwap", ctx._swapData
+	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+	return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
 
-	BlockCoverTap, -- Prio 3b
-	PopUpAim, -- Prio 4
-	BlindFire, -- Prio 5
-	ReloadInCover, -- Prio 6
+	RollOutOfCover, -- Prio 3 (fallback si no hay swap)
+	BlockCoverTap, -- Prio 4
+	PopUpAim, -- Prio 5
+	BlindFire, -- Prio 6
+	ReloadInCover, -- Prio 7
 
 	-- Prio 7: Stop CoverWalking → CoverIdle (sin movimiento)
 	{

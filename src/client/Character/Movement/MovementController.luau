@@ -30,7 +30,7 @@ local SpeedMap = require(script.Parent.SpeedMap)
 local MovementController = {}
 MovementController.__index = MovementController
 
-function MovementController.new(stateMachine, actionResolver, environmentSensor, inputBuffer)
+function MovementController.new(stateMachine, actionResolver, environmentSensor, inputBuffer, cameraController)
 	local self = setmetatable({}, MovementController)
 
 	self._stateMachine = stateMachine
@@ -40,7 +40,7 @@ function MovementController.new(stateMachine, actionResolver, environmentSensor,
 	self._player = Players.LocalPlayer
 
 	-- Sub-handlers
-	self._coverHandler = CoverMain.new(stateMachine, environmentSensor)
+	self._coverHandler = CoverMain.new(stateMachine, environmentSensor, cameraController)
 	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
 	self._rotationHandler = RotationHandler.new()
 

@@ -48,8 +48,16 @@ function InCover.new(coverState, cornerCover)
 
 	self._state = coverState -- referencia al estado compartido de CoverMain
 	self._cornerCover = cornerCover -- referencia a CornerCover para consultar bloqueos
+	self._settleTimer = 0 -- timer para rotación de asentamiento al entrar
+	self._needsSettle = false -- true si viene de entering/swap y necesita alinear a normal
 
 	return self
+end
+
+--- Marca que se necesita asentamiento de rotación (llamar al entrar desde entering/swap).
+function InCover:NotifyEnterFromSnap()
+	self._needsSettle = true
+	self._settleTimer = 0
 end
 
 ------------------------------------------------------------------------
@@ -71,6 +79,9 @@ function InCover:UpdateIdle(_dt: number, _envContext: any?)
 
 	-- Pegamento: corregir posición si la física empujó al personaje
 	self:_applyWallGlue(hrp)
+
+	-- Rotación de asentamiento: solo si viene de entering/swap (breve, ~0.3s)
+	self:_applySettleRotation(hrp, _dt)
 end
 
 ------------------------------------------------------------------------
@@ -122,6 +133,16 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	-- 3. PROYECTAR SOBRE EL RIEL (producto punto)
 	local movementScale = moveDirWorld:Dot(wallRight)
 
+	-- 3b. SHOULDER SWAP: notificar a la cámara el lado del movimiento
+	local cam = self._state.cameraController
+	if cam then
+		if movementScale < -0.1 then
+			cam:SetShoulderSide("Left")
+		elseif movementScale > 0.1 then
+			cam:SetShoulderSide("Right")
+		end
+	end
+
 	-- 4. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
 	-- Si hay movimiento lateral significativo, preguntar al sensor si hay una
 	-- pared perpendicular justo enfrente. Si sí: actualizar normal + rotar CFrame
@@ -170,8 +191,42 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	-- 7. WALL-GLUE: corregir posición cada frame
 	self:_applyWallGlue(hrp)
 
-	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover (evita snap brusco en esquinas)
-	self:_smoothRotation(hrp, dt)
+	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover (solo en esquinas internas)
+	if sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+		self:_smoothRotation(hrp, dt)
+	end
+
+	-- 9. Settle rotation (si viene de entering/swap)
+	self:_applySettleRotation(hrp, dt)
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Settle Rotation — solo al inicio desde entering/swap
+------------------------------------------------------------------------
+
+local SETTLE_DURATION = 0.3 -- duración del asentamiento en segundos
+local SETTLE_SPEED = 10 -- velocidad de lerp exponencial
+
+function InCover:_applySettleRotation(hrp: BasePart, dt: number)
+	if not self._needsSettle then
+		return
+	end
+
+	self._settleTimer = self._settleTimer + dt
+	if self._settleTimer >= SETTLE_DURATION then
+		self._needsSettle = false
+		return
+	end
+
+	local coverNormal = self._state.coverNormal
+	if not coverNormal then
+		self._needsSettle = false
+		return
+	end
+
+	local pos = hrp.Position
+	local targetCF = CFrame.lookAt(pos, pos + coverNormal)
+	hrp.CFrame = hrp.CFrame:Lerp(targetCF, 1 - math.exp(-SETTLE_SPEED * dt))
 end
 
 ------------------------------------------------------------------------
