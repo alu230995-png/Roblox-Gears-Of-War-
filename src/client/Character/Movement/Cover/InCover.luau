@@ -34,6 +34,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local CoverMovementUtils = require(script.Parent.CoverMovementUtils)
 
 local InCover = {}
 InCover.__index = InCover
@@ -174,55 +175,19 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Smooth Rotation (lerp hacia la normal de cover)
+-- INTERNAL: Smooth Rotation — delegado a CoverMovementUtils
 ------------------------------------------------------------------------
 
---- Interpola la orientación del HRP hacia coverNormal cada frame.
---- Usa exponential smoothing independiente del framerate.
 function InCover:_smoothRotation(hrp: BasePart, dt: number)
-	local coverNormal = self._state.coverNormal
-	if not coverNormal then
-		return
-	end
-
-	local pos = hrp.Position
-	local targetCF = CFrame.lookAt(pos, pos + coverNormal)
-	local alpha = 1 - math.exp(-Constants.CORNER_TURN_SPEED * dt)
-	hrp.CFrame = hrp.CFrame:Lerp(targetCF, alpha)
+	CoverMovementUtils.smoothRotation(self._state, hrp, dt)
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Wall-Glue (corrección de posición contra la pared)
+-- INTERNAL: Wall-Glue — delegado a CoverMovementUtils
 ------------------------------------------------------------------------
 
---- Proyecta la posición del HRP al plano de la pared + COVER_OFFSET.
---- Si la distancia perpendicular excede COVER_GLUE_MAX_DIST, fuerza
---- la posición de vuelta y anula la componente de velocidad sobre N.
 function InCover:_applyWallGlue(hrp: BasePart)
-	local coverNormal = self._state.coverNormal
-	local coverPosition = self._state.coverPosition
-	if not coverNormal or not coverPosition then
-		return
-	end
-
-	-- Vector del punto de contacto de la pared al jugador
-	local toPlayer = hrp.Position - coverPosition
-	-- Componente perpendicular a la pared (positivo = alejándose de la pared)
-	local perpDist = toPlayer:Dot(coverNormal)
-	-- Distancia deseada: COVER_OFFSET studs fuera de la pared
-	local desiredDist = Constants.COVER_OFFSET
-	local error = perpDist - desiredDist
-
-	-- Si el error excede el umbral, corregir posición
-	if math.abs(error) > Constants.COVER_GLUE_MAX_DIST then
-		local correction = coverNormal * error
-		hrp.CFrame = hrp.CFrame - Vector3.new(correction.X, 0, correction.Z)
-
-		-- Anular componente de velocidad perpendicular a la pared
-		local vel = hrp.AssemblyLinearVelocity
-		local perpVel = vel:Dot(coverNormal)
-		hrp.AssemblyLinearVelocity = vel - coverNormal * perpVel
-	end
+	CoverMovementUtils.applyWallGlue(self._state, hrp)
 end
 
 ------------------------------------------------------------------------

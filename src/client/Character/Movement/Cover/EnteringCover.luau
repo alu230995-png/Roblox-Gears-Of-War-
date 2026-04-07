@@ -49,6 +49,17 @@ end
 
 --- Inicia el entering desde walk. Calcula snapCFrame con corner clamp.
 function EnteringCover:Begin(data)
+	self:_beginInternal(data)
+end
+
+--- Inicia el entering desde slide (RoadieRun). Comportamiento idéntico a Begin.
+--- La distinción slide/walk es responsabilidad del timer en CoverMain.
+function EnteringCover:BeginSlide(data)
+	self:_beginInternal(data)
+end
+
+--- Lógica compartida de Begin y BeginSlide.
+function EnteringCover:_beginInternal(data)
 	if not data then
 		return
 	end
@@ -66,27 +77,6 @@ function EnteringCover:Begin(data)
 	self._state.wallRight = self._entering.wallRight
 
 	-- Guardar la normal de detección original. Solo se fija aquí, nunca en chaining.
-	self._cancelNormal = data.coverNormal
-end
-
---- Inicia el entering desde slide (RoadieRun). Misma lógica de snap.
-function EnteringCover:BeginSlide(data)
-	if not data then
-		return
-	end
-
-	local character = self._state.player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then
-		return
-	end
-
-	hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-
-	self._entering = self:_buildEnteringData(data.coverInstance, data.coverPos, data.coverNormal, hrp)
-	self._state.wallRight = self._entering.wallRight
-
-	-- Guardar la normal de detección original.
 	self._cancelNormal = data.coverNormal
 end
 
@@ -113,13 +103,13 @@ function EnteringCover:Update(dt: number, envContext: any?, wantsCoverRedirect: 
 
 	local character = self._state.player.Character
 	if not character then
-		return "continue"
+		return "cancel"
 	end
 
 	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not humanoid or not hrp then
-		return "continue"
+		return "cancel"
 	end
 
 	-- Cover chaining: si hay cover diferente durante la entrada, re-dirigir
@@ -246,6 +236,7 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 		coverPart = coverPart,
 		startTime = os.clock(),
 		initialDist = initialDist,
+		peakT = 0, -- ratchet inicializado explícitamente
 	}
 end
 
@@ -291,7 +282,7 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 	-- Ratchet: t nunca retrocede aunque el personaje rebote contra la pared.
 	-- Sin esto, una colisión incrementa distXZ → t baja → rotación se atasca.
 	local rawT = 1 - math.clamp(distXZ / data.initialDist, 0, 1)
-	data.peakT = math.max(data.peakT or 0, rawT)
+	data.peakT = math.max(data.peakT, rawT)
 	local t = data.peakT
 	-- QuadOut: rápido al inicio, desacelera suave al final
 	local easeFactor = 1 - (1 - t) * (1 - t)

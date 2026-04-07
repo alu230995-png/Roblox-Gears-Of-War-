@@ -67,9 +67,12 @@ function EvadeHandler:HandleAction(action: string, data: any?): boolean
 	end
 
 	local handler = self._handlers[action]
-	if handler then
-		handler(self, data)
+	if not handler then
+		-- Acción reconocida pero sin handler implementado — no bloquear el fallback
+		return false
 	end
+
+	handler(self, data)
 	return true
 end
 
@@ -92,11 +95,7 @@ function EvadeHandler:Update(dt: number)
 		local character = self._player.Character
 		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if hrp then
-			hrp.AssemblyLinearVelocity = Vector3.new(
-				self._evadeDirection.X * self._evadeSpeed,
-				hrp.AssemblyLinearVelocity.Y,
-				self._evadeDirection.Z * self._evadeSpeed
-			)
+			self:_applyImpulseToHRP(hrp)
 			self._evadeSpeed *= (1 - Constants.EVADE_DECELERATION * dt)
 			if self._evadeSpeed < Constants.EVADE_MIN_SPEED then
 				self._evadeSpeed = 0
@@ -116,12 +115,15 @@ end
 
 EvadeHandler._handlers = {
 	Evade = function(self, _data)
-	self._stateMachine:Lock()
+		local character = self._player.Character
+		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
+		if not hrp or not humanoid then
+			return
+		end
 
-	local character = self._player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
-	if hrp and humanoid then
+		self._stateMachine:Lock()
+
 		-- Dirección: hacia donde camina, o forward si está quieto
 		if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
 			self._evadeDirection = humanoid.MoveDirection.Unit
@@ -130,75 +132,59 @@ EvadeHandler._handlers = {
 			self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
 		end
 		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		-- Impulso inmediato — no esperar al primer tick de Update
-		hrp.AssemblyLinearVelocity = Vector3.new(
-			self._evadeDirection.X * self._evadeSpeed,
-			hrp.AssemblyLinearVelocity.Y,
-			self._evadeDirection.Z * self._evadeSpeed
-		)
-	end
+		self:_applyImpulseToHRP(hrp)
 
-	self:_startTimer(Constants.EVADE_DURATION, function()
-		self._evadeSpeed = 0
-		self._evadeDirection = nil
-		self._stateMachine:Unlock()
-		self._stateMachine:TransitionTo("Idle")
-	end)
+		self:_startTimer(Constants.EVADE_DURATION, function()
+			self._evadeSpeed = 0
+			self._evadeDirection = nil
+			self._stateMachine:Unlock()
+			self._stateMachine:TransitionTo("Idle")
+		end)
 	end,
 
 	RollOutOfCover = function(self, _data)
-	-- Limpiar estado de cover antes del roll
-	local coverNormal = self._coverHandler:GetNormal()
-	self._coverHandler:ResetCover()
-
-	-- Dirección: alejarse de la pared (cover normal)
-	if coverNormal then
-		self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
-	else
 		local character = self._player.Character
 		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if hrp then
+		if not hrp then
+			return
+		end
+
+		local coverNormal = self._coverHandler:GetNormal()
+		self._coverHandler:ResetCover()
+		self._stateMachine:Lock()
+
+		-- Dirección: alejarse de la pared (cover normal) o backward
+		if coverNormal then
+			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+		else
 			local look = hrp.CFrame.LookVector
 			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
 		end
-	end
 
-	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+		self:_applyImpulseToHRP(hrp)
 
-	-- Impulso inmediato al salir de cover
-	local character = self._player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if hrp and self._evadeDirection then
-		hrp.AssemblyLinearVelocity = Vector3.new(
-			self._evadeDirection.X * self._evadeSpeed,
-			hrp.AssemblyLinearVelocity.Y,
-			self._evadeDirection.Z * self._evadeSpeed
-		)
-	end
-
-	self._stateMachine:Lock()
-	self:_startTimer(Constants.EVADE_DURATION, function()
-		self._evadeSpeed = 0
-		self._evadeDirection = nil
-		self._stateMachine:Unlock()
-		self._stateMachine:TransitionTo("Idle")
-	end)
+		self:_startTimer(Constants.EVADE_DURATION, function()
+			self._evadeSpeed = 0
+			self._evadeDirection = nil
+			self._stateMachine:Unlock()
+			self._stateMachine:TransitionTo("Idle")
+		end)
 	end,
 
 	Mantle = function(self, _data)
-	self._coverHandler:ResetCover()
-	self._stateMachine:Lock()
+		self._coverHandler:ResetCover()
+		self._stateMachine:Lock()
 
-	-- Timer: animación de mantle
-	self:_startTimer(Constants.MANTLE_DURATION, function()
-		self._stateMachine:Unlock()
-		self._stateMachine:TransitionTo("Idle")
-	end)
+		self:_startTimer(Constants.MANTLE_DURATION, function()
+			self._stateMachine:Unlock()
+			self._stateMachine:TransitionTo("Idle")
+		end)
 	end,
 
 	Vault = function(self, _data)
-	self._coverHandler:ResetCover()
-	self._stateMachine:Lock()
+		self._coverHandler:ResetCover()
+		self._stateMachine:Lock()
 
 		-- Timer: animación de vault (más corto que mantle)
 		self:_startTimer(Constants.VAULT_DURATION, function()
@@ -213,8 +199,26 @@ EvadeHandler._handlers = {
 ------------------------------------------------------------------------
 
 function EvadeHandler:_startTimer(duration: number, callback: () -> ())
+	-- Flush del timer anterior: garantiza que el SM nunca quede bloqueado
+	-- si se lanza una nueva acción antes de que expire la primera.
+	if self._timerCallback then
+		local flush = self._timerCallback
+		self._timer = 0
+		self._timerCallback = nil
+		flush()
+	end
 	self._timer = duration
 	self._timerCallback = callback
+end
+
+--- Aplica el impulso de evade actual al HumanoidRootPart.
+--- Precondición: self._evadeDirection ~= nil, self._evadeSpeed > 0
+function EvadeHandler:_applyImpulseToHRP(hrp: BasePart)
+	hrp.AssemblyLinearVelocity = Vector3.new(
+		self._evadeDirection.X * self._evadeSpeed,
+		hrp.AssemblyLinearVelocity.Y,
+		self._evadeDirection.Z * self._evadeSpeed
+	)
 end
 
 return EvadeHandler

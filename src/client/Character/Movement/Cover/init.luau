@@ -33,6 +33,10 @@ local CoverRunning = require(script.CoverRunning)
 local CornerCover = require(script.CornerCover)
 local CoverSwapController = require(script.CoverSwapController)
 
+-- Duración del CoverSlide antes de pasar a CoverIdle.
+-- TODO: mover a Constants cuando se añada tuning de balance.
+local COVER_SLIDE_DURATION = 0.3
+
 local CoverMain = {}
 CoverMain.__index = CoverMain
 
@@ -83,9 +87,6 @@ function CoverMain.new(stateMachine, environmentSensor)
 	self._pendingCoverIdleTransition = false
 	self._pendingIdleTransition = false
 
-	-- Flags de sub-estado
-	self._isExiting = false
-
 	-- Timer interno para estados con duración fija (CoverSlide, CoverExiting)
 	self._timer = 0
 	self._timerCallback = nil :: (() -> ())?
@@ -105,9 +106,12 @@ function CoverMain:HandleAction(action: string, data: any?): boolean
 	end
 
 	local handler = self._handlers[action]
-	if handler then
-		handler(self, data)
+	if not handler then
+		-- Acción reconocida pero sin handler implementado — no bloquear el fallback
+		return false
 	end
+
+	handler(self, data)
 	return true
 end
 
@@ -117,14 +121,14 @@ end
 --- @param wantsCoverRedirect boolean? — true si el jugador pulsó cover de nuevo
 function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: boolean?)
 	-- Reintentar transición a CoverIdle si el snap terminó pero STATE_MIN_DURATION la bloqueó
+	-- Reintentar transición a Idle si cancel/ExitCover fue bloqueado.
+	-- ELSEIF: ambos flags nunca deben disparar en el mismo frame — son mutuamente excluyentes.
 	if self._pendingCoverIdleTransition then
 		if self._stateMachine:TransitionTo("CoverIdle") then
 			self._pendingCoverIdleTransition = false
+			self._pendingIdleTransition = false
 		end
-	end
-
-	-- Reintentar transición a Idle si cancel/ExitCover fue bloqueado
-	if self._pendingIdleTransition then
+	elseif self._pendingIdleTransition then
 		if self._stateMachine:TransitionTo("Idle") then
 			self._pendingIdleTransition = false
 		end
@@ -163,6 +167,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 		currentState == "CoverIdle"
 		or currentState == "CoverWalking"
 		or currentState == "CoverRunning"
+		or currentState == "CoverCorners"
 		or currentState == "CoverAim"
 		or currentState == "CoverBlindFire"
 	then
@@ -232,7 +237,6 @@ function CoverMain:ResetCover()
 	self._coverSwapController:Cancel()
 	self._pendingCoverIdleTransition = false
 	self._pendingIdleTransition = false
-	self._isExiting = false
 	self._cornerCover:Reset()
 	self._coverRunning:Stop()
 	self:_clearCoverState()
@@ -271,10 +275,10 @@ CoverMain._handlers = {
 	self._coverState.coverInstance = data.coverInstance
 	self._coverState.coverType = data.coverType
 
-	self._enteringCover:BeginSlide(data)
+	self._enteringCover:Begin(data)
 
-	-- CoverSlide dura poco, luego transiciona a CoverIdle
-	self:_startTimer(0.3, function()
+	-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
+	self:_startTimer(COVER_SLIDE_DURATION, function()
 		self._enteringCover:Cancel()
 		if not self._stateMachine:TransitionTo("CoverIdle") then
 			self._pendingCoverIdleTransition = true
@@ -284,7 +288,6 @@ CoverMain._handlers = {
 
 	--- Salida de cover. Estado: CoverExiting.
 	ExitCover = function(self, _data)
-	self._isExiting = true
 	self._enteringCover:Cancel()
 	self._coverSwapController:Cancel()
 	self._cornerCover:Reset()
@@ -292,7 +295,6 @@ CoverMain._handlers = {
 	self:_clearCoverState()
 
 	self:_startTimer(Constants.COVER_EXIT_DURATION, function()
-		self._isExiting = false
 		if not self._stateMachine:TransitionTo("Idle") then
 			self._pendingIdleTransition = true
 		end
@@ -302,10 +304,9 @@ CoverMain._handlers = {
 	--- Vault sobre cover bajo.
 	Vault = function(self, _data)
 	self._enteringCover:Cancel()
-	self._coverState.coverType = nil
-	self._coverState.wallRight = nil
 	self._cornerCover:Reset()
 	self._coverRunning:Stop()
+	self:_clearCoverState()
 	end,
 
 	--- Inicia CoverRunning (sprint en cover).

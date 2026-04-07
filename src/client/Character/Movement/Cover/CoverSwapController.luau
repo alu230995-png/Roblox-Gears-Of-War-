@@ -40,6 +40,10 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local CoverSwapController = {}
 CoverSwapController.__index = CoverSwapController
 
+-- Umbral de t en el que el personaje comienza a rotar hacia la nueva cover.
+-- Por encima de este valor, la orientación hace blend progresivo hacia la normal de destino.
+local COVER_SWAP_BLEND_T = 0.80
+
 ------------------------------------------------------------------------
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
@@ -139,6 +143,10 @@ function CoverSwapController:Begin(swapData)
 
 	-- Activar y resetear timer
 	-- Duración dinámica: distancia / velocidad (swaps cortos son rápidos, largos más lentos)
+	-- Guardar contra start == target (distance ≈ 0 daría duration = 0 → NaN en Update)
+	if distance < Constants.ZERO_MAGNITUDE then
+		return
+	end
 	self._duration = distance / Constants.COVER_SWAP_SPEED
 	self._isActive = true
 	self._elapsed = 0
@@ -217,18 +225,17 @@ function CoverSwapController:Update(dt: number): string?
 	-- ═══════════════════════════════════════════════════════════
 	-- ROTACIÓN: dirección de viaje → blend → espalda contra la pared
 	-- ═══════════════════════════════════════════════════════════
-	local BLEND_T = 0.80
 	local flatTangent = Vector3.new(tangent.X, 0, tangent.Z)
 	-- coverNormal apunta AFUERA de la pared → lookAt(pos, pos + N) = espalda contra pared
 	local coverFacing = Vector3.new(self._newNormal.X, 0, self._newNormal.Z)
 
 	local facingDir: Vector3
-	if t < BLEND_T then
+	if t < COVER_SWAP_BLEND_T then
 		-- Fase de viaje: mirar en la dirección de movimiento
 		facingDir = flatTangent
 	else
 		-- Fase de aterrizaje: blend progresivo hacia orientación de cover
-		local alpha = (t - BLEND_T) / (1 - BLEND_T)
+		local alpha = (t - COVER_SWAP_BLEND_T) / (1 - COVER_SWAP_BLEND_T)
 		if flatTangent.Magnitude > Constants.ZERO_MAGNITUDE and coverFacing.Magnitude > Constants.ZERO_MAGNITUDE then
 			facingDir = flatTangent.Unit:Lerp(coverFacing.Unit, alpha)
 		else
@@ -302,10 +309,11 @@ function CoverSwapController:Cancel()
 	end
 
 	if Constants.DEBUG_MODE then
+		local tDebug = if self._duration > 0 then math.clamp(self._elapsed / self._duration, 0, 1) else 0
 		print(
 			string.format(
 				"[CoverSwap] CANCELADO en t=%.2f (elapsed=%.3fs / %.3fs dur)",
-				math.clamp(self._elapsed / self._duration, 0, 1),
+				tDebug,
 				self._elapsed,
 				self._duration
 			)

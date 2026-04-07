@@ -21,6 +21,9 @@ RotationHandler.__index = RotationHandler
 --- El input del jugador NO debe rotar al personaje en estos estados.
 local COVER_LOCKED_STATES: { [string]: boolean } = {
 	Evading = true,
+	Mantling = true,
+	Executing = true,
+	Death = true,
 	CoverEntering = true,
 	CoverSlide = true,
 	CoverIdle = true,
@@ -68,7 +71,7 @@ function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?
 	-- En estados normales: rotar hacia la dirección de movimiento
 	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
 		local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + humanoid.MoveDirection)
-		hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, math.min(10 * dt, 1))
+		hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 1 - math.exp(-10 * dt))
 	end
 end
 

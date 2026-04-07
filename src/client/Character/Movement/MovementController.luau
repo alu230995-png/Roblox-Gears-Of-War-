@@ -55,7 +55,7 @@ end
 ------------------------------------------------------------------------
 
 function MovementController:Init()
-	-- Configuración realizada en constructor
+	-- Lifecycle hook — toda la configuración se realiza en new()
 end
 
 --- Conecta al Signal ActionResolved del ActionResolver.
@@ -121,25 +121,26 @@ end
 function MovementController:Update(dt: number)
 	-- Cover redirect: solo permitir chain si el jugador pulsa cover de nuevo
 	local wantsCoverRedirect = false
-	local currentState = self._stateMachine:GetCurrentState()
-	if currentState == "CoverEntering" and self._inputBuffer and self._inputBuffer:HasIntent("WantsCover") then
+	local stateBefore = self._stateMachine:GetCurrentState()
+	if stateBefore == "CoverEntering" and self._inputBuffer and self._inputBuffer:HasIntent("WantsCover") then
 		self._inputBuffer:Consume("WantsCover")
 		wantsCoverRedirect = true
 	end
 
-	local stateBefore = self._stateMachine:GetCurrentState()
-
 	self._coverHandler:Update(dt, self._envSensor:GetContext(), wantsCoverRedirect)
 	self._evadeHandler:Update(dt)
 
-	if currentState == "RoadieRun" then
+	-- Re-leer estado: los sub-handlers pueden haber provocado una transición
+	local stateAfter = self._stateMachine:GetCurrentState()
+
+	if stateAfter == "RoadieRun" then
 		self:_updateRoadieRun()
 	end
 
-	self._rotationHandler:Update(dt, currentState, self._coverHandler:GetNormal())
+	self._rotationHandler:Update(dt, stateAfter, self._coverHandler:GetNormal())
 
-	-- Solo re-aplicar si el estado cambió internamente en un sub-handler
-	if self._stateMachine:GetCurrentState() ~= stateBefore then
+	-- Solo re-aplicar velocidad si el estado cambió dentro de un sub-handler
+	if stateAfter ~= stateBefore then
 		self:_applyMovementSpeed()
 	end
 end
