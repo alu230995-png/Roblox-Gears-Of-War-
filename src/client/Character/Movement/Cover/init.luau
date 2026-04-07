@@ -48,6 +48,7 @@ local COVER_ACTIONS: { [string]: boolean } = {
 	StartCoverRunning = true,
 	StopCoverRunning = true,
 	CoverSwap = true,
+	CancelSwapToRun = true,
 }
 
 ------------------------------------------------------------------------
@@ -215,6 +216,11 @@ function CoverMain:GetWallRight(): Vector3?
 	return self._coverState.wallRight
 end
 
+--- Retorna la instancia del cover actual (nil si no está en cover).
+function CoverMain:GetCoverInstance(): BasePart?
+	return self._coverState.coverInstance
+end
+
 --- Retorna true si el entering está en progreso.
 function CoverMain:IsSnapping(): boolean
 	return self._enteringCover:IsActive()
@@ -280,6 +286,7 @@ CoverMain._handlers = {
 	ExitCover = function(self, _data)
 	self._isExiting = true
 	self._enteringCover:Cancel()
+	self._coverSwapController:Cancel()
 	self._cornerCover:Reset()
 	self._coverRunning:Stop()
 	self:_clearCoverState()
@@ -319,6 +326,12 @@ CoverMain._handlers = {
 		return
 	end
 	self._coverSwapController:Begin(data)
+	end,
+
+	--- Cancela CoverSwap y sale a RoadieRun (hold Space durante swap).
+	CancelSwapToRun = function(self, _data)
+	self._coverSwapController:Cancel()
+	self:_clearCoverState()
 	end,
 }
 

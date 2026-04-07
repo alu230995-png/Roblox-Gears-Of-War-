@@ -104,8 +104,11 @@ function CornerCover:CheckSwapTrigger(lateralAmount: number, envSensor: any, hrp
 
 	local moveDir = if lateralAmount > 0 then 1 else -1
 
+	local humanoid = hrp.Parent and hrp.Parent:FindFirstChild("Humanoid") :: Humanoid?
+	local inputDirection = if humanoid then humanoid.MoveDirection else Vector3.zero
+
 	local newPart, newNormal, hitPosition =
-		envSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance)
+		envSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance, inputDirection)
 
 	if not newPart or not newNormal or not hitPosition then
 		return nil

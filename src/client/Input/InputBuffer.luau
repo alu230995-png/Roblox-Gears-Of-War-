@@ -26,19 +26,12 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local InputBuffer = {}
 InputBuffer.__index = InputBuffer
 
---- TTL por tipo de intent (segundos)
+--- TTL por tipo de intent (segundos).
+--- Solo entries para intents que realmente se buffean (ver Constants.BUFFERABLE_INTENTS).
 local INTENT_TTL = {
 	WantsCover = Constants.BUFFER_TTL_COVER,
 	WantsEvade = Constants.BUFFER_TTL_EVADE,
-	WantsRoadieRun = Constants.BUFFER_TTL_ROADIE_RUN,
-	WantsStopRoadieRun = Constants.BUFFER_TTL_DEFAULT,
-	WantsShoot = Constants.BUFFER_TTL_SHOOT,
-	WantsStopShoot = Constants.BUFFER_TTL_SHOOT,
-	WantsAim = Constants.BUFFER_TTL_AIM,
-	WantsStopAim = Constants.BUFFER_TTL_AIM,
 	WantsReload = Constants.BUFFER_TTL_RELOAD,
-	WantsBlindFire = Constants.BUFFER_TTL_BLIND_FIRE,
-	WantsStopBlindFire = Constants.BUFFER_TTL_BLIND_FIRE,
 	WantsMelee = Constants.BUFFER_TTL_MELEE,
 	WantsChainsaw = Constants.BUFFER_TTL_CHAINSAW,
 	WantsInteract = Constants.BUFFER_TTL_INTERACT,
@@ -60,14 +53,6 @@ end
 ------------------------------------------------------------------------
 -- LIFECYCLE
 ------------------------------------------------------------------------
-
-function InputBuffer:Init()
-	-- Configuración realizada en constructor
-end
-
-function InputBuffer:Start()
-	-- Sin conexiones propias — métodos son llamados por el heartbeat
-end
 
 function InputBuffer:Destroy()
 	self:Clear()
@@ -94,22 +79,9 @@ end
 
 --- Inserta múltiples intents desde el IntentMapper.
 --- Solo bufferea intents discretos que están activos.
+--- Usa Constants.BUFFERABLE_INTENTS como single source of truth.
 function InputBuffer:PushFromIntents(activeIntents: { [string]: { Active: boolean, Data: any? } })
-	-- Solo buffear intents discretos (one-shot)
-	-- Los continuos (movimiento, aim held, fire held) no van al buffer
-	local discreteIntents = {
-		"WantsCover",
-		"WantsEvade",
-		"WantsMantle",
-		"WantsReload",
-		"WantsMelee",
-		"WantsChainsaw",
-		"WantsInteract",
-		"WantsSwapWeapon",
-		"WantsExitCover",
-	}
-
-	for _, intentName in discreteIntents do
+	for _, intentName in Constants.BUFFERABLE_INTENTS do
 		local entry = activeIntents[intentName]
 		if entry and entry.Active then
 			self:Push(intentName, entry.Data)
@@ -182,12 +154,21 @@ function InputBuffer:HasIntent(intentName: string): boolean
 end
 
 --- Retorna el data de un intent buffereado (sin consumirlo).
+--- Verifica TTL y estado Consumed para no retornar datos stale.
 function InputBuffer:PeekData(intentName: string): any?
 	local entry = self._buffer[intentName]
-	if entry and not entry.Consumed then
-		return entry.Data
+	if not entry or entry.Consumed then
+		return nil
 	end
-	return nil
+
+	if entry.TTL > 0 then
+		local age = os.clock() - entry.Timestamp
+		if age > entry.TTL then
+			return nil
+		end
+	end
+
+	return entry.Data
 end
 
 --- Limpia todo el buffer.

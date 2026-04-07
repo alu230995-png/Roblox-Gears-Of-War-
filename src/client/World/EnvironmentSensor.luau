@@ -48,6 +48,11 @@ function EnvironmentSensor.new()
 		self._filterDirty = true
 	end)
 
+	-- RaycastParams reutilizable para CheckSwapCover (evita alloc por llamada)
+	self._swapRayParams = RaycastParams.new()
+	self._swapRayParams.FilterType = Enum.RaycastFilterType.Exclude
+	self._swapRayParams.FilterDescendantsInstances = {}
+
 	-- Contexto actual (actualizado cada frame según estado)
 	self._context = {
 		HasCoverNearby = false,
@@ -66,14 +71,6 @@ end
 ------------------------------------------------------------------------
 -- LIFECYCLE
 ------------------------------------------------------------------------
-
-function EnvironmentSensor:Init()
-	-- Configuración realizada en constructor
-end
-
-function EnvironmentSensor:Start()
-	-- Sin conexiones propias — Update() es llamado por el heartbeat
-end
 
 function EnvironmentSensor:Destroy()
 	if self._tagAddedConn then
@@ -190,14 +187,21 @@ function EnvironmentSensor:_searchCover(hrp: BasePart)
 	end
 end
 
---- Escaneo per-frame durante RoadieRun. Dirección: lookVector.
+--- Escaneo per-frame durante RoadieRun. Dirección: lookVector (aplanado).
 --- Rango corto (COVER_AUTO_DETECT_DIST) porque auto-entra sin botón.
 function EnvironmentSensor:_scanRoadieRunCover(hrp: BasePart)
 	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
 	local lookDir = hrp.CFrame.LookVector
 
+	-- Aplanar al plano horizontal (consistente con _searchCover)
+	local flatLook = Vector3.new(lookDir.X, 0, lookDir.Z)
+	if flatLook.Magnitude < Constants.ZERO_MAGNITUDE then
+		return
+	end
+	flatLook = flatLook.Unit
+
 	-- Intento 1: Raycast preciso a rango corto
-	local rayResult = self:_castRay(origin, lookDir, Constants.COVER_AUTO_DETECT_DIST)
+	local rayResult = self:_castRay(origin, flatLook, Constants.COVER_AUTO_DETECT_DIST)
 	if rayResult and self:_isCoverObject(rayResult.Instance) then
 		if self:_populateCoverContext(rayResult) then
 			return
@@ -205,7 +209,7 @@ function EnvironmentSensor:_scanRoadieRunCover(hrp: BasePart)
 	end
 
 	-- Intento 2: Spherecast a rango corto
-	local sphereResult = self:_castSphere(origin, lookDir, Constants.COVER_AUTO_DETECT_DIST)
+	local sphereResult = self:_castSphere(origin, flatLook, Constants.COVER_AUTO_DETECT_DIST)
 	if sphereResult and self:_isCoverObject(sphereResult.Instance) then
 		self:_populateCoverContext(sphereResult)
 	end
@@ -219,7 +223,7 @@ function EnvironmentSensor:_detectCorners(hrp: BasePart, coverNormal: Vector3)
 	-- Vector paralelo a la pared: Up × N = apunta a la DERECHA del jugador
 	-- (coverNormal:Cross(yAxis) apuntaba a la IZQUIERDA — bug de inversión)
 	local wallParallel = Vector3.yAxis:Cross(coverNormal)
-	if wallParallel.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
+	if wallParallel.Magnitude < Constants.ZERO_MAGNITUDE then
 		wallParallel = Vector3.xAxis
 	else
 		wallParallel = wallParallel.Unit
@@ -334,8 +338,7 @@ function EnvironmentSensor:CheckSwapCover(
 		return nil, nil, nil
 	end
 
-	local swapParams = RaycastParams.new()
-	swapParams.FilterType = Enum.RaycastFilterType.Exclude
+	local swapParams = self._swapRayParams
 	swapParams.FilterDescendantsInstances = { character, currentCoverInstance }
 
 	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
@@ -367,19 +370,29 @@ function EnvironmentSensor:CheckSwapCover(
 		debugRay.Parent = workspace
 		Debris:AddItem(debugRay, 1.5)
 
-		print(string.format(
-			"[SwapRay] P1 origen=(%.1f,%.1f,%.1f) inputDir=(%.2f,%.2f,%.2f) dist=%.1f",
-			origin.X, origin.Y, origin.Z,
-			flatInput.X, flatInput.Y, flatInput.Z,
-			Constants.COVER_SWAP_MAX_DISTANCE
-		))
+		print(
+			string.format(
+				"[SwapRay] P1 origen=(%.1f,%.1f,%.1f) inputDir=(%.2f,%.2f,%.2f) dist=%.1f",
+				origin.X,
+				origin.Y,
+				origin.Z,
+				flatInput.X,
+				flatInput.Y,
+				flatInput.Z,
+				Constants.COVER_SWAP_MAX_DISTANCE
+			)
+		)
 
 		if hitResult then
-			print(string.format(
-				"[SwapRay] P1 HIT %s en (%.1f,%.1f,%.1f) — normal de impacto DESECHADA",
-				hitResult.Instance.Name,
-				hitResult.Position.X, hitResult.Position.Y, hitResult.Position.Z
-			))
+			print(
+				string.format(
+					"[SwapRay] P1 HIT %s en (%.1f,%.1f,%.1f) — normal de impacto DESECHADA",
+					hitResult.Instance.Name,
+					hitResult.Position.X,
+					hitResult.Position.Y,
+					hitResult.Position.Z
+				)
+			)
 			local hitSphere = Instance.new("Part")
 			hitSphere.Name = "DEBUG_SwapHit"
 			hitSphere.Shape = Enum.PartType.Ball
@@ -434,10 +447,15 @@ function EnvironmentSensor:CheckSwapCover(
 			tangent = tangent.Unit
 			local dot = tangent:Dot(wallRight)
 			if Constants.DEBUG_MODE then
-				print(string.format(
-					"[SwapRay] P4 cara normal=(%.2f,%.2f,%.2f) tangente dot=%.3f",
-					faceN.X, faceN.Y, faceN.Z, dot
-				))
+				print(
+					string.format(
+						"[SwapRay] P4 cara normal=(%.2f,%.2f,%.2f) tangente dot=%.3f",
+						faceN.X,
+						faceN.Y,
+						faceN.Z,
+						dot
+					)
+				)
 			end
 			if dot > bestDot then
 				bestDot = dot
@@ -447,12 +465,14 @@ function EnvironmentSensor:CheckSwapCover(
 	end
 
 	if Constants.DEBUG_MODE then
-		print(string.format(
-			"[SwapRay] P4 Mejor alineación: dot=%.3f (min=%.2f) → %s",
-			bestDot,
-			Constants.COVER_SWAP_ALIGNMENT_THRESHOLD,
-			if bestDot >= Constants.COVER_SWAP_ALIGNMENT_THRESHOLD then "OK" else "RECHAZADO"
-		))
+		print(
+			string.format(
+				"[SwapRay] P4 Mejor alineación: dot=%.3f (min=%.2f) → %s",
+				bestDot,
+				Constants.COVER_SWAP_ALIGNMENT_THRESHOLD,
+				if bestDot >= Constants.COVER_SWAP_ALIGNMENT_THRESHOLD then "OK" else "RECHAZADO"
+			)
+		)
 	end
 
 	if bestDot < Constants.COVER_SWAP_ALIGNMENT_THRESHOLD or not bestNormal then
@@ -461,20 +481,40 @@ function EnvironmentSensor:CheckSwapCover(
 
 	-- ═══════════════════════════════════════════════════════════
 	-- PASO 5: Validación de coplanaridad (filtro de profundidad)
-	-- Desfase = |(Centro_nueva - Centro_actual) · N_actual|
-	-- Si es cercano a 0 → misma pared plana dividida por un hueco.
+	-- Comparamos las CARAS FRONTALES, no los centros. Dos partes de
+	-- distinto grosor pueden ser coplanares por delante pero tener
+	-- centros a diferente profundidad.
+	--   facePoint = center + normal * halfExtent_a_lo_largo_de_normal
+	--   Desfase  = |N_actual · (faceNueva - faceActual)|
 	-- ═══════════════════════════════════════════════════════════
-	local currentCenter = currentCoverInstance.Position
-	local newCenter = newPart.Position
-	local depthOffset = math.abs((newCenter - currentCenter):Dot(coverNormal))
+
+	-- Cara frontal de la cover actual (la que da al jugador = dirección coverNormal)
+	local curHalfSize = currentCoverInstance.Size * 0.5
+	local curLocalN = currentCoverInstance.CFrame:VectorToObjectSpace(coverNormal)
+	local curHalfDepth = math.abs(curLocalN.X) * curHalfSize.X
+		+ math.abs(curLocalN.Y) * curHalfSize.Y
+		+ math.abs(curLocalN.Z) * curHalfSize.Z
+	local currentFacePoint = currentCoverInstance.CFrame.Position + coverNormal * curHalfDepth
+
+	-- Cara frontal de la cover nueva (dirección bestNormal)
+	local newHalfSize = newPart.Size * 0.5
+	local newLocalN = newPart.CFrame:VectorToObjectSpace(bestNormal)
+	local newHalfDepth = math.abs(newLocalN.X) * newHalfSize.X
+		+ math.abs(newLocalN.Y) * newHalfSize.Y
+		+ math.abs(newLocalN.Z) * newHalfSize.Z
+	local newFacePoint = newPart.CFrame.Position + bestNormal * newHalfDepth
+
+	local depthOffset = math.abs(coverNormal:Dot(newFacePoint - currentFacePoint))
 
 	if Constants.DEBUG_MODE then
-		print(string.format(
-			"[SwapRay] P5 Coplanaridad: desfase=%.2f studs (max=%.2f) → %s",
-			depthOffset,
-			Constants.COVER_SWAP_COPLANARITY_THRESHOLD,
-			if depthOffset <= Constants.COVER_SWAP_COPLANARITY_THRESHOLD then "OK" else "RECHAZADO"
-		))
+		print(
+			string.format(
+				"[SwapRay] P5 Coplanaridad: desfase=%.2f studs (max=%.2f) → %s",
+				depthOffset,
+				Constants.COVER_SWAP_COPLANARITY_THRESHOLD,
+				if depthOffset <= Constants.COVER_SWAP_COPLANARITY_THRESHOLD then "OK" else "RECHAZADO"
+			)
+		)
 	end
 
 	if depthOffset > Constants.COVER_SWAP_COPLANARITY_THRESHOLD then
@@ -485,12 +525,17 @@ function EnvironmentSensor:CheckSwapCover(
 	-- VÁLIDO — Normal ganadora del Paso 4 + coplanaridad del Paso 5
 	-- ═══════════════════════════════════════════════════════════
 	if Constants.DEBUG_MODE then
-		print(string.format(
-			"[SwapRay] SWAP VÁLIDO → %s | normal=(%.2f,%.2f,%.2f) | alineación=%.3f | desfase=%.2f",
-			newPart.Name,
-			bestNormal.X, bestNormal.Y, bestNormal.Z,
-			bestDot, depthOffset
-		))
+		print(
+			string.format(
+				"[SwapRay] SWAP VÁLIDO → %s | normal=(%.2f,%.2f,%.2f) | alineación=%.3f | desfase=%.2f",
+				newPart.Name,
+				bestNormal.X,
+				bestNormal.Y,
+				bestNormal.Z,
+				bestDot,
+				depthOffset
+			)
+		)
 	end
 
 	return newPart, bestNormal, hitResult.Position
@@ -641,10 +686,13 @@ function EnvironmentSensor:_updateRayFilter(character: Model)
 	-- Incluir solo objetos taggeados como cover + geometría del mundo
 	local coverObjects = CollectionService:GetTagged("CoverObject")
 
-	-- También incluir partes con atributo IsCover
+	-- Set para dedup O(1) en lugar de table.find O(n)
+	local filterSet = {}
 	local filterList = {}
+
 	for _, obj in coverObjects do
-		if obj:IsA("BasePart") then
+		if obj:IsA("BasePart") and not filterSet[obj] then
+			filterSet[obj] = true
 			table.insert(filterList, obj)
 		end
 	end
@@ -653,7 +701,8 @@ function EnvironmentSensor:_updateRayFilter(character: Model)
 	-- (fallback si no se usa CollectionService tags)
 	for _, child in workspace:GetChildren() do
 		if child:IsA("BasePart") and child:GetAttribute("IsCover") == true then
-			if not table.find(filterList, child) then
+			if not filterSet[child] then
+				filterSet[child] = true
 				table.insert(filterList, child)
 			end
 		end
@@ -661,7 +710,8 @@ function EnvironmentSensor:_updateRayFilter(character: Model)
 		if child:IsA("Model") then
 			for _, part in child:GetDescendants() do
 				if part:IsA("BasePart") and part:GetAttribute("IsCover") == true then
-					if not table.find(filterList, part) then
+					if not filterSet[part] then
+						filterSet[part] = true
 						table.insert(filterList, part)
 					end
 				end
@@ -711,7 +761,7 @@ function EnvironmentSensor:_isCoverObject(part: BasePart): boolean
 	end
 
 	-- Fallback durante desarrollo: cualquier pared anchored que sea suficientemente grande
-	if part.Anchored and part.Size.Y >= 2 and part.Size.X >= 2 then
+	if part.Anchored and part.Size.Y >= Constants.COVER_FALLBACK_MIN_SIZE and part.Size.X >= Constants.COVER_FALLBACK_MIN_SIZE then
 		return true
 	end
 

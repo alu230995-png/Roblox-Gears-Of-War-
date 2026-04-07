@@ -64,12 +64,12 @@ end
 local Players = game:GetService("Players")
 
 -- Throttle: evitar spam en consola (imprime como máximo cada 0.3 s)
-local _swapDebugLastPrint = 0
+-- NOTA: Se mueve a instancia en el constructor (self._swapDebugLastPrint)
 
 --- Fase A: Escaneo pasivo — se ejecuta cada frame cuando el jugador está
 --- en esquina y tiene input lateral hacia el vacío.
 --- @return table? swapData — { newPart, newNormal, hitPosition, moveDir } o nil
-local function _scanCoverSwap(ctx): any?
+local function _scanCoverSwap(resolver, ctx): any?
 	local env = ctx.Env
 	local coverHandler = ctx.CoverHandler
 	if not coverHandler or not ctx.EnvSensor then
@@ -102,8 +102,8 @@ local function _scanCoverSwap(ctx): any?
 
 	if Constants.DEBUG_MODE then
 		local now = os.clock()
-		if now - _swapDebugLastPrint > 0.3 then
-			_swapDebugLastPrint = now
+		if now - resolver._swapDebugLastPrint > 0.3 then
+			resolver._swapDebugLastPrint = now
 			print(
 				string.format(
 					"[CoverSwap] Escaneo pasivo: scale=%.2f | esquina=%s (izq=%s, der=%s)",
@@ -127,7 +127,7 @@ local function _scanCoverSwap(ctx): any?
 	end
 
 	local moveDir = if movementScale > 0 then 1 else -1
-	local coverInstance = coverHandler._coverState and coverHandler._coverState.coverInstance
+	local coverInstance = coverHandler:GetCoverInstance()
 	if not coverInstance then
 		return nil
 	end
@@ -162,8 +162,8 @@ end
 --- Fase B: Check completo — escaneo pasivo + gatillo de botón (WantsCover tap).
 --- Si el escaneo reporta cover válida Y el jugador presionó el botón → true.
 --- Si no hay cover o no hay botón → false (protección contra salto suicida).
-local function _checkCoverSwap(ctx): boolean
-	local scanData = _scanCoverSwap(ctx)
+local function _checkCoverSwap(resolver, ctx): boolean
+	local scanData = _scanCoverSwap(resolver, ctx)
 	if not scanData then
 		return false
 	end
@@ -172,8 +172,8 @@ local function _checkCoverSwap(ctx): boolean
 	if not ctx.Buffer:HasIntent("WantsCover") then
 		if Constants.DEBUG_MODE then
 			local now = os.clock()
-			if now - _swapDebugLastPrint > 0.3 then
-				_swapDebugLastPrint = now
+			if now - resolver._swapDebugLastPrint > 0.3 then
+				resolver._swapDebugLastPrint = now
 				print("[CoverSwap] Escaneo POSITIVO pero NO hay WantsCover — esperando botón…")
 			end
 		end
@@ -193,6 +193,77 @@ end
 ------------------------------------------------------------------------
 -- Cada regla: { id: string, check: (resolver, ctx) → bool, execute: (resolver, ctx) → (string, string?, any?) }
 -- ctx = ResolverContext { State, StateConfig, Env, Buffer, Intents, HasMovement }
+
+------------------------------------------------------------------------
+-- SHARED COVER RULES — Reglas reutilizadas en múltiples tablas de cover
+------------------------------------------------------------------------
+
+local SHARED_ExitCover = {
+	id = "ExitCover",
+	check = function(_resolver, ctx)
+		return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
+	end,
+	execute = function(_resolver, ctx)
+		ctx.Buffer:Consume("WantsExitCover")
+		return "ExitCover", "CoverExiting", nil
+	end,
+}
+
+local SHARED_RollOutOfCover = {
+	id = "RollOutOfCover",
+	check = function(resolver, ctx)
+		return ctx.Buffer:HasIntent("WantsEvade") and isEvadeCooldownMet(resolver)
+	end,
+	execute = function(resolver, ctx)
+		resolver._evadeStartTime = os.clock()
+		ctx.Buffer:Consume("WantsEvade")
+		return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
+	end,
+}
+
+local SHARED_PopUpAim = {
+	id = "PopUpAim",
+	check = function(_resolver, ctx)
+		return ctx.Intents:HasIntent("WantsAim")
+	end,
+	execute = function()
+		return "PopUpAim", "CoverAim", nil
+	end,
+}
+
+local SHARED_BlindFire = {
+	id = "BlindFire",
+	check = function(_resolver, ctx)
+		return ctx.Intents:HasIntent("WantsBlindFire")
+			or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
+	end,
+	execute = function()
+		return "BlindFire", "CoverBlindFire", nil
+	end,
+}
+
+local SHARED_ReloadInCover = {
+	id = "ReloadInCover",
+	check = function(_resolver, ctx)
+		return ctx.Buffer:HasIntent("WantsReload")
+	end,
+	execute = function(_resolver, ctx)
+		ctx.Buffer:Consume("WantsReload")
+		return "Reload", "Reloading", nil
+	end,
+}
+
+local SHARED_BlockCoverTap = {
+	id = "BlockCoverTap",
+	check = function(_resolver, ctx)
+		return ctx.Buffer:HasIntent("WantsCover")
+	end,
+	execute = function(_resolver, ctx)
+		ctx.Buffer:Consume("WantsCover")
+		ctx.Buffer:Consume("WantsMantle")
+		return "NoAction", nil, nil
+	end,
+}
 
 --- FREE STATE RULES: Idle, Walking, Aiming, Firing, Reloading, ActiveReloading
 local FREE_STATE_RULES = {
@@ -490,29 +561,8 @@ local COVER_BLINDFIRE_RULES = {
 
 --- COVER IDLE RULES (sub-estado principal de CoverGroup)
 local COVER_IDLE_RULES = {
-	-- Prio 1: Exit cover
-	{
-		id = "ExitCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsExitCover")
-			return "ExitCover", "CoverExiting", nil
-		end,
-	},
-
-	-- Prio 2: Roll out of cover
-	{
-		id = "RollOutOfCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsEvade")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsEvade")
-			return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
-		end,
-	},
+	SHARED_ExitCover, -- Prio 1
+	SHARED_RollOutOfCover, -- Prio 2
 
 	-- Prio 3: Vault (cover bajo + forward + cover/mantle button)
 	{
@@ -520,7 +570,7 @@ local COVER_IDLE_RULES = {
 		check = function(_resolver, ctx)
 			return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
 				and ctx.Env.CoverType == "Low"
-				and ctx.Env.MoveDirection.Y > Constants.ROADIE_RUN_INPUT_THRESHOLD
+				and ctx.Env.MoveDirection.Y > Constants.FORWARD_INPUT_THRESHOLD
 		end,
 		execute = function(_resolver, ctx)
 			ctx.Buffer:Consume("WantsCover")
@@ -530,12 +580,10 @@ local COVER_IDLE_RULES = {
 	},
 
 	-- Prio 3b: Cover Swap (salto entre coberturas adyacentes en esquina)
-	-- Requiere: escaneo pasivo positivo (input lateral en esquina) + botón de acción (Space tap).
-	-- Si el escaneo no encuentra cover válida, el botón se ignora (protección anti-suicidio).
 	{
 		id = "CoverSwapIdle",
-		check = function(_resolver, ctx)
-			return _checkCoverSwap(ctx)
+		check = function(resolver, ctx)
+			return _checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
 			ctx.Buffer:Consume("WantsCover")
@@ -544,53 +592,11 @@ local COVER_IDLE_RULES = {
 		end,
 	},
 
-	-- Prio 4: Aim (pop-up / peek)
-	{
-		id = "PopUpAim",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsAim")
-		end,
-		execute = function()
-			return "PopUpAim", "CoverAim", nil
-		end,
-	},
+	SHARED_PopUpAim, -- Prio 4
+	SHARED_BlindFire, -- Prio 5 (cubre BlindFire explícito + ShootAsBlindFire)
+	SHARED_ReloadInCover, -- Prio 6
 
-	-- Prio 5: Blind Fire (explicit)
-	{
-		id = "BlindFire",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsBlindFire")
-		end,
-		execute = function()
-			return "BlindFire", "CoverBlindFire", nil
-		end,
-	},
-
-	-- Prio 6: Shoot sin aim (= blind fire)
-	{
-		id = "ShootAsBlindFire",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim")
-		end,
-		execute = function()
-			return "BlindFire", "CoverBlindFire", nil
-		end,
-	},
-
-	-- Prio 7: Reload en cover
-	{
-		id = "ReloadInCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsReload")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsReload")
-			return "Reload", "Reloading", nil
-		end,
-	},
-
-	-- Prio 8: Start CoverWalking (cualquier input de movimiento)
-	-- La proyección Dot en UpdateWalking filtra según la dirección real de la cámara.
+	-- Prio 7: Start CoverWalking (cualquier input de movimiento)
 	{
 		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
@@ -618,37 +624,14 @@ local DBNO_RULES = {
 --- COVER WALKING RULES (movimiento lateral activo sobre la pared)
 --- Transiciones disponibles mientras el jugador se desplaza en cover.
 local COVER_WALKING_RULES = {
-	-- Prio 1: Exit cover
-	{
-		id = "ExitCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsExitCover")
-			return "ExitCover", "CoverExiting", nil
-		end,
-	},
+	SHARED_ExitCover, -- Prio 1
+	SHARED_RollOutOfCover, -- Prio 2
 
-	-- Prio 2: Roll out of cover
-	{
-		id = "RollOutOfCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsEvade")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsEvade")
-			return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
-		end,
-	},
-
-	-- Prio 3: Cover Swap (salto entre coberturas adyacentes mientras caminas en esquina)
-	-- Se evalúa ANTES de BlockCoverTap para que WantsCover no se consuma prematuramente.
-	-- Requiere: escaneo pasivo positivo + botón de acción (Space tap).
+	-- Prio 3: Cover Swap (se evalúa ANTES de BlockCoverTap)
 	{
 		id = "CoverSwapWalking",
-		check = function(_resolver, ctx)
-			return _checkCoverSwap(ctx)
+		check = function(resolver, ctx)
+			return _checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
 			ctx.Buffer:Consume("WantsCover")
@@ -656,56 +639,13 @@ local COVER_WALKING_RULES = {
 			return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
-	-- Prio 3b: Block Space Tap — tap está deshabilitado mientras caminas en cover.
-	-- Solo Hold (WantsRoadieRun) es válido. Consume el intent para que no filtre
-	-- al buffer y sea recogido al transicionar a CoverIdle.
-	{
-		id = "BlockCoverTap",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsCover")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover")
-			ctx.Buffer:Consume("WantsMantle")
-			return "NoAction", nil, nil
-		end,
-	},
-	-- Prio 4: Aim (pop-up / peek)
-	{
-		id = "PopUpAim",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsAim")
-		end,
-		execute = function()
-			return "PopUpAim", "CoverAim", nil
-		end,
-	},
 
-	-- Prio 5: Blind Fire
-	{
-		id = "BlindFire",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsBlindFire")
-				or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
-		end,
-		execute = function()
-			return "BlindFire", "CoverBlindFire", nil
-		end,
-	},
+	SHARED_BlockCoverTap, -- Prio 3b
+	SHARED_PopUpAim, -- Prio 4
+	SHARED_BlindFire, -- Prio 5
+	SHARED_ReloadInCover, -- Prio 6
 
-	-- Prio 6: Reload en cover
-	{
-		id = "ReloadInCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsReload")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsReload")
-			return "Reload", "Reloading", nil
-		end,
-	},
-
-	-- Prio 7: Stop CoverWalking → CoverIdle (sin ningún input de movimiento)
+	-- Prio 7: Stop CoverWalking → CoverIdle (sin movimiento)
 	{
 		id = "StopCoverWalking",
 		check = function(_resolver, ctx)
@@ -731,78 +671,12 @@ local COVER_WALKING_RULES = {
 --- COVER RUNNING RULES (sprint lateral sobre la pared)
 --- Transiciones disponibles mientras el jugador corre en cover.
 local COVER_RUNNING_RULES = {
-	-- Prio 1: Exit cover
-	{
-		id = "ExitCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsExitCover")
-			return "ExitCover", "CoverExiting", nil
-		end,
-	},
-
-	-- Prio 2: Roll out of cover
-	{
-		id = "RollOutOfCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsEvade")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsEvade")
-			return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
-		end,
-	},
-
-	-- Prio 3: Block Space Tap — tap está deshabilitado mientras corres en cover.
-	-- Solo Hold mantiene CoverRunning. Consume el intent para evitar leak al buffer.
-	{
-		id = "BlockCoverTap",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsCover")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover")
-			ctx.Buffer:Consume("WantsMantle")
-			return "NoAction", nil, nil
-		end,
-	},
-
-	-- Prio 4: Aim (pop-up / peek)
-	{
-		id = "PopUpAim",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsAim")
-		end,
-		execute = function()
-			return "PopUpAim", "CoverAim", nil
-		end,
-	},
-
-	-- Prio 5: Blind Fire
-	{
-		id = "BlindFire",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsBlindFire")
-				or (ctx.Intents:HasIntent("WantsShoot") and not ctx.Intents:HasIntent("WantsAim"))
-		end,
-		execute = function()
-			return "BlindFire", "CoverBlindFire", nil
-		end,
-	},
-
-	-- Prio 6: Reload en cover
-	{
-		id = "ReloadInCover",
-		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsReload")
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsReload")
-			return "Reload", "Reloading", nil
-		end,
-	},
+	SHARED_ExitCover, -- Prio 1
+	SHARED_RollOutOfCover, -- Prio 2
+	SHARED_BlockCoverTap, -- Prio 3
+	SHARED_PopUpAim, -- Prio 4
+	SHARED_BlindFire, -- Prio 5
+	SHARED_ReloadInCover, -- Prio 6
 
 	-- Prio 7: Soltar sprint + aún moviéndose → CoverWalking
 	{
@@ -828,21 +702,41 @@ local COVER_RUNNING_RULES = {
 }
 
 --- COVER SWAP RULES (animación comprometida — ActionGroup)
---- Única cancelación: hold Space → CoverRunning.
+--- Cancelaciones permitidas:
+---   1. Cover desaparece → Idle (protección contra crash)
+---   2. Hold Space (WantsRoadieRun) → RoadieRun (rompe cover completamente)
 local COVER_SWAP_RULES = {
+	-- Prio 1: Cover destino destruida/inválida → abortar a Idle
+	{
+		id = "InvalidatedSwap",
+		check = function(_resolver, ctx)
+			local coverHandler = ctx.CoverHandler
+			if not coverHandler then
+				return true
+			end
+			local coverInstance = coverHandler:GetCoverInstance()
+			return coverInstance == nil or coverInstance.Parent == nil
+		end,
+		execute = function()
+			return "ExitCover", "Idle", nil
+		end,
+	},
+
+	-- Prio 2: Hold Space → RoadieRun (cancela swap y sale de cover)
 	{
 		id = "CancelSwapToRun",
 		check = function(_resolver, ctx)
 			return ctx.Intents:HasIntent("WantsRoadieRun")
 		end,
 		execute = function()
-			return "StartCoverRunning", "CoverRunning", nil
+			return "CancelSwapToRun", "RoadieRun", nil
 		end,
 	},
 }
 
 --- Mapa de sub-estado de cover → rule table correspondiente
 --- Los nuevos estados de cover (CoverCorners) usan COVER_IDLE_RULES como fallback.
+--- CoverSwap se maneja en _selectRules (es ActionGroup, no CoverGroup).
 local COVER_SUB_RULES = {
 	CoverAim = COVER_AIM_RULES,
 	CoverBlindFire = COVER_BLINDFIRE_RULES,
@@ -850,7 +744,6 @@ local COVER_SUB_RULES = {
 	CoverWalking = COVER_WALKING_RULES,
 	CoverRunning = COVER_RUNNING_RULES,
 	CoverCorners = COVER_IDLE_RULES,
-	CoverSwap = COVER_SWAP_RULES,
 }
 
 ------------------------------------------------------------------------
@@ -876,20 +769,18 @@ function ActionResolver.new(stateMachine, inputBuffer, intentMapper, environment
 	-- y luego esperar la ventana de vulnerabilidad antes de poder volver a evadir).
 	self._evadeStartTime = -math.huge
 
+	-- Throttle de debug para Cover Swap (per-instance, no module-level)
+	self._swapDebugLastPrint = 0
+
+	-- Tabla reutilizable para _buildContext (evita alloc por frame)
+	self._ctxCache = {}
+
 	return self
 end
 
 ------------------------------------------------------------------------
 -- LIFECYCLE
 ------------------------------------------------------------------------
-
-function ActionResolver:Init()
-	-- Signal creado en constructor
-end
-
-function ActionResolver:Start()
-	-- Sin conexiones propias — Resolve() es llamado por el heartbeat
-end
 
 --- Inyecta la referencia al CoverHandler (CoverMain) después de su creación.
 --- Necesario porque MovementController crea CoverMain internamente y
@@ -915,7 +806,7 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	local state = self._stateMachine:GetCurrentState()
 
 	-- En estados bloqueantes (animación comprometida) o inactivos, no resolver nada.
-	-- Excepción: CoverSwap permite cancelación via hold Space → CoverRunning.
+	-- Excepción: CoverSwap permite cancelación (cover destruida → Idle, hold Space → RoadieRun).
 	if self._stateMachine:IsInGroup("InactiveGroup") then
 		return "NoAction", nil, nil
 	end
@@ -935,7 +826,7 @@ function ActionResolver:Resolve(): (string, string?, any?)
 		self.ActionResolved:Fire(action, targetState, data)
 
 		if Constants.DEBUG_MODE then
-			print(`[GoW] {action} → {targetState or "nil"} | State: {self._stateMachine:GetCurrentState()}`)
+			print(`[GoW] {action} → {targetState or "nil"} | State: {state}`)
 		end
 	end
 
@@ -948,17 +839,19 @@ end
 
 --- Construye un ResolverContext snapshot para este frame.
 --- Se crea una sola vez y se pasa a todas las reglas.
+--- _swapData se limpia explícitamente para evitar stale data de _checkCoverSwap.
 function ActionResolver:_buildContext(state: string)
-	return {
-		State = state,
-		StateConfig = PlayerStateModule.GetState(state),
-		Env = self._env:GetContext(),
-		EnvSensor = self._env,
-		CoverHandler = self._coverHandler,
-		Buffer = self._buffer,
-		Intents = self._intents,
-		HasMovement = hasMovementIntent(self._intents),
-	}
+	local ctx = self._ctxCache
+	ctx.State = state
+	ctx.StateConfig = PlayerStateModule.GetState(state)
+	ctx.Env = self._env:GetContext()
+	ctx.EnvSensor = self._env
+	ctx.CoverHandler = self._coverHandler
+	ctx.Buffer = self._buffer
+	ctx.Intents = self._intents
+	ctx.HasMovement = hasMovementIntent(self._intents)
+	ctx._swapData = nil -- Clear stale data from previous frame
+	return ctx
 end
 
 ------------------------------------------------------------------------

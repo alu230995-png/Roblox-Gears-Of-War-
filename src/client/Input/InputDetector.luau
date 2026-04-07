@@ -44,6 +44,8 @@ function InputDetector.new()
 	self._heldKeys = {}
 	-- Tracking de hold ya emitido: [key] = true
 	self._holdEmitted = {}
+	-- Reverse index: [rawName] = count de keys held que mapean a ese raw
+	self._heldByRaw = {}
 
 	-- Conexiones a limpiar
 	self._connections = {}
@@ -131,10 +133,6 @@ end
 -- LIFECYCLE
 ------------------------------------------------------------------------
 
-function InputDetector:Init()
-	-- Configuración realizada en constructor
-end
-
 function InputDetector:Start()
 	table.insert(
 		self._connections,
@@ -148,8 +146,12 @@ function InputDetector:Start()
 
 	table.insert(
 		self._connections,
-		UserInputService.InputEnded:Connect(function(input, gameProcessed)
-			if gameProcessed then
+		UserInputService.InputEnded:Connect(function(input, _gameProcessed)
+			-- SIEMPRE procesar release para keys que ya estamos trackeando.
+			-- Si ignoramos releases con gameProcessed=true, _heldKeys retiene
+			-- phantom entries → sprint/fire infinito al perder foco a UI.
+			local key = self:_getKey(input)
+			if self._heldKeys[key] == nil then
 				return
 			end
 			self:_onInputEnded(input)
@@ -174,6 +176,7 @@ function InputDetector:Destroy()
 	table.clear(self._eventQueue)
 	table.clear(self._heldKeys)
 	table.clear(self._holdEmitted)
+	table.clear(self._heldByRaw)
 end
 
 ------------------------------------------------------------------------
@@ -184,6 +187,9 @@ end
 --- Retorna la lista de eventos y limpia la cola.
 function InputDetector:DrainEvents(): { { Name: string, Mode: string, Data: any?, Timestamp: number } }
 	local events = self._eventQueue
+	if #events == 0 then
+		return events
+	end
 	self._eventQueue = {}
 	return events
 end
@@ -193,15 +199,9 @@ function InputDetector:GetMoveDirection(): Vector2
 	return self._moveDirection
 end
 
---- Verifica si un raw input está actualmente held.
+--- Verifica si un raw input está actualmente held. O(1).
 function InputDetector:IsRawHeld(rawName: string): boolean
-	for key, _ in self._heldKeys do
-		local name = self._keyToRaw[key] or self._gamepadToRaw[key]
-		if name == rawName then
-			return true
-		end
-	end
-	return false
+	return (self._heldByRaw[rawName] or 0) > 0
 end
 
 --- Tiempo que lleva held un raw input. Retorna 0 si no está held.
@@ -226,10 +226,11 @@ function InputDetector:_onInputBegan(input: InputObject)
 		return
 	end
 
-	-- Registrar press time
+	-- Registrar press time y reverse index
 	local key = self:_getKey(input)
 	self._heldKeys[key] = os.clock()
 	self._holdEmitted[key] = false
+	self._heldByRaw[rawName] = (self._heldByRaw[rawName] or 0) + 1
 
 	-- Si NO es hold-sensitive, emitir Pressed inmediatamente
 	if not self._holdThresholds[rawName] then
@@ -253,9 +254,11 @@ function InputDetector:_onInputEnded(input: InputObject)
 	local pressStart = self._heldKeys[key]
 	local wasHoldEmitted = self._holdEmitted[key]
 
-	-- Limpiar tracking
+	-- Limpiar tracking + reverse index
 	self._heldKeys[key] = nil
 	self._holdEmitted[key] = nil
+	local count = (self._heldByRaw[rawName] or 0) - 1
+	self._heldByRaw[rawName] = if count > 0 then count else nil
 
 	if self._holdThresholds[rawName] and pressStart then
 		-- Botón hold-sensitive

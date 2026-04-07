@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = true
+Constants.DEBUG_MODE = false
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -49,8 +49,10 @@ Constants.MOVE_DIRECTION_THRESHOLD_LOW = 0.01
 Constants.ZERO_MAGNITUDE = 0.001
 -- Mínimo |movementScale| para disparar chequeo de esquina interna
 Constants.LATERAL_TRIGGER_THRESHOLD = 0.1
--- Umbral de input forward (moveDir.Y) para generar intent de Mantle
-Constants.ROADIE_RUN_INPUT_THRESHOLD = 0.3
+-- Umbral de input forward (moveDir.Y) para mantle y otras comprobaciones
+Constants.FORWARD_INPUT_THRESHOLD = 0.3
+-- Umbral de input backward para WantsExitCover
+Constants.EXIT_COVER_BACK_THRESHOLD = 0.5
 
 ------------------------------------------------------------------------
 -- 3. MOVIMIENTO — velocidades activas (studs/segundo)
@@ -106,11 +108,11 @@ Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
 ------------------------------------------------------------------------
 
 -- Snap magnético
-Constants.COVER_SNAP_SPEED = 24
-Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.8
-Constants.COVER_OFFSET = 1.8
-Constants.COVER_COMPLETION_XZ = 0.15
-Constants.COVER_CORNER_MARGIN = 1.4
+Constants.COVER_SNAP_SPEED = 24 -- Velocidad máxima del snap en studs/segundo — qué tan rápido se mueve al inicio
+Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.6 -- Fracción mínima de esa velocidad al llegar — nunca baja de 24 × 0.6 = 14.4 studs/s
+Constants.COVER_OFFSET = 1.8 -- Distancia en studs desde la pared hasta el centro del personaje — el gap entre espalda y cover
+Constants.COVER_COMPLETION_XZ = 0.15 -- Radio de tolerancia en studs para considerar el snap "completado"
+Constants.COVER_CORNER_MARGIN = 1.4 -- Margen en studs desde el borde del Part — evita que el snap quede en la arista
 
 -- Walking / Running lateral
 Constants.COVER_WALK_SPEED = 15
@@ -120,8 +122,9 @@ Constants.COVER_RUN_SPEED = 20
 Constants.COVER_GLUE_MAX_DIST = 0.3
 
 -- Entering: rotación progresiva
-Constants.COVER_ROTATION_BLEND_MIN = 0.08
-Constants.COVER_ROTATION_BLEND_MAX = 0.35
+Constants.COVER_START_ROTATION_BLEND = 0.7 -- empezar a rotar al 70% del recorrido
+Constants.COVER_ROTATION_BLEND_MIN = 0.05 -- al entrar en la zona de rotación (t=0.7), el Lerp usa factor 8% — giro muy lento al inicio
+Constants.COVER_ROTATION_BLEND_MAX = 0.32 -- al llegar al destino (t=1.0), el Lerp usa factor 35% — giro más agresivo al final
 Constants.COVER_STUCK_TIMEOUT = 1.8
 
 -- Entering: raycasts de suelo para calcular Y del destino
@@ -149,11 +152,12 @@ Constants.CORNER_TURN_SPEED = 15
 -- 8. COVER SCANNING — detección y raycast
 ------------------------------------------------------------------------
 
-Constants.COVER_SCAN_RANGE = 30
+Constants.COVER_SCAN_RANGE = 32
+Constants.COVER_FALLBACK_MIN_SIZE = 2 -- _isCoverObject: tamaño mínimo para fallback dev
 Constants.COVER_HEIGHT_LOW_MAX = 3.5
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 Constants.COVER_CORNER_DETECTION_RANGE = 2.0
-Constants.COVER_CORNER_PUSH_IN = 1.0
+Constants.COVER_CORNER_PUSH_IN = 2.0
 
 -- EnvironmentSensor internals
 Constants.ENV_FILTER_REFRESH_FRAMES = 45
@@ -165,24 +169,24 @@ Constants.ENV_CORNER_EPSILON = 0.01
 ------------------------------------------------------------------------
 
 -- Distancia máxima del rayo tangente (vector café) en studs
-Constants.COVER_SWAP_MAX_DISTANCE = 6
+Constants.COVER_SWAP_MAX_DISTANCE = 14
 -- Mínimo dot product entre tangentes geométricas para considerar coberturas alineadas
-Constants.COVER_SWAP_ALIGNMENT_THRESHOLD = 0.9
+Constants.COVER_SWAP_ALIGNMENT_THRESHOLD = 0.95
 -- Margen de seguridad: studs empujados hacia adentro desde el borde de la nueva cover
-Constants.COVER_SWAP_SAFETY_MARGIN = 0.5
--- Duración del movimiento Bézier (flecha rosa) en segundos
-Constants.COVER_SWAP_DURATION = 0.4
+Constants.COVER_SWAP_SAFETY_MARGIN = 2
+-- Velocidad del movimiento Bézier (flecha rosa) en studs/segundo
+Constants.COVER_SWAP_SPEED = 18
 -- Fracción de la distancia añadida como Y para el punto de control de la curva
 Constants.COVER_SWAP_ARC_HEIGHT = 0.2
 -- Máximo desfase de profundidad (studs) para considerar paredes coplanares
-Constants.COVER_SWAP_COPLANARITY_THRESHOLD = 1.0
+Constants.COVER_SWAP_COPLANARITY_THRESHOLD = 1.5
 
 ------------------------------------------------------------------------
 -- 9. COVER ENTRY / EXIT
 ------------------------------------------------------------------------
 
 Constants.COVER_ENTRY_CANCEL_DOT = 0.85
-Constants.COVER_EXIT_DURATION = 0.25
+Constants.COVER_EXIT_DURATION = 0.15
 
 ------------------------------------------------------------------------
 -- 10. EVADE / ROLL
@@ -227,6 +231,42 @@ Constants.BUFFER_TTL_BLIND_FIRE = 0.0
 Constants.BUFFER_TTL_INTERACT = 0.1
 Constants.BUFFER_TTL_MANTLE = 0.12
 Constants.BUFFER_TTL_DEFAULT = 0.1
+
+------------------------------------------------------------------------
+-- 13b. INTENT LISTS — single source of truth
+------------------------------------------------------------------------
+
+--- Intents discretos (one-shot): se limpian cada frame en IntentMapper.
+--- Incluye los Stop* porque también son one-shot (dispara y olvida).
+Constants.DISCRETE_INTENTS = table.freeze({
+	"WantsCover",
+	"WantsEvade",
+	"WantsMantle",
+	"WantsReload",
+	"WantsMelee",
+	"WantsChainsaw",
+	"WantsInteract",
+	"WantsSwapWeapon",
+	"WantsStopRoadieRun",
+	"WantsStopShoot",
+	"WantsStopAim",
+	"WantsStopBlindFire",
+	"WantsExitCover",
+})
+
+--- Subset de discretos que se buffean con TTL.
+--- Los Stop* NO se buffean: son reacciones inmediatas, no anticipables.
+Constants.BUFFERABLE_INTENTS = table.freeze({
+	"WantsCover",
+	"WantsEvade",
+	"WantsMantle",
+	"WantsReload",
+	"WantsMelee",
+	"WantsChainsaw",
+	"WantsInteract",
+	"WantsSwapWeapon",
+	"WantsExitCover",
+})
 
 ------------------------------------------------------------------------
 -- 14. TIMINGS DE ESTADOS (segundos)

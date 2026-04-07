@@ -66,6 +66,10 @@ function StateMachine.new(initialState: string, transitions: { [string]: { strin
 	self._groupChildren = {} :: { [string]: { string } } -- groupName → {childGroups}
 	self._history = {} :: { [string]: string } -- groupName → last active leaf state
 
+	-- O(1) lookups (populated in BuildGroupHierarchy)
+	self._stateToGroupSet = {} :: { [string]: { [string]: boolean } } -- leafState → { groupName → true }
+	self._validTransitionSet = {} :: { [string]: { [string]: boolean } } -- leafState → { targetState → true }
+
 	-- Signal: se dispara en cada transición exitosa (newState, oldState)
 	self.StateChanged = Signal.new()
 
@@ -76,14 +80,6 @@ end
 -- LIFECYCLE
 ------------------------------------------------------------------------
 
-function StateMachine:Init()
-	-- Configuración ya realizada en constructor
-end
-
-function StateMachine:Start()
-	-- Sin conexiones propias
-end
-
 function StateMachine:Destroy()
 	if self.StateChanged then
 		self.StateChanged:Destroy()
@@ -93,6 +89,8 @@ function StateMachine:Destroy()
 	table.clear(self._stateToGroups)
 	table.clear(self._groupChildren)
 	table.clear(self._history)
+	table.clear(self._stateToGroupSet)
+	table.clear(self._validTransitionSet)
 end
 
 ------------------------------------------------------------------------
@@ -129,6 +127,7 @@ function StateMachine:RegisterGroup(groupName: string, config: GroupConfig)
 end
 
 --- Reconstruye las cadenas _stateToGroups tras registrar todos los grupos.
+--- También pre-computa O(1) lookup tables para IsInGroup y transiciones.
 --- Llamar una vez después de registrar todos los grupos.
 function StateMachine:BuildGroupHierarchy()
 	-- Limpiar y reconstruir stateToGroups con cadena completa child→root
@@ -194,6 +193,12 @@ function StateMachine:BuildGroupHierarchy()
 
 		self._stateToGroups[stateName] = chain
 	end
+
+	-- Construir O(1) group membership set per state
+	self:_buildGroupSets()
+
+	-- Pre-computar O(1) valid transitions per state
+	self:_buildValidTransitionSets()
 
 	-- Inicializar history del estado actual
 	self:_updateHistory(self._currentState)
@@ -288,21 +293,12 @@ end
 -- PUBLIC API (HSM — nuevo)
 ------------------------------------------------------------------------
 
---- Verifica si el estado actual pertenece a un grupo dado.
+--- Verifica si el estado actual pertenece a un grupo dado. O(1).
 --- @param groupName string — nombre del grupo a verificar
 --- @return boolean
 function StateMachine:IsInGroup(groupName: string): boolean
-	local chain = self._stateToGroups[self._currentState]
-	if not chain then
-		return false
-	end
-
-	for _, g in chain do
-		if g == groupName then
-			return true
-		end
-	end
-	return false
+	local groupSet = self._stateToGroupSet[self._currentState]
+	return groupSet ~= nil and groupSet[groupName] == true
 end
 
 --- Retorna el grupo activo en un nivel de jerarquía.
@@ -330,43 +326,10 @@ end
 -- INTERNAL: Validación de transiciones con herencia
 ------------------------------------------------------------------------
 
---- Verifica si existe una transición válida (directa o heredada) entre dos estados.
+--- Verifica si existe una transición válida (directa o heredada) entre dos estados. O(1).
 function StateMachine:_isTransitionValid(fromState: string, toState: string): boolean
-	-- 1. Verificar transición directa en tabla de transiciones del estado hoja
-	local directTargets = self._transitions[fromState]
-	if directTargets then
-		for _, target in directTargets do
-			if target == toState then
-				return true
-			end
-		end
-	end
-
-	-- 2. Verificar transiciones heredadas por grupo (escalar la jerarquía del estado origen)
-	local fromChain = self._stateToGroups[fromState]
-	if fromChain then
-		for _, groupName in fromChain do
-			local groupTargets = self._transitions[groupName]
-			if groupTargets then
-				for _, target in groupTargets do
-					if target == toState then
-						return true
-					end
-					-- También verificar si el target es un grupo que contiene toState
-					if self._groups[target] then
-						local targetGroup = self._groups[target]
-						for _, s in targetGroup.States do
-							if s == toState then
-								return true
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-
-	return false
+	local validSet = self._validTransitionSet[fromState]
+	return validSet ~= nil and validSet[toState] == true
 end
 
 ------------------------------------------------------------------------
@@ -381,8 +344,8 @@ function StateMachine:_executeTransition(newState: string)
 	local oldChain = self._stateToGroups[oldState] or {}
 	local newChain = self._stateToGroups[newState] or {}
 
-	-- Encontrar ancestro común más profundo
-	local commonAncestorIdx = self:_findCommonAncestor(oldChain, newChain)
+	-- Encontrar ancestro común más profundo (retorna índice en CADA cadena)
+	local oldAncestorIdx, newAncestorIdx = self:_findCommonAncestor(oldChain, newChain)
 
 	-- 1. OnExit del estado hoja origen
 	local oldCallbacks = self._stateCallbacks[oldState]
@@ -393,7 +356,7 @@ function StateMachine:_executeTransition(newState: string)
 	-- 2. OnExit de grupos (child → root) hasta ancestro común
 	for i = 1, #oldChain do
 		-- No salir del ancestro común ni de sus padres
-		if commonAncestorIdx and i >= commonAncestorIdx then
+		if oldAncestorIdx and i >= oldAncestorIdx then
 			break
 		end
 		local groupName = oldChain[i]
@@ -408,14 +371,16 @@ function StateMachine:_executeTransition(newState: string)
 	self._currentState = newState
 	self._stateEnteredAt = os.clock()
 
-	-- Actualizar history de los grupos del estado anterior
+	-- Actualizar history: registrar oldState para los grupos que se abandonan
 	self:_updateHistory(oldState)
+	-- Actualizar history: registrar newState para los grupos que se activan
+	self:_updateHistory(newState)
 
 	-- 3. OnEnter de grupos (root → child) desde ancestro común
 	-- Recolectar grupos que necesitan Enter (en orden root→child)
 	local groupsToEnter = {}
 	for i = 1, #newChain do
-		if commonAncestorIdx and i >= commonAncestorIdx then
+		if newAncestorIdx and i >= newAncestorIdx then
 			break
 		end
 		table.insert(groupsToEnter, 1, newChain[i])
@@ -438,19 +403,24 @@ function StateMachine:_executeTransition(newState: string)
 	self.StateChanged:Fire(newState, oldState)
 end
 
---- Encuentra el índice del ancestro común más profundo entre dos cadenas de grupos.
---- Retorna el índice en ambas cadenas donde se encuentra el ancestro, o nil si no hay.
-function StateMachine:_findCommonAncestor(oldChain: { string }, newChain: { string }): number?
-	-- Las cadenas van de child→root. Buscamos el primer grupo compartido.
-	-- Iteramos oldChain buscando cuál grupo también existe en newChain.
+--- Encuentra el ancestro común más profundo entre dos cadenas de grupos.
+--- Retorna (índice en oldChain, índice en newChain), o (nil, nil) si no hay ancestro común.
+--- Las cadenas van de child→root.
+function StateMachine:_findCommonAncestor(oldChain: { string }, newChain: { string }): (number?, number?)
+	-- Build set from newChain for O(n) lookup (instead of O(n²))
+	local newChainIndex: { [string]: number } = {}
+	for i, group in newChain do
+		newChainIndex[group] = i
+	end
+
+	-- Find first group in oldChain that also exists in newChain
 	for i, oldGroup in oldChain do
-		for _, newGroup in newChain do
-			if oldGroup == newGroup then
-				return i
-			end
+		local newIdx = newChainIndex[oldGroup]
+		if newIdx then
+			return i, newIdx
 		end
 	end
-	return nil
+	return nil, nil
 end
 
 --- Actualiza el history state de cada grupo al que pertenece un estado.
@@ -462,6 +432,64 @@ function StateMachine:_updateHistory(state: string)
 
 	for _, groupName in chain do
 		self._history[groupName] = state
+	end
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Pre-computed O(1) lookup builders
+------------------------------------------------------------------------
+
+--- Construye _stateToGroupSet para O(1) IsInGroup.
+function StateMachine:_buildGroupSets()
+	table.clear(self._stateToGroupSet)
+	for stateName, chain in self._stateToGroups do
+		local groupSet = {}
+		for _, g in chain do
+			groupSet[g] = true
+		end
+		self._stateToGroupSet[stateName] = groupSet
+	end
+end
+
+--- Construye _validTransitionSet para O(1) _isTransitionValid.
+--- Resuelve transiciones directas + heredadas por grupo + expansión de group targets.
+function StateMachine:_buildValidTransitionSets()
+	table.clear(self._validTransitionSet)
+
+	for stateName, chain in self._stateToGroups do
+		local validSet = {}
+
+		-- 1. Transiciones directas del estado hoja
+		local directTargets = self._transitions[stateName]
+		if directTargets then
+			for _, target in directTargets do
+				self:_addTargetToSet(validSet, target)
+			end
+		end
+
+		-- 2. Transiciones heredadas de cada grupo en la cadena (child→root)
+		for _, groupName in chain do
+			local groupTargets = self._transitions[groupName]
+			if groupTargets then
+				for _, target in groupTargets do
+					self:_addTargetToSet(validSet, target)
+				end
+			end
+		end
+
+		self._validTransitionSet[stateName] = validSet
+	end
+end
+
+--- Helper: añade un target al set de transiciones válidas.
+--- Si el target es un grupo, también añade todos sus estados miembro.
+function StateMachine:_addTargetToSet(validSet: { [string]: boolean }, target: string)
+	validSet[target] = true
+	local groupConfig = self._groups[target]
+	if groupConfig then
+		for _, s in groupConfig.States do
+			validSet[s] = true
+		end
 	end
 end
 

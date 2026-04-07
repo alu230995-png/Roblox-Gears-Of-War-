@@ -38,6 +38,107 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local IntentMapper = {}
 IntentMapper.__index = IntentMapper
 
+------------------------------------------------------------------------
+-- TABLE-DRIVEN EVENT DISPATCH
+-- Cada entrada: [RawName] = { [Mode] = handler(self, event) }
+-- O(1) lookup en vez de if/elseif chain.
+------------------------------------------------------------------------
+
+local EVENT_DISPATCH = {
+	CoverButton = {
+		Tap = function(self, _event)
+			self:_setIntent("WantsCover", true)
+			local moveDir = self._inputDetector:GetMoveDirection()
+			if moveDir.Y > Constants.FORWARD_INPUT_THRESHOLD then
+				self:_setIntent("WantsMantle", true)
+			end
+		end,
+		HoldStart = function(self, _event)
+			self:_setIntent("WantsRoadieRun", true)
+		end,
+		Release = function(self, _event)
+			self:_setIntent("WantsStopRoadieRun", true)
+			self:_setIntent("WantsRoadieRun", false)
+		end,
+	},
+
+	SprintModifier = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsRoadieRun", true)
+		end,
+		Released = function(self, _event)
+			self:_setIntent("WantsStopRoadieRun", true)
+			self:_setIntent("WantsRoadieRun", false)
+		end,
+	},
+
+	EvadeButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsEvade", true)
+		end,
+	},
+
+	FireButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsShoot", true)
+		end,
+		Released = function(self, _event)
+			self:_setIntent("WantsStopShoot", true)
+			self:_setIntent("WantsShoot", false)
+		end,
+	},
+
+	AimButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsAim", true)
+		end,
+		Released = function(self, _event)
+			self:_setIntent("WantsStopAim", true)
+			self:_setIntent("WantsAim", false)
+		end,
+	},
+
+	ReloadButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsReload", true)
+		end,
+	},
+
+	BlindFireButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsBlindFire", true)
+		end,
+		Released = function(self, _event)
+			self:_setIntent("WantsStopBlindFire", true)
+			self:_setIntent("WantsBlindFire", false)
+		end,
+	},
+
+	MeleeButton = {
+		Tap = function(self, _event)
+			self:_setIntent("WantsMelee", true)
+		end,
+		HoldStart = function(self, _event)
+			self:_setIntent("WantsChainsaw", true)
+		end,
+		Release = function(self, _event)
+			self:_setIntent("WantsChainsaw", false)
+		end,
+	},
+
+	InteractButton = {
+		Pressed = function(self, _event)
+			self:_setIntent("WantsInteract", true)
+		end,
+	},
+
+	SwapWeapon = {
+		Pressed = function(self, event)
+			self:_setIntent("WantsSwapWeapon", true, event.Data)
+		end,
+	},
+}
+
 function IntentMapper.new(inputDetector)
 	local self = setmetatable({}, IntentMapper)
 
@@ -52,14 +153,6 @@ end
 ------------------------------------------------------------------------
 -- LIFECYCLE
 ------------------------------------------------------------------------
-
-function IntentMapper:Init()
-	-- Configuración realizada en constructor
-end
-
-function IntentMapper:Start()
-	-- Sin conexiones propias — Update() es llamado por el heartbeat
-end
 
 function IntentMapper:Destroy()
 	table.clear(self._activeIntents)
@@ -111,102 +204,17 @@ function IntentMapper:GetActiveIntents(): { [string]: { Active: boolean, Data: a
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Procesar un evento discreto
+-- INTERNAL: Procesar un evento discreto (table-driven dispatch)
 ------------------------------------------------------------------------
 
 function IntentMapper:_processEvent(event)
-	local name = event.Name
-	local mode = event.Mode
-
-	-- CoverButton (Space / A) — el corazón contexto-sensitivo de GoW
-	if name == "CoverButton" then
-		if mode == "Tap" then
-			-- Siempre generar WantsCover. ActionResolver decide cover vs evade
-			-- según si EnvironmentSensor encontró cover o no.
-			self:_setIntent("WantsCover", true)
-			-- Si el jugador se mueve hacia adelante, también generar WantsMantle
-			local moveDir = self._inputDetector:GetMoveDirection()
-			if moveDir.Y > Constants.ROADIE_RUN_INPUT_THRESHOLD then
-				self:_setIntent("WantsMantle", true)
-			end
-		elseif mode == "HoldStart" then
-			-- Hold = RoadieRun
-			self:_setIntent("WantsRoadieRun", true)
-		elseif mode == "Release" then
-			-- Release después de hold = parar RoadieRun
-			self:_setIntent("WantsStopRoadieRun", true)
-			self:_setIntent("WantsRoadieRun", false)
-		end
-
-	-- SprintModifier (Shift) — RoadieRun separado en PC
-	elseif name == "SprintModifier" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsRoadieRun", true)
-		elseif mode == "Released" then
-			self:_setIntent("WantsStopRoadieRun", true)
-			self:_setIntent("WantsRoadieRun", false)
-		end
-
-	-- EvadeButton (Alt) — Roll/Evade separado en PC
-	elseif name == "EvadeButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsEvade", true)
-		end
-
-	-- FireButton (LMB / RT)
-	elseif name == "FireButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsShoot", true)
-		elseif mode == "Released" then
-			self:_setIntent("WantsStopShoot", true)
-			self:_setIntent("WantsShoot", false)
-		end
-
-	-- AimButton (RMB / LT)
-	elseif name == "AimButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsAim", true)
-		elseif mode == "Released" then
-			self:_setIntent("WantsStopAim", true)
-			self:_setIntent("WantsAim", false)
-		end
-
-	-- ReloadButton (R / RB)
-	elseif name == "ReloadButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsReload", true)
-		end
-
-	-- BlindFireButton (Q)
-	elseif name == "BlindFireButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsBlindFire", true)
-		elseif mode == "Released" then
-			self:_setIntent("WantsStopBlindFire", true)
-			self:_setIntent("WantsBlindFire", false)
-		end
-
-	-- MeleeButton (V / B) — tap vs hold
-	elseif name == "MeleeButton" then
-		if mode == "Tap" then
-			self:_setIntent("WantsMelee", true)
-		elseif mode == "HoldStart" then
-			self:_setIntent("WantsChainsaw", true)
-		elseif mode == "Release" then
-			self:_setIntent("WantsChainsaw", false)
-		end
-
-	-- InteractButton (E/F / X)
-	elseif name == "InteractButton" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsInteract", true)
-		end
-
-	-- SwapWeapon (1/2/3 / Y)
-	elseif name == "SwapWeapon" then
-		if mode == "Pressed" then
-			self:_setIntent("WantsSwapWeapon", true, event.Data)
-		end
+	local handlers = EVENT_DISPATCH[event.Name]
+	if not handlers then
+		return
+	end
+	local handler = handlers[event.Mode]
+	if handler then
+		handler(self, event)
 	end
 end
 
@@ -245,10 +253,7 @@ function IntentMapper:_processContinuousState()
 	end
 
 	-- Exit cover: moveDirection "hacia atrás" = quiere salir de cover.
-	-- No requiere env.HasCoverNearby: en CoverIdle el personaje mira hacia afuera
-	-- de la pared, así que el EnvironmentSensor no detecta la cover detrás.
-	-- El ActionResolver ya filtra por estado (COVER_IDLE_RULES solo aplica en CoverGroup).
-	if moveDir.Y < -0.5 then
+	if moveDir.Y < -Constants.EXIT_COVER_BACK_THRESHOLD then
 		self:_setIntent("WantsExitCover", true)
 	end
 end
@@ -269,24 +274,9 @@ end
 
 --- Limpiar intenciones discretas (one-shot) del frame anterior.
 --- Las continuas se re-evalúan en _processContinuousState.
+--- Usa Constants.DISCRETE_INTENTS como single source of truth.
 function IntentMapper:_clearDiscreteIntents()
-	local discreteIntents = {
-		"WantsCover",
-		"WantsEvade",
-		"WantsMantle",
-		"WantsReload",
-		"WantsMelee",
-		"WantsChainsaw",
-		"WantsInteract",
-		"WantsSwapWeapon",
-		"WantsStopRoadieRun",
-		"WantsStopShoot",
-		"WantsStopAim",
-		"WantsStopBlindFire",
-		"WantsExitCover",
-	}
-
-	for _, name in discreteIntents do
+	for _, name in Constants.DISCRETE_INTENTS do
 		self._activeIntents[name] = nil
 	end
 end

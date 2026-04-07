@@ -5,8 +5,8 @@
 	═══════════════════════════════════════════════════════════════
 	
 	Toda la lógica de snap magnético hacia la pared:
-	  - Movimiento por velocidad × dt (ease-out cúbico)
-	  - Rotación suave via slerp/lerp blend progresivo
+	  - Movimiento por velocidad × dt (ease-out cuadrático / QuadOut)
+	  - Rotación suave via slerp/lerp solo en el último 30% del recorrido
 	  - Cancelación: empujar hacia atrás, stuck timeout, cover destruida
 	  - Cover chaining: re-dirige a otra cover mid-entry
 	  - Corner clamp: evita snap en aristas del Part
@@ -282,13 +282,19 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 		return "cancel"
 	end
 
-	-- ── 2. MOVIMIENTO con ease-out ──────────────────────────────
+	-- ── 2. MOVIMIENTO con ease-out cuadrático (QuadOut) ────────
 
 	local toTarget = Vector3.new(targetPos.X - currentPos.X, 0, targetPos.Z - currentPos.Z)
 	local distXZ = toTarget.Magnitude
 
-	local t = 1 - math.clamp(distXZ / data.initialDist, 0, 1)
-	local easeFactor = 1 - (1 - t) * (1 - t) * (1 - t)
+	-- t: progreso 0→1 (0 = inicio, 1 = llegó al destino)
+	-- Ratchet: t nunca retrocede aunque el personaje rebote contra la pared.
+	-- Sin esto, una colisión incrementa distXZ → t baja → rotación se atasca.
+	local rawT = 1 - math.clamp(distXZ / data.initialDist, 0, 1)
+	data.peakT = math.max(data.peakT or 0, rawT)
+	local t = data.peakT
+	-- QuadOut: rápido al inicio, desacelera suave al final
+	local easeFactor = 1 - (1 - t) * (1 - t)
 
 	local speedFrac = 1 - easeFactor * (1 - Constants.COVER_SNAP_MIN_SPEED_FRAC)
 	local currentSpeed = Constants.COVER_SNAP_SPEED * speedFrac
@@ -302,16 +308,27 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 		newPos = Vector3.new(currentPos.X + step.X, currentPos.Y, currentPos.Z + step.Z)
 	end
 
-	-- ── 3. ROTACIÓN progresiva ──────────────────────────────────
+	-- ── 3. ROTACIÓN solo al final (último 50% del recorrido) ───
 
-	local rotBlend = Constants.COVER_ROTATION_BLEND_MIN
-		+ (Constants.COVER_ROTATION_BLEND_MAX - Constants.COVER_ROTATION_BLEND_MIN) * easeFactor
+	local ROTATION_START = Constants.COVER_START_ROTATION_BLEND
 
-	local currentRot = rootPart.CFrame.Rotation
-	local targetRot = targetCF.Rotation
-	local blendedRot = currentRot:Lerp(targetRot, rotBlend)
+	if t >= ROTATION_START then
+		-- Remapear t: 0.7→1.0 se convierte en 0→1 para la rotación
+		local rotT = (t - ROTATION_START) / (1 - ROTATION_START)
+		-- QuadOut para la rotación también
+		local rotEase = 1 - (1 - rotT) * (1 - rotT)
 
-	rootPart.CFrame = CFrame.new(newPos) * blendedRot
+		local rotBlend = Constants.COVER_ROTATION_BLEND_MIN
+			+ (Constants.COVER_ROTATION_BLEND_MAX - Constants.COVER_ROTATION_BLEND_MIN) * rotEase
+
+		local currentRot = rootPart.CFrame.Rotation
+		local targetRot = targetCF.Rotation
+		local blendedRot = currentRot:Lerp(targetRot, rotBlend)
+		rootPart.CFrame = CFrame.new(newPos) * blendedRot
+	else
+		-- Sin rotación: mantener orientación actual, solo mover posición
+		rootPart.CFrame = CFrame.new(newPos) * rootPart.CFrame.Rotation
+	end
 
 	-- ── 4. COMPROBACIÓN DE COMPLETADO ─────────────────────────────
 

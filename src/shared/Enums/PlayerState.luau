@@ -47,6 +47,26 @@ local CAPABILITY_DEFAULTS = {
 	isVulnerable = true,
 }
 
+--- Templates reutilizables para evitar copy-paste de excepciones.
+--- Todas las actions comprometidas bloquean todo.
+local ALL_LOCKED = table.freeze({
+	canShoot = false,
+	canMove = false,
+	canTakeCover = false,
+	canEvade = false,
+	canSprint = false,
+})
+
+--- Actions comprometidas + invulnerable (iframes, protección de pared, inactivo).
+local ALL_LOCKED_INVULNERABLE = table.freeze({
+	canShoot = false,
+	canMove = false,
+	canTakeCover = false,
+	canEvade = false,
+	canSprint = false,
+	isVulnerable = false,
+})
+
 --- Solo los flags que DIFIEREN del default para cada estado.
 --- Si un estado no aparece aquí, es idéntico al soldado base.
 local CAPABILITY_EXCEPTIONS = {
@@ -123,66 +143,16 @@ local CAPABILITY_EXCEPTIONS = {
 	},
 
 	-- ACTION GROUP: animaciones comprometidas — todo bloqueado
+	CoverSlide = ALL_LOCKED,
+	CoverEntering = ALL_LOCKED,
+	CoverExiting = ALL_LOCKED,
+	CoverSwap = ALL_LOCKED,
+	Mantling = ALL_LOCKED,
+	Executing = ALL_LOCKED,
 
-	CoverSlide = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
-
-	CoverEntering = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
-
-	CoverExiting = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
-
-	CoverSwap = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
-
-	Evading = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-		isVulnerable = false, -- iframes parciales
-	},
-
-	Mantling = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
-
-	Executing = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-	},
+	Evading = ALL_LOCKED_INVULNERABLE, -- iframes parciales
 
 	-- DBNO GROUP
-
 	DBNO = {
 		canShoot = false,
 		canTakeCover = false,
@@ -191,33 +161,9 @@ local CAPABILITY_EXCEPTIONS = {
 	},
 
 	-- INACTIVE GROUP: sin character, sin mecánicas
-
-	Death = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-		isVulnerable = false,
-	},
-
-	Spectator = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-		isVulnerable = false,
-	},
-
-	Lobby = {
-		canShoot = false,
-		canMove = false,
-		canTakeCover = false,
-		canEvade = false,
-		canSprint = false,
-		isVulnerable = false,
-	},
+	Death = ALL_LOCKED_INVULNERABLE,
+	Spectator = ALL_LOCKED_INVULNERABLE,
+	Lobby = ALL_LOCKED_INVULNERABLE,
 }
 
 ------------------------------------------------------------------------
@@ -255,7 +201,7 @@ PlayerState.Transitions = {
 	CoverSlide = { "CoverIdle" },
 	CoverEntering = { "CoverIdle", "Idle" },
 	CoverExiting = { "Idle" },
-	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking" },
+	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking", "Idle" },
 	Evading = { "Idle" },
 	Mantling = { "Idle" },
 	Executing = { "Idle" },
@@ -328,25 +274,19 @@ PlayerState.Groups = {
 -- API
 ------------------------------------------------------------------------
 
---- Verifica si una transición de estado es válida.
-function PlayerState.CanTransition(from: string, to: string): boolean
-	local validTargets = PlayerState.Transitions[from]
-	if not validTargets then
-		return false
-	end
-
-	for _, target in validTargets do
-		if target == to then
-			return true
-		end
-	end
-
-	return false
-end
+--- Cache de capabilities mergeadas por estado (frozen).
+--- Evita table.clone + merge en cada frame.
+local _capabilityCache: { [string]: any } = {}
 
 --- Obtiene la configuración de un estado con capabilities mergeadas.
---- Retorna una tabla nueva con Name + todos los capability flags.
+--- Retorna una tabla frozen (inmutable) con Name + todos los capability flags.
+--- Resultado cacheado: 0 allocaciones después de la primera llamada por estado.
 function PlayerState.GetState(stateName: string)
+	local cached = _capabilityCache[stateName]
+	if cached then
+		return cached
+	end
+
 	local state = table.clone(CAPABILITY_DEFAULTS)
 	state.Name = stateName
 
@@ -357,25 +297,9 @@ function PlayerState.GetState(stateName: string)
 		end
 	end
 
+	state = table.freeze(state)
+	_capabilityCache[stateName] = state
 	return state
-end
-
---- Retorna la lista de todos los nombres de estado definidos.
-function PlayerState.GetAllStateNames(): { string }
-	local names = {}
-	-- Recopilar todos los estados de todos los grupos
-	for _, group in PlayerState.Groups do
-		for _, stateName in group.States do
-			if not table.find(names, stateName) then
-				table.insert(names, stateName)
-			end
-		end
-	end
-	-- Añadir DBNO si no está (está en su propio grupo)
-	if not table.find(names, "DBNO") then
-		table.insert(names, "DBNO")
-	end
-	return names
 end
 
 return PlayerState
