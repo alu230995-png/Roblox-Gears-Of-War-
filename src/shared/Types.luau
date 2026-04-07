@@ -139,6 +139,7 @@ export type Intent =
 	| "WantsStopBlindFire"
 	| "WantsMelee"
 	| "WantsChainsaw"
+	| "WantsStopChainsaw"
 	| "WantsInteract"
 	| "WantsSwapWeapon"
 	| "WantsMantle"
@@ -151,6 +152,7 @@ export type BufferEntry = {
 	TTL: number,
 	Consumed: boolean,
 	Data: any?,
+	BatchId: number?,
 }
 
 export type EnvironmentContext = {

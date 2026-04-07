@@ -1,7 +1,7 @@
 --[[
 	InputBuffer.luau
 	═══════════════════════════════════════════════════════════════
-	CAPA 3: Input Buffering con TTL
+	CAPA 3: Input Buffering con TTL + Batch Consumption
 	═══════════════════════════════════════════════════════════════
 	
 	Guarda intenciones durante una ventana de tiempo para que acciones
@@ -17,6 +17,12 @@
 	   hay uno pendiente, REEMPLAZA (no apila).
 	2. Se consume al ejecutar: consumed = true.
 	3. Expira por tiempo: si TTL expira, se descarta silenciosamente.
+	4. Batch Consumption: cuando se consume un intent con BatchId,
+	   TODOS los demás intents del mismo batch se consumen también.
+	   Esto previene intenciones huérfanas del multi-intent.
+	   Ej: CoverButton.Tap inyecta {WantsCover, WantsMantle, WantsEvade}
+	   con BatchId=7. Al consumir WantsCover, WantsMantle y WantsEvade
+	   se marcan Consumed automáticamente → no se disparan después.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -65,7 +71,8 @@ end
 --- Inserta o reemplaza un intent en el buffer.
 --- @param intentName string — nombre del intent
 --- @param data any? — datos adicionales (ej: slot de arma)
-function InputBuffer:Push(intentName: string, data: any?)
+--- @param batchId number? — ID de batch para batch consumption
+function InputBuffer:Push(intentName: string, data: any?, batchId: number?)
 	local ttl = INTENT_TTL[intentName] or Constants.BUFFER_TTL_DEFAULT
 
 	self._buffer[intentName] = {
@@ -74,17 +81,19 @@ function InputBuffer:Push(intentName: string, data: any?)
 		TTL = ttl,
 		Consumed = false,
 		Data = data,
+		BatchId = batchId,
 	}
 end
 
 --- Inserta múltiples intents desde el IntentMapper.
 --- Solo bufferea intents discretos que están activos.
+--- Propaga el BatchId del IntentMapper para batch consumption.
 --- Usa Constants.BUFFERABLE_INTENTS como single source of truth.
 function InputBuffer:PushFromIntents(activeIntents: { [string]: { Active: boolean, Data: any? } })
 	for _, intentName in Constants.BUFFERABLE_INTENTS do
 		local entry = activeIntents[intentName]
 		if entry and entry.Active then
-			self:Push(intentName, entry.Data)
+			self:Push(intentName, entry.Data, entry.BatchId)
 		end
 	end
 end
@@ -111,6 +120,8 @@ end
 
 --- Intenta consumir un intent del buffer.
 --- Retorna true si el intent estaba disponible y fue consumido.
+--- Batch Consumption: si el intent tiene BatchId, consume TODOS los
+--- siblings del mismo batch (previene intenciones huérfanas).
 function InputBuffer:Consume(intentName: string): (boolean, any?)
 	local entry = self._buffer[intentName]
 	if not entry then
@@ -131,6 +142,17 @@ function InputBuffer:Consume(intentName: string): (boolean, any?)
 
 	-- Consumir
 	entry.Consumed = true
+
+	-- Batch Consumption: consumir todos los siblings del mismo batch
+	local batchId = entry.BatchId
+	if batchId then
+		for siblingName, siblingEntry in self._buffer do
+			if siblingName ~= intentName and siblingEntry.BatchId == batchId then
+				siblingEntry.Consumed = true
+			end
+		end
+	end
+
 	return true, entry.Data
 end
 

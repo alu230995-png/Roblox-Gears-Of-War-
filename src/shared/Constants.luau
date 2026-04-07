@@ -251,6 +251,7 @@ Constants.DISCRETE_INTENTS = table.freeze({
 	"WantsStopShoot",
 	"WantsStopAim",
 	"WantsStopBlindFire",
+	"WantsStopChainsaw",
 	"WantsExitCover",
 })
 

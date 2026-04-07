@@ -217,6 +217,18 @@ function InputDetector:GetHoldDuration(rawName: string): number
 end
 
 ------------------------------------------------------------------------
+-- RUTA UI / MÓVIL
+-- Botones HUD, touchscreen, o cualquier UI que quiera simular input.
+-- Llámalo desde el controlador del botón UI:
+--   inputDetector:FireUIButton("CoverButton", "Tap")
+--   inputDetector:FireUIButton("FireButton", "Pressed")
+--   inputDetector:FireUIButton("SwapWeapon", "Pressed", 2) -- slot 2
+------------------------------------------------------------------------
+function InputDetector:FireUIButton(rawName: string, mode: string, data: any?)
+	self:_queueEvent(rawName, mode, data)
+end
+
+------------------------------------------------------------------------
 -- INTERNAL: Input Began
 ------------------------------------------------------------------------
 

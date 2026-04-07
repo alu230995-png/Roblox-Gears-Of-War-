@@ -4,31 +4,42 @@
 	CAPA 2: Raw Inputs → Intenciones Semánticas
 	═══════════════════════════════════════════════════════════════
 	
-	Traduce inputs crudos del InputDetector a intenciones de alto nivel.
-	Una intención describe QUÉ quiere hacer el jugador, no CÓMO lo solicitó.
+	Arquitectura AAA: Action-Based Input Mapping.
 	
-	Tabla de traducción:
-	  CoverButton Tap + cover cerca    → WantsCover
-	  CoverButton Tap + sin cover      → WantsEvade
-	  CoverButton HoldStart            → WantsRoadieRun
-	  CoverButton Release              → WantsStopRoadieRun
-	  SprintModifier Pressed           → WantsRoadieRun
-	  SprintModifier Released           → WantsStopRoadieRun
-	  EvadeButton Pressed              → WantsEvade
-	  FireButton Pressed               → WantsShoot
-	  FireButton Released              → WantsStopShoot
-	  AimButton Pressed                → WantsAim
-	  AimButton Released               → WantsStopAim
-	  ReloadButton Pressed             → WantsReload
-	  BlindFireButton Pressed          → WantsBlindFire
-	  BlindFireButton Released         → WantsStopBlindFire
-	  MeleeButton Tap                  → WantsMelee
-	  MeleeButton HoldStart            → WantsChainsaw
-	  InteractButton Pressed           → WantsInteract
-	  SwapWeapon Pressed               → WantsSwapWeapon
+	El hardware JAMÁS habla directamente con el personaje.
+	Esta capa es un DICCIONARIO PURO DE DATOS que traduce eventos
+	físicos (Tap, Hold, Pressed, Released) en intenciones abstractas.
 	
-	Soporte multi-intent: el jugador puede tener múltiples intenciones simultáneas.
-	  ej: WantsMoveForward + WantsCover = el resolver decide qué hacer
+	Filosofía clave:
+	  - Un solo botón puede inyectar MÚLTIPLES intenciones simultáneas.
+	    ej: CoverButton.Tap → { WantsCover, WantsMantle, WantsEvade }
+	  - El Árbitro Contextual (ActionResolver, Capa 4) decide cuál gana
+	    usando prioridad + estado + entorno.
+	  - Todas las intenciones del mismo evento comparten un BatchId.
+	    Cuando el buffer consume una, las demás del batch se descartan
+	    automáticamente (batch consumption).
+	  - Para rebind de controles, solo se modifica INTENT_MAP.
+	    La lógica del personaje permanece intacta.
+	
+	Tabla de inyección (INTENT_MAP):
+	  CoverButton   Tap       → WantsCover, WantsMantle, WantsEvade
+	  CoverButton   HoldStart → WantsRoadieRun
+	  CoverButton   Release   → stop WantsRoadieRun
+	  SprintModifier Pressed  → WantsRoadieRun
+	  SprintModifier Released → stop WantsRoadieRun
+	  EvadeButton   Pressed   → WantsEvade
+	  FireButton    Pressed   → WantsShoot
+	  FireButton    Released  → stop WantsShoot
+	  AimButton     Pressed   → WantsAim
+	  AimButton     Released  → stop WantsAim
+	  ReloadButton  Pressed   → WantsReload
+	  BlindFireButton Pressed → WantsBlindFire
+	  BlindFireButton Released→ stop WantsBlindFire
+	  MeleeButton   Tap       → WantsMelee
+	  MeleeButton   HoldStart → WantsChainsaw
+	  MeleeButton   Release   → stop WantsChainsaw
+	  InteractButton Pressed  → WantsInteract
+	  SwapWeapon    Pressed   → WantsSwapWeapon
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -39,113 +50,92 @@ local IntentMapper = {}
 IntentMapper.__index = IntentMapper
 
 ------------------------------------------------------------------------
--- TABLE-DRIVEN EVENT DISPATCH
--- Cada entrada: [RawName] = { [Mode] = handler(self, event) }
--- O(1) lookup en vez de if/elseif chain.
+-- INTENT_MAP — Diccionario puro de datos (sin funciones, sin lógica)
+--
+-- Estructura: [RawName] = { [Mode] = mapping }
+-- mapping.intents = { "Intent1", "Intent2", ... }  → se activan con BatchId
+-- mapping.stop    = { "IntentToStop", ... }         → se desactivan + emiten WantsStop*
+--
+-- Para rebind: solo mover/copiar entries. Nada más cambia.
 ------------------------------------------------------------------------
 
-local EVENT_DISPATCH = {
+local INTENT_MAP = {
 	CoverButton = {
-		Tap = function(self, _event)
-			self:_setIntent("WantsCover", true)
-			local moveDir = self._inputDetector:GetMoveDirection()
-			if moveDir.Y > Constants.FORWARD_INPUT_THRESHOLD then
-				self:_setIntent("WantsMantle", true)
-			end
-		end,
-		HoldStart = function(self, _event)
-			self:_setIntent("WantsRoadieRun", true)
-		end,
-		Release = function(self, _event)
-			self:_setIntent("WantsStopRoadieRun", true)
-			self:_setIntent("WantsRoadieRun", false)
-		end,
+		Tap = { intents = { "WantsCover", "WantsMantle", "WantsEvade" } },
+		HoldStart = { intents = { "WantsRoadieRun" } },
+		Release = { stop = { "WantsRoadieRun" } },
 	},
 
 	SprintModifier = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsRoadieRun", true)
-		end,
-		Released = function(self, _event)
-			self:_setIntent("WantsStopRoadieRun", true)
-			self:_setIntent("WantsRoadieRun", false)
-		end,
+		Pressed = { intents = { "WantsRoadieRun" } },
+		Released = { stop = { "WantsRoadieRun" } },
 	},
 
 	EvadeButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsEvade", true)
-		end,
+		Pressed = { intents = { "WantsEvade" } },
 	},
 
 	FireButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsShoot", true)
-		end,
-		Released = function(self, _event)
-			self:_setIntent("WantsStopShoot", true)
-			self:_setIntent("WantsShoot", false)
-		end,
+		Pressed = { intents = { "WantsShoot" } },
+		Released = { stop = { "WantsShoot" } },
 	},
 
 	AimButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsAim", true)
-		end,
-		Released = function(self, _event)
-			self:_setIntent("WantsStopAim", true)
-			self:_setIntent("WantsAim", false)
-		end,
+		Pressed = { intents = { "WantsAim" } },
+		Released = { stop = { "WantsAim" } },
 	},
 
 	ReloadButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsReload", true)
-		end,
+		Pressed = { intents = { "WantsReload" } },
 	},
 
 	BlindFireButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsBlindFire", true)
-		end,
-		Released = function(self, _event)
-			self:_setIntent("WantsStopBlindFire", true)
-			self:_setIntent("WantsBlindFire", false)
-		end,
+		Pressed = { intents = { "WantsBlindFire" } },
+		Released = { stop = { "WantsBlindFire" } },
 	},
 
 	MeleeButton = {
-		Tap = function(self, _event)
-			self:_setIntent("WantsMelee", true)
-		end,
-		HoldStart = function(self, _event)
-			self:_setIntent("WantsChainsaw", true)
-		end,
-		Release = function(self, _event)
-			self:_setIntent("WantsChainsaw", false)
-		end,
+		Tap = { intents = { "WantsMelee" } },
+		HoldStart = { intents = { "WantsChainsaw" } },
+		Release = { stop = { "WantsChainsaw" } },
 	},
 
 	InteractButton = {
-		Pressed = function(self, _event)
-			self:_setIntent("WantsInteract", true)
-		end,
+		Pressed = { intents = { "WantsInteract" } },
 	},
 
 	SwapWeapon = {
-		Pressed = function(self, event)
-			self:_setIntent("WantsSwapWeapon", true, event.Data)
-		end,
+		Pressed = { intents = { "WantsSwapWeapon" } },
 	},
 }
+
+------------------------------------------------------------------------
+-- CONTINUOUS_HELD — Intents re-evaluados cada frame por polling.
+-- Si el raw input está held, la intención se activa.
+-- Movement direction y WantsExitCover son especiales (calculados aparte).
+------------------------------------------------------------------------
+
+local CONTINUOUS_HELD = {
+	{ raw = "SprintModifier", intent = "WantsRoadieRun" },
+	{ raw = "AimButton", intent = "WantsAim" },
+	{ raw = "FireButton", intent = "WantsShoot" },
+	{ raw = "BlindFireButton", intent = "WantsBlindFire" },
+}
+
+------------------------------------------------------------------------
+-- CLASS
+------------------------------------------------------------------------
 
 function IntentMapper.new(inputDetector)
 	local self = setmetatable({}, IntentMapper)
 
 	self._inputDetector = inputDetector
 
-	-- Intenciones activas este frame: { [intentName] = { active, data } }
+	-- Intenciones activas este frame: { [intentName] = { Active, Data, BatchId? } }
 	self._activeIntents = {}
+
+	-- Contador auto-incremental de batch: cada evento discreto genera un ID único
+	self._nextBatchId = 1
 
 	return self
 end
@@ -164,7 +154,7 @@ end
 
 --- Procesa los eventos del frame y produce el set de intenciones activas.
 --- Llamar una vez por frame DESPUÉS de InputDetector y EnvironmentSensor.
---- @return { [string]: { Active: boolean, Data: any? } }
+--- @return { [string]: { Active: boolean, Data: any?, BatchId: number? } }
 function IntentMapper:Update(): { [string]: { Active: boolean, Data: any? } }
 	-- Limpiar intenciones discretas del frame anterior
 	-- (las continuas se re-evalúan abajo)
@@ -204,22 +194,40 @@ function IntentMapper:GetActiveIntents(): { [string]: { Active: boolean, Data: a
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Procesar un evento discreto (table-driven dispatch)
+-- INTERNAL: Procesar un evento discreto (data-driven, sin funciones)
 ------------------------------------------------------------------------
 
 function IntentMapper:_processEvent(event)
-	local handlers = EVENT_DISPATCH[event.Name]
-	if not handlers then
+	local rawModes = INTENT_MAP[event.Name]
+	if not rawModes then
 		return
 	end
-	local handler = handlers[event.Mode]
-	if handler then
-		handler(self, event)
+	local mapping = rawModes[event.Mode]
+	if not mapping then
+		return
+	end
+
+	-- Intenciones positivas: activar con BatchId compartido
+	if mapping.intents then
+		local batchId = self._nextBatchId
+		self._nextBatchId += 1
+
+		for _, intentName in mapping.intents do
+			self:_setIntent(intentName, true, event.Data, batchId)
+		end
+	end
+
+	-- Intenciones stop: desactivar la continua + emitir el WantsStop* discreto
+	if mapping.stop then
+		for _, intentName in mapping.stop do
+			self:_setIntent(intentName, false)
+			self:_setIntent("WantsStop" .. string.sub(intentName, 6), true) -- "Wants" = 5 chars → "WantsStop" + resto
+		end
 	end
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Estado continuo (polling cada frame)
+-- INTERNAL: Estado continuo (polling cada frame, data-driven)
 ------------------------------------------------------------------------
 
 function IntentMapper:_processContinuousState()
@@ -232,24 +240,11 @@ function IntentMapper:_processContinuousState()
 	self:_setIntent("WantsMoveLeft", moveDir.X < -Constants.MOVE_DIRECTION_THRESHOLD)
 	self:_setIntent("WantsMoveRight", moveDir.X > Constants.MOVE_DIRECTION_THRESHOLD)
 
-	-- Sprint continuo: si Shift está held O CoverButton está held (pasado threshold)
-	if detector:IsRawHeld("SprintModifier") then
-		self:_setIntent("WantsRoadieRun", true)
-	end
-
-	-- Aim continuo: si RMB está held
-	if detector:IsRawHeld("AimButton") then
-		self:_setIntent("WantsAim", true)
-	end
-
-	-- Fire continuo: si LMB está held (armas automáticas)
-	if detector:IsRawHeld("FireButton") then
-		self:_setIntent("WantsShoot", true)
-	end
-
-	-- BlindFire continuo: si Q está held
-	if detector:IsRawHeld("BlindFireButton") then
-		self:_setIntent("WantsBlindFire", true)
+	-- Held-based continuous intents (data-driven loop)
+	for _, entry in CONTINUOUS_HELD do
+		if detector:IsRawHeld(entry.raw) then
+			self:_setIntent(entry.intent, true)
+		end
 	end
 
 	-- Exit cover: moveDirection "hacia atrás" = quiere salir de cover.
@@ -262,9 +257,9 @@ end
 -- INTERNAL: Gestión de intenciones
 ------------------------------------------------------------------------
 
-function IntentMapper:_setIntent(intentName: string, active: boolean, data: any?)
+function IntentMapper:_setIntent(intentName: string, active: boolean, data: any?, batchId: number?)
 	if active then
-		self._activeIntents[intentName] = { Active = true, Data = data }
+		self._activeIntents[intentName] = { Active = true, Data = data, BatchId = batchId }
 	else
 		if self._activeIntents[intentName] then
 			self._activeIntents[intentName].Active = false
