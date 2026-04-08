@@ -21,6 +21,7 @@ local Constants = require(Shared:WaitForChild("Constants"))
 -- SERVER MODULES
 ------------------------------------------------------------------------
 local CharacterService = require(script.Parent.Character.CharacterService)
+local SoundService = require(script.Parent.Sound.SoundService)
 
 ------------------------------------------------------------------------
 -- BOOTSTRAP
@@ -28,9 +29,11 @@ local CharacterService = require(script.Parent.Character.CharacterService)
 
 -- Fase Init
 CharacterService:Init()
+SoundService:Init()
 
 -- Fase Start
 CharacterService:Start()
+SoundService:Start()
 
 ------------------------------------------------------------------------
 -- STARTUP LOG
@@ -41,7 +44,7 @@ if Constants.DEBUG_MODE then
 	)
 	print("[GoW Server] Gears of War — Server iniciado")
 	print(`[GoW Server] Gravity: {workspace.Gravity}`)
-	print("[GoW Server] Servicios: Character")
+	print("[GoW Server] Servicios: Character, Sound")
 	print(
 		"[GoW Server] ═══════════════════════════════════════"
 	)

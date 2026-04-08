@@ -35,7 +35,7 @@ local Constants = require(Shared:WaitForChild("Constants"))
 ------------------------------------------------------------------------
 -- FOV por estado (module-level constant — creada una sola vez)
 ------------------------------------------------------------------------
-local STATE_FOV = {
+local STATE_FOV = table.freeze({
 	Idle = Constants.DEFAULT_FOV,
 	Walking = Constants.DEFAULT_FOV,
 	RoadieRun = Constants.ROADIE_RUN_FOV,
@@ -60,12 +60,12 @@ local STATE_FOV = {
 	Death = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_DEATH_OFFSET,
 	Spectator = Constants.DEFAULT_FOV,
 	Lobby = Constants.DEFAULT_FOV,
-}
+})
 
 ------------------------------------------------------------------------
 -- BOB multiplier por estado
 ------------------------------------------------------------------------
-local STATE_BOB_MULTIPLIER = {
+local STATE_BOB_MULTIPLIER = table.freeze({
 	Idle = 0,
 	Walking = Constants.CAMERA_BOB_WALK_MULTIPLIER,
 	RoadieRun = Constants.CAMERA_BOB_ROADIE_MULTIPLIER,
@@ -90,12 +90,12 @@ local STATE_BOB_MULTIPLIER = {
 	Death = 0,
 	Spectator = 0,
 	Lobby = 0,
-}
+})
 
 ------------------------------------------------------------------------
 -- Sensibilidad por estado
 ------------------------------------------------------------------------
-local STATE_SENSITIVITY = {
+local STATE_SENSITIVITY = table.freeze({
 	Idle = Constants.CAM_SENSITIVITY_DEFAULT,
 	Walking = Constants.CAM_SENSITIVITY_WALK,
 	RoadieRun = Constants.CAM_SENSITIVITY_ROADIE,
@@ -120,12 +120,12 @@ local STATE_SENSITIVITY = {
 	Death = Constants.CAM_SENSITIVITY_DBNO,
 	Spectator = Constants.CAM_SENSITIVITY_DEFAULT,
 	Lobby = Constants.CAM_SENSITIVITY_DEFAULT,
-}
+})
 
 ------------------------------------------------------------------------
 -- Follow-yaw strength por estado (0 = no sigue, mayor = más fuerte)
 ------------------------------------------------------------------------
-local STATE_FOLLOW_YAW = {
+local STATE_FOLLOW_YAW = table.freeze({
 	Idle = 0,
 	Walking = Constants.CAM_FOLLOW_YAW_WALK,
 	RoadieRun = Constants.CAM_FOLLOW_YAW_RUN,
@@ -150,7 +150,7 @@ local STATE_FOLLOW_YAW = {
 	Death = 0,
 	Spectator = 0,
 	Lobby = 0,
-}
+})
 
 ------------------------------------------------------------------------
 -- CLASS
@@ -204,6 +204,10 @@ function CameraController.new(stateMachine, actionResolver)
 	self._followYawStrength = 0
 	self._roadieYawTimer = 0
 
+	-- Spring Arm: RaycastParams reutilizable (evita allocation por frame)
+	self._raycastParams = RaycastParams.new()
+	self._raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
 	-- Conexiones gestionadas (cleanup en Destroy)
 	self._connections = {}
 
@@ -228,8 +232,7 @@ function CameraController:Start()
 
 	-- Inicializar yaw desde la orientación actual de la cámara
 	if camera then
-		local _, yawRad, _ = camera.CFrame:ToEulerAnglesYXZ()
-		local pitchRad, _, _ = camera.CFrame:ToEulerAnglesYXZ()
+		local pitchRad, yawRad, _ = camera.CFrame:ToEulerAnglesYXZ()
 		self._yaw = math.deg(yawRad)
 		self._pitch = math.deg(pitchRad)
 	end
@@ -276,8 +279,8 @@ function CameraController:Destroy()
 	for _, conn in self._connections do
 		if typeof(conn) == "RBXScriptConnection" then
 			conn:Disconnect()
-		else
-			conn.Disconnect()
+		elseif type(conn) == "table" and type(conn.Disconnect) == "function" then
+			conn:Disconnect()
 		end
 	end
 	table.clear(self._connections)
@@ -321,6 +324,13 @@ function CameraController:_disableAutoRotate()
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid then
 		humanoid.AutoRotate = false
+	else
+		task.spawn(function()
+			local h = character:WaitForChild("Humanoid", 5)
+			if h then
+				h.AutoRotate = false
+			end
+		end)
 	end
 end
 
@@ -359,6 +369,8 @@ function CameraController:_onStateChanged(newState: string, oldState: string)
 	local inCoverGroup = self._stateMachine:IsInGroup("CoverGroup")
 		or newState == "CoverEntering"
 		or newState == "CoverExiting"
+		or newState == "CoverSlide"
+		or newState == "CoverSwap"
 	if not inCoverGroup then
 		self._targetShoulderX = Constants.CAM_SHOULDER_RIGHT
 	end
@@ -546,12 +558,10 @@ function CameraController:_computeSpringArm(hrp: BasePart, _camera: Camera, dt: 
 	local lookDir = rotationCF.LookVector
 	local ideal = Constants.CAM_ARM_LENGTH
 
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { hrp.Parent }
+	self._raycastParams.FilterDescendantsInstances = { hrp.Parent }
 
 	local castDir = -lookDir * ideal
-	local hit = workspace:Spherecast(pivot, Constants.CAM_ARM_SPHERE_RADIUS, castDir, params)
+	local hit = workspace:Spherecast(pivot, Constants.CAM_ARM_SPHERE_RADIUS, castDir, self._raycastParams)
 
 	local targetLength: number
 	if hit then

@@ -58,6 +58,41 @@ end
 function InCover:NotifyEnterFromSnap()
 	self._needsSettle = true
 	self._settleTimer = 0
+	self._settleStartRot = nil -- se captura en el primer frame de _applySettleRotation
+
+	local hrp = self:_getHRP()
+	if not hrp then
+		return
+	end
+
+	-- SOLUCIÓN: Aplicar Wall-Glue una única vez para forzar la posición correcta
+	-- ANTES de que comience el settle y desactivar las colisiones.
+	self:_applyWallGlue(hrp)
+
+	-- Capturar rotación inicial (ahora la posición ya es la correcta)
+	self._settleStartRot = hrp.CFrame.Rotation
+
+	-- (Opcional) Si usaste el código del mensaje anterior para anular el "Drift",
+	-- guarda el _settleStartDist aquí mismo:
+	if self._state.coverNormal and self._state.coverPosition then
+		self._settleStartDist = (hrp.Position - self._state.coverPosition):Dot(self._state.coverNormal)
+	end
+
+	-- 1. DESACTIVAR COLISIONES (Para evitar que se atore con la pared)
+	local coverPart = self._state.coverInstance
+	if coverPart then
+		local noCol = Instance.new("NoCollisionConstraint")
+		noCol.Name = "CoverSettleNoCollision"
+		noCol.Part0 = hrp
+		noCol.Part1 = coverPart
+		noCol.Parent = hrp
+	end
+
+	-- 2. DESACTIVAR AutoRotate del Humanoid
+	local humanoid = hrp.Parent:FindFirstChild("Humanoid")
+	if humanoid then
+		humanoid.AutoRotate = false
+	end
 end
 
 ------------------------------------------------------------------------
@@ -78,7 +113,9 @@ function InCover:UpdateIdle(_dt: number, _envContext: any?)
 	hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 
 	-- Pegamento: corregir posición si la física empujó al personaje
-	self:_applyWallGlue(hrp)
+	if not self._needsSettle then
+		self:_applyWallGlue(hrp)
+	end
 
 	-- Rotación de asentamiento: solo si viene de entering/swap (breve, ~0.3s)
 	self:_applySettleRotation(hrp, _dt)
@@ -189,10 +226,13 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	end
 
 	-- 7. WALL-GLUE: corregir posición cada frame
-	self:_applyWallGlue(hrp)
+	if not self._needsSettle then
+		self:_applyWallGlue(hrp)
+	end
 
 	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover (solo en esquinas internas)
-	if sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+	-- Saltar durante settle para no pelear con _applySettleRotation
+	if not self._needsSettle and sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
 		self:_smoothRotation(hrp, dt)
 	end
 
@@ -205,7 +245,6 @@ end
 ------------------------------------------------------------------------
 
 local SETTLE_DURATION = 0.3 -- duración del asentamiento en segundos
-local SETTLE_SPEED = 10 -- velocidad de lerp exponencial
 
 function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	if not self._needsSettle then
@@ -213,20 +252,65 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	end
 
 	self._settleTimer = self._settleTimer + dt
+
+	-- Si ya se cumplió el tiempo, REACTIVAMOS TODO y terminamos
 	if self._settleTimer >= SETTLE_DURATION then
+		-- Snap final exacto a la normal con drift corregido
+		-- IMPORTANTE: leer _settleStartDist ANTES de limpiarlo
+		local coverNormal = self._state.coverNormal
+		if coverNormal then
+			local pos = hrp.Position
+			local coverPos = self._state.coverPosition
+			if coverPos and self._settleStartDist then
+				local currentDist = (pos - coverPos):Dot(coverNormal)
+				local err = currentDist - self._settleStartDist
+				pos = pos - coverNormal * err
+			end
+			hrp.CFrame = CFrame.new(pos) * CFrame.lookAt(Vector3.zero, coverNormal).Rotation
+		end
+
 		self._needsSettle = false
+		self._settleStartRot = nil
+		self._settleStartDist = nil
+
+		self:_cleanupSettle(hrp)
 		return
 	end
 
 	local coverNormal = self._state.coverNormal
 	if not coverNormal then
 		self._needsSettle = false
+		self._settleStartRot = nil
+		self._settleStartDist = nil
+		self:_cleanupSettle(hrp)
 		return
 	end
 
+	local startRot = self._settleStartRot
+	if not startRot then
+		self._needsSettle = false
+		self:_cleanupSettle(hrp)
+		return
+	end
+
+	-- Progreso normalizado 0→1
+	local t = math.clamp(self._settleTimer / SETTLE_DURATION, 0, 1)
+
+	-- EaseInOutSine: arranque suave, desaceleración suave
+	local eased = -(math.cos(math.pi * t) - 1) / 2
+
+	-- Posición con drift corregido en el eje perpendicular a la pared
 	local pos = hrp.Position
-	local targetCF = CFrame.lookAt(pos, pos + coverNormal)
-	hrp.CFrame = hrp.CFrame:Lerp(targetCF, 1 - math.exp(-SETTLE_SPEED * dt))
+	local coverPos = self._state.coverPosition
+	if coverPos and self._settleStartDist then
+		local currentDist = (pos - coverPos):Dot(coverNormal)
+		local err = currentDist - self._settleStartDist
+		pos = pos - coverNormal * err
+	end
+
+	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
+	local blendedRot = startRot:Lerp(targetRot, eased)
+	hrp.CFrame = CFrame.new(pos) * blendedRot
 end
 
 ------------------------------------------------------------------------
@@ -248,6 +332,14 @@ end
 ------------------------------------------------------------------------
 -- INTERNAL: Helpers
 ------------------------------------------------------------------------
+
+--- Limpia NoCollisionConstraint y restaura AutoRotate al terminar/abortar settle.
+function InCover:_cleanupSettle(hrp: BasePart)
+	local noCol = hrp:FindFirstChild("CoverSettleNoCollision")
+	if noCol then
+		noCol:Destroy()
+	end
+end
 
 --- Obtiene el HumanoidRootPart del personaje local (nil si no existe).
 function InCover:_getHRP(): BasePart?

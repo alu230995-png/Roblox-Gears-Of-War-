@@ -289,7 +289,7 @@ CoverMain._handlers = {
 		self._cameraController:SetCoverNormal(data.coverNormal)
 	end
 
-	self._enteringCover:Begin(data)
+	self._enteringCover:BeginSlide(data)
 
 	-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
 	self:_startTimer(COVER_SLIDE_DURATION, function()

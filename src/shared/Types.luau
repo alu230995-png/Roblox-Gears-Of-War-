@@ -214,6 +214,35 @@ export type ResolverContext = {
 }
 
 ------------------------------------------------------------------------
+-- SOUND SYSTEM
+------------------------------------------------------------------------
+
+--- Scope de reproducción de un sonido.
+export type SoundScope = "Player" | "Global"
+
+--- Grupo lógico de sonido.
+export type SoundGroupType = "VFX" | "Ambient" | "Music" | "Server"
+
+--- Definición de una entrada de sonido en SoundConfig.
+export type SoundEntry = {
+	Ids: { string },
+	Random: boolean,
+	Looped: boolean,
+	Scope: SoundScope,
+	Group: SoundGroupType,
+	Volume: number,
+	MaxDistance: number?,
+	PitchVariation: number?,
+}
+
+--- Payload que viaja por red para replicar sonidos.
+export type SoundReplicationPayload = {
+	SoundName: string,
+	Position: Vector3?,
+	SourcePlayer: Player?,
+}
+
+------------------------------------------------------------------------
 -- NETWORK — RESERVED Phase 6 — not yet used
 ------------------------------------------------------------------------
 

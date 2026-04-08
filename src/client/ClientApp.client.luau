@@ -51,6 +51,9 @@ local AnimationController = require(script.Parent.Animation.AnimationController)
 -- Camera (Fase 5 — skeleton funcional)
 local CameraController = require(script.Parent.Camera.CameraController)
 
+-- Sound System
+local SoundController = require(script.Parent.Sound.SoundController)
+
 ------------------------------------------------------------------------
 -- BOOTSTRAP
 ------------------------------------------------------------------------
@@ -75,8 +78,10 @@ local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
 local animationController = AnimationController.new(stateMachine, actionResolver)
 local cameraController = CameraController.new(stateMachine, actionResolver)
-local movementController = MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer, cameraController)
+local movementController =
+	MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer, cameraController)
 actionResolver:SetCoverHandler(movementController:GetCoverHandler())
+local soundController = SoundController.new(stateMachine)
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
@@ -88,6 +93,7 @@ locator:Register("ActionResolver", actionResolver)
 locator:Register("MovementController", movementController)
 locator:Register("AnimationController", animationController)
 locator:Register("CameraController", cameraController)
+locator:Register("SoundController", soundController)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()
@@ -147,6 +153,7 @@ if Constants.DEBUG_MODE then
 	print(`[GoW Client] Gravity: {workspace.Gravity}`)
 	print("[GoW Client] Arquitectura: ServiceLocator + Signal-driven")
 	print("[GoW Client] Capas: Detector → Mapper → Buffer → Resolver → [Signal] → Controller")
+	print("[GoW Client] Sound System: SoundController + SoundPlayer")
 	print(
 		"[GoW Client] ═══════════════════════════════════════"
 	)
