@@ -113,37 +113,42 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 	-- 3. PROYECTAR SOBRE EL RIEL (producto punto)
 	local movementScale = moveDirWorld:Dot(wallRight)
 
-	-- 4. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
-	local sensor = self._state.envSensor
-	if sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
-		local newNormal, newPosition, newInstance = sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
-
-		if newNormal then
-			-- A) Actualizar estado compartido con la nueva pared
-			self._state.coverNormal = newNormal
-			self._state.coverPosition = newPosition
-			self._state.coverInstance = newInstance
-			self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
-
-			-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
-
-			-- C) Recalcular el riel y la proyección con la nueva normal
-			coverNormal = newNormal
-			wallRight = Vector3.yAxis:Cross(coverNormal)
-			if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
-				hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-				self:_applyWallGlue(hrp)
-				return
-			end
-			wallRight = wallRight.Unit
-			movementScale = moveDirWorld:Dot(wallRight)
-		end
-	end
-
-	-- 5. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
+	-- 4. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
+	-- IMPORTANTE: debe ocurrir ANTES de CheckInnerCorner (mismo fix que InCover).
 	if self._cornerCover and math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		if self._cornerCover:IsBlocked(movementScale) then
 			movementScale = 0
+		end
+	end
+
+	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
+	-- Solo ejecuta si el movimiento NO está bloqueado por una esquina externa.
+	if math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+		local sensor = self._state.envSensor
+		if sensor then
+			local newNormal, newPosition, newInstance =
+				sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
+
+			if newNormal then
+				-- A) Actualizar estado compartido con la nueva pared
+				self._state.coverNormal = newNormal
+				self._state.coverPosition = newPosition
+				self._state.coverInstance = newInstance
+				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
+
+				-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
+
+				-- C) Recalcular el riel y la proyección con la nueva normal
+				coverNormal = newNormal
+				wallRight = Vector3.yAxis:Cross(coverNormal)
+				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
+					hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+					self:_applyWallGlue(hrp)
+					return
+				end
+				wallRight = wallRight.Unit
+				movementScale = moveDirWorld:Dot(wallRight)
+			end
 		end
 	end
 

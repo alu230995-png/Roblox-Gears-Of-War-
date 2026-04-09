@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = true
+Constants.DEBUG_MODE = false
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -151,15 +151,21 @@ Constants.CAM_SHAKE_COVER_ENTER_Y = 0.03
 
 -- Movement follow-yaw (la cámara rota suavemente hacia la dirección de movimiento)
 Constants.CAM_FOLLOW_YAW_WALK = 0 -- walking: cámara no sigue (strafe puro)
-Constants.CAM_FOLLOW_YAW_RUN = 2 -- roadie run: cámara sigue detrás del personaje (heavy phase)
-Constants.CAM_FOLLOW_YAW_RUN_SNAP = 2.5 -- roadie run: cámara sigue rápido durante Quick Snap
+Constants.CAM_FOLLOW_YAW_RUN = 2 -- roadie run: fallback (no usado directamente)
+Constants.CAM_FOLLOW_YAW_RUN_SNAP = 8 -- Fase 1: cámara sigue agresivamente durante Quick Snap
+Constants.CAM_FOLLOW_YAW_RUN_STEER = 15 -- Fase 2: hard follow — cámara bloqueada detrás del personaje
 Constants.CAM_FOLLOW_YAW_EVADE = 0 -- evade: cámara no sigue (strafe-locked)
 Constants.CAM_FOLLOW_YAW_COVER_WALK = 0.0 -- no seguir en cover (el snap controla)
 
--- RoadieRun rotation (personaje rota hacia input, no cámara)
-Constants.ROADIE_SNAP_SPEED = 25 -- Quick Snap: velocidad de rotación al iniciar roadie run
-Constants.ROADIE_STEER_SPEED = 1.8 -- Heavy Steering: velocidad de giro durante carrera (muy lento = pesado)
-Constants.ROADIE_SNAP_DURATION = 0.25 -- Duración del Quick Snap antes de pasar a Heavy Steering
+-- RoadieRun rotation — sistema de dos fases
+Constants.ROADIE_SNAP_SPEED = 25 -- Fase 1 (Quick Snap): velocidad de rotación al iniciar roadie run
+Constants.ROADIE_STEER_SPEED = 1.8 -- Legacy fallback (no usado directamente en steering)
+Constants.ROADIE_SNAP_DURATION = 0.25 -- Duración de la Fase 1 antes de pasar a Fase 2 (Steering)
+Constants.ROADIE_STEER_RATE = 90 -- Fase 2: grados/segundo máximos de giro (radio de giro amplio, inercia pesada)
+Constants.ROADIE_SHOULDER_X = 0 -- Shoulder offset = 0 durante roadie run (cámara centrada a la espalda)
+
+-- Sensibilidad de cámara durante Fase 2 (steering) — sin cámara libre
+Constants.CAM_SENSITIVITY_ROADIE_STEER = 0.0
 
 -- Pitch damping al correr (multiplicador extra sobre pitch, más bajo = más pesado)
 Constants.CAM_PITCH_DAMP_WALK = 0.7

@@ -27,12 +27,24 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Constants = require(Shared:WaitForChild("Constants"))
+local _Constants = require(Shared:WaitForChild("Constants"))
 local SoundConfig = require(Shared:WaitForChild("SoundConfig"))
 local Signal = require(Shared:WaitForChild("Signal"))
 
 local SoundPlayer = require(script.Parent.SoundPlayer)
 local RobloxSoundDisabler = require(script.Parent.RobloxSoundDisabler)
+
+------------------------------------------------------------------------
+-- FOOTSTEP CONSTANTS
+------------------------------------------------------------------------
+
+-- Velocidad horizontal mínima (studs/s) para considerar que el personaje se mueve.
+-- Usa AssemblyLinearVelocity en vez de MoveDirection para detectar
+-- movimiento real (funciona con RoadieRun que usa velocidad directa).
+local VELOCITY_MOVE_THRESHOLD = 1.0
+
+-- Clave especial: timers con este sonido se resuelven al material del suelo
+local FOOTSTEP_SOUND_KEY = "VFX_Footstep_Default"
 
 local SoundController = {}
 SoundController.__index = SoundController
@@ -211,12 +223,23 @@ function SoundController:_updateTimers(dt: number)
 	end
 
 	-- Guard: solo si el personaje se está moviendo de verdad
+	-- Usa AssemblyLinearVelocity horizontal en vez de MoveDirection.
+	-- Esto detecta movimiento real incluso en RoadieRun (WalkSpeed=0,
+	-- velocidad aplicada por AssemblyLinearVelocity directa).
 	local character = Players.LocalPlayer and Players.LocalPlayer.Character
 	if not character then
 		return
 	end
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
-	if not humanoid or humanoid.MoveDirection.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
+
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
+
+	local vel = hrp.AssemblyLinearVelocity
+	local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+
+	if horizontalSpeed < VELOCITY_MOVE_THRESHOLD then
 		return
 	end
 
@@ -224,7 +247,8 @@ function SoundController:_updateTimers(dt: number)
 		timer.elapsed += dt
 		if timer.elapsed >= timer.interval then
 			timer.elapsed -= timer.interval
-			self:_playOnLocalCharacter(timer.sound)
+			local resolvedSound = self:_resolveFootstepSound(timer.sound)
+			self:_playOnLocalCharacter(resolvedSound)
 		end
 	end
 end
@@ -255,6 +279,48 @@ function SoundController:_connectServerRemote()
 		self.SoundPlayed:Fire(soundName)
 	end)
 	table.insert(self._connections, conn)
+end
+
+------------------------------------------------------------------------
+-- FLOOR MATERIAL DETECTION
+------------------------------------------------------------------------
+
+--- Retorna el material del suelo usando Humanoid.FloorMaterial.
+--- Roblox lo actualiza nativamente cada frame — cero raycast, sin colisiones falsas.
+function SoundController:_getFloorMaterial(): Enum.Material?
+	local character = Players.LocalPlayer and Players.LocalPlayer.Character
+	if not character then
+		return nil
+	end
+	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	if not humanoid then
+		return nil
+	end
+	-- FloorMaterial es Air cuando el personaje está en el aire;
+	-- en ese caso no hay suelo → devolver nil para usar el fallback.
+	local mat = humanoid.FloorMaterial
+	if mat == Enum.Material.Air then
+		return nil
+	end
+	return mat
+end
+
+--- Resuelve el nombre del sonido de pasos según el material del suelo.
+--- Si el sonido no es un footstep (no es FOOTSTEP_SOUND_KEY), lo devuelve sin cambios.
+function SoundController:_resolveFootstepSound(soundKey: string): string
+	if soundKey ~= FOOTSTEP_SOUND_KEY then
+		return soundKey
+	end
+
+	local material = self:_getFloorMaterial()
+	if material then
+		local materialMap = SoundConfig.FootstepMaterialMap
+		if materialMap and materialMap[material] then
+			return materialMap[material]
+		end
+	end
+
+	return FOOTSTEP_SOUND_KEY -- Fallback al default
 end
 
 ------------------------------------------------------------------------

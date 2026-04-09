@@ -39,15 +39,15 @@ local STATE_FOV = table.freeze({
 	Idle = Constants.DEFAULT_FOV,
 	Walking = Constants.DEFAULT_FOV,
 	RoadieRun = Constants.ROADIE_RUN_FOV,
-	CoverIdle = Constants.DEFAULT_FOV,
+	CoverIdle = Constants.ROADIE_RUN_FOV,
 	CoverAim = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_COVER_AIM_OFFSET,
 	CoverBlindFire = Constants.DEFAULT_FOV,
 	CoverSlide = Constants.ROADIE_RUN_FOV,
 	CoverEntering = Constants.ROADIE_RUN_FOV,
-	CoverWalking = Constants.DEFAULT_FOV,
-	CoverRunning = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_COVER_RUN_OFFSET,
-	CoverExiting = Constants.DEFAULT_FOV,
-	CoverCorners = Constants.DEFAULT_FOV,
+	CoverWalking = Constants.ROADIE_RUN_FOV,
+	CoverRunning = Constants.ROADIE_RUN_FOV,
+	CoverExiting = Constants.ROADIE_RUN_FOV,
+	CoverCorners = Constants.ROADIE_RUN_FOV,
 	CoverSwap = Constants.ROADIE_RUN_FOV,
 	Evading = Constants.DEFAULT_FOV,
 	Mantling = Constants.DEFAULT_FOV,
@@ -61,6 +61,10 @@ local STATE_FOV = table.freeze({
 	Spectator = Constants.DEFAULT_FOV,
 	Lobby = Constants.DEFAULT_FOV,
 })
+
+-- Velocidad horizontal mínima (studs/s) para activar el bob.
+-- Igual que SoundController — detecta movimiento real sin importar cómo se aplica la velocidad.
+local CAM_BOB_VELOCITY_THRESHOLD = 1.0
 
 ------------------------------------------------------------------------
 -- BOB multiplier por estado
@@ -103,7 +107,7 @@ local STATE_SENSITIVITY = table.freeze({
 	CoverAim = Constants.CAM_SENSITIVITY_AIM,
 	CoverBlindFire = Constants.CAM_SENSITIVITY_COVER,
 	CoverSlide = Constants.CAM_SENSITIVITY_ROADIE,
-	CoverEntering = Constants.CAM_SENSITIVITY_ROADIE,
+	CoverEntering = Constants.CAM_SENSITIVITY_DEFAULT,
 	CoverWalking = Constants.CAM_SENSITIVITY_COVER,
 	CoverRunning = Constants.CAM_SENSITIVITY_COVER,
 	CoverExiting = Constants.CAM_SENSITIVITY_DEFAULT,
@@ -170,7 +174,8 @@ function CameraController.new(stateMachine, actionResolver)
 
 	-- Camera bob
 	self._bobTime = 0
-	self._targetBobMultiplier = 0
+	self._stateBobMultiplier = 0 -- valor definido por estado (máximo posible)
+	self._targetBobMultiplier = 0 -- efectivo: 0 si el personaje no se mueve
 	self._currentBobMultiplier = 0
 
 	-- Mouse rotation (Scriptable mode)
@@ -264,7 +269,9 @@ function CameraController:Start()
 		end
 	end)
 
-	-- Desactivar AutoRotate en el cliente (el servidor ya lo hace, pero hay race condition)
+	------------------------------------------------------------------------
+	-- INTERNAL: Disable Humanoid AutoRotate on the client
+	------------------------------------------------------------------------
 	self:_disableAutoRotate()
 	self._connections.characterAdded = Players.LocalPlayer.CharacterAdded:Connect(function()
 		self:_disableAutoRotate()
@@ -341,7 +348,7 @@ end
 function CameraController:_onStateChanged(newState: string, oldState: string)
 	-- FOV + bob (existente)
 	self._targetFOV = STATE_FOV[newState] or Constants.DEFAULT_FOV
-	self._targetBobMultiplier = STATE_BOB_MULTIPLIER[newState] or 0
+	self._stateBobMultiplier = STATE_BOB_MULTIPLIER[newState] or 0
 
 	-- Sensibilidad por estado
 	self._sensitivityMultiplier = STATE_SENSITIVITY[newState] or Constants.CAM_SENSITIVITY_DEFAULT
@@ -373,6 +380,11 @@ function CameraController:_onStateChanged(newState: string, oldState: string)
 		or newState == "CoverSwap"
 	if not inCoverGroup then
 		self._targetShoulderX = Constants.CAM_SHOULDER_RIGHT
+	end
+
+	-- Shoulder: centrar durante RoadieRun (pierde desplazamiento lateral — cámara a la espalda)
+	if newState == "RoadieRun" then
+		self._targetShoulderX = Constants.ROADIE_SHOULDER_X
 	end
 
 	-- Dynamic Framing: desactivar al salir de cover
@@ -435,6 +447,13 @@ function CameraController:_update(dt: number)
 		return
 	end
 
+	-- 0. Velocity-gate del bob: solo activar si el personaje se mueve de verdad.
+	-- Usa AssemblyLinearVelocity (igual que SoundController) para detectar
+	-- movimiento real en todos los estados, incluso con WalkSpeed=0.
+	local vel = hrp.AssemblyLinearVelocity
+	local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	self._targetBobMultiplier = if horizontalSpeed > CAM_BOB_VELOCITY_THRESHOLD then self._stateBobMultiplier else 0
+
 	-- 1. Procesar input de mouse → acumular yaw/pitch
 	self:_processMouseInput(dt)
 
@@ -489,6 +508,9 @@ end
 ------------------------------------------------------------------------
 
 --- Lee GetMouseDelta() y acumula yaw/pitch con sensibilidad variable.
+--- Durante Fase 2 de RoadieRun (Steering):
+---   - Yaw bloqueado (sens=0): la dirección del movimiento dicta la rotación horizontal.
+---   - Pitch libre: el jugador puede mirar arriba/abajo con el mouse.
 function CameraController:_processMouseInput(_dt: number)
 	local delta = UserInputService:GetMouseDelta()
 	if delta.Magnitude < 0.001 then
@@ -496,9 +518,18 @@ function CameraController:_processMouseInput(_dt: number)
 	end
 
 	local sens = self._sensitivityMultiplier
+	local pitchSens = sens -- por defecto, pitch usa la misma sensibilidad que yaw
+
+	-- Fase 2 (Steering) del RoadieRun: yaw bloqueado, pitch libre
+	local currentState = self._stateMachine:GetCurrentState()
+	if currentState == "RoadieRun" and self._roadieYawTimer >= Constants.ROADIE_SNAP_DURATION then
+		sens = Constants.CAM_SENSITIVITY_ROADIE_STEER -- 0 → sin rotación horizontal libre
+		-- pitchSens mantiene el valor del estado (CAM_SENSITIVITY_ROADIE = 0.2)
+	end
+
 	self._yaw = self._yaw - delta.X * 0.3 * sens
 	self._pitch = math.clamp(
-		self._pitch - delta.Y * 0.3 * sens * self._pitchDamping,
+		self._pitch - delta.Y * 0.3 * pitchSens * self._pitchDamping,
 		Constants.CAM_PITCH_MIN,
 		Constants.CAM_PITCH_MAX
 	)
@@ -518,8 +549,9 @@ end
 -- INTERNAL: Follow-Yaw (cámara sigue al personaje en RoadieRun)
 ------------------------------------------------------------------------
 
---- En RoadieRun la cámara sigue suavemente detrás del personaje (que rota por input).
---- Quick Snap: la cámara sigue rápido al inicio. Heavy: se vuelve pesada después.
+--- En RoadieRun la cámara sigue detrás del personaje con dos fases:
+--- Fase 1 (Quick Snap): la cámara se alinea agresivamente detrás del personaje.
+--- Fase 2 (Steering):   hard follow — la cámara se bloquea detrás, sin cámara libre.
 --- En Walking/Idle/Evade la cámara no sigue — el personaje se alinea a la cámara (strafe).
 function CameraController:_applyFollowYaw(hrp: BasePart, dt: number)
 	local strength = self._followYawStrength
@@ -530,7 +562,14 @@ function CameraController:_applyFollowYaw(hrp: BasePart, dt: number)
 	-- En RoadieRun: dos fases para la cámara también
 	self._roadieYawTimer = self._roadieYawTimer + dt
 	local inSnapPhase = self._roadieYawTimer < Constants.ROADIE_SNAP_DURATION
-	local effectiveStrength = if inSnapPhase then Constants.CAM_FOLLOW_YAW_RUN_SNAP else strength
+
+	-- Fase 1: snap agresivo. Fase 2: hard follow bloqueado.
+	local effectiveStrength: number
+	if inSnapPhase then
+		effectiveStrength = Constants.CAM_FOLLOW_YAW_RUN_SNAP
+	else
+		effectiveStrength = Constants.CAM_FOLLOW_YAW_RUN_STEER
+	end
 
 	-- La cámara sigue el forward del personaje (no MoveDirection)
 	local charLook = hrp.CFrame.LookVector

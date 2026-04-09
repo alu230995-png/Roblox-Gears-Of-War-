@@ -79,7 +79,7 @@ local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMappe
 local animationController = AnimationController.new(stateMachine, actionResolver)
 local cameraController = CameraController.new(stateMachine, actionResolver)
 local movementController =
-	MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer, cameraController)
+	MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer, cameraController, inputDetector)
 actionResolver:SetCoverHandler(movementController:GetCoverHandler())
 local soundController = SoundController.new(stateMachine)
 

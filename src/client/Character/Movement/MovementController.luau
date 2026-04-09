@@ -30,7 +30,14 @@ local SpeedMap = require(script.Parent.SpeedMap)
 local MovementController = {}
 MovementController.__index = MovementController
 
-function MovementController.new(stateMachine, actionResolver, environmentSensor, inputBuffer, cameraController)
+function MovementController.new(
+	stateMachine,
+	actionResolver,
+	environmentSensor,
+	inputBuffer,
+	cameraController,
+	inputDetector
+)
 	local self = setmetatable({}, MovementController)
 
 	self._stateMachine = stateMachine
@@ -42,7 +49,7 @@ function MovementController.new(stateMachine, actionResolver, environmentSensor,
 	-- Sub-handlers
 	self._coverHandler = CoverMain.new(stateMachine, environmentSensor, cameraController)
 	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
-	self._rotationHandler = RotationHandler.new()
+	self._rotationHandler = RotationHandler.new(inputDetector)
 
 	-- Conexiones gestionadas (cleanup en Destroy)
 	self._connections = {}
@@ -180,7 +187,9 @@ end
 --- Aplica AssemblyLinearVelocity directa durante RoadieRun.
 --- WalkSpeed=0 en SpeedMap garantiza que el Humanoid no aporte ninguna fuerza propia,
 --- por lo que esta función es el ÚNICO origen de velocidad horizontal en RoadieRun.
---- Dirección: MoveDirection (WASD activo) → LookVector (sin input, auto-forward GoW).
+--- Dirección: SIEMPRE LookVector — el personaje es forzado hacia adelante.
+--- El RotationHandler gestiona la rotación (Quick Snap + Steering), y este módulo
+--- simplemente aplica velocidad en la dirección a la que apunta el modelo.
 function MovementController:_updateRoadieRun()
 	local character = self._player.Character
 	local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
@@ -189,13 +198,8 @@ function MovementController:_updateRoadieRun()
 		return
 	end
 
-	-- Elegir dirección base: input activo o look vector
-	local rawDir: Vector3
-	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
-		rawDir = humanoid.MoveDirection
-	else
-		rawDir = hrp.CFrame.LookVector
-	end
+	-- Siempre avanzar hacia donde mira el personaje (auto-forward GoW)
+	local rawDir = hrp.CFrame.LookVector
 
 	-- Aplanar al plano horizontal y normalizar
 	local flatDir = Vector3.new(rawDir.X, 0, rawDir.Z)

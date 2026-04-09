@@ -31,14 +31,13 @@ local SoundConfig = {}
 
 SoundConfig.VFX_Footstep_Default = {
 	Ids = {
-		"rbxassetid://86515006936488",
-		"rbxassetid://100334711376180",
-		"rbxassetid://95939420328974",
-		"rbxassetid://79307768470377",
-		"rbxassetid://126380801612911",
-		"rbxassetid://133621117309123",
+		"rbxassetid://113824261411922",
+		"rbxassetid://96838481971398",
+		"rbxassetid://74613570357402",
+		"rbxassetid://115467805684506",
+		"rbxassetid://139667774868914",
 	},
-	Random = false,
+	Random = true,
 	Looped = false,
 	Scope = "Global",
 	Group = "VFX",
@@ -47,8 +46,59 @@ SoundConfig.VFX_Footstep_Default = {
 	PitchVariation = 0.2,
 }
 
+------------------------------------------------------------------------
+-- MATERIAL → FOOTSTEP SOUND MAP
+-- Tabla que mapea Enum.Material de Roblox al nombre del sonido de pasos.
+-- Si el material no está en la tabla, usa VFX_Footstep_Default como fallback.
+------------------------------------------------------------------------
+
+SoundConfig.FootstepMaterialMap = {
+	-- Concreto / Piedra
+	[Enum.Material.Concrete] = "VFX_Footstep_Concrete",
+	[Enum.Material.Brick] = "VFX_Footstep_Concrete",
+	[Enum.Material.Cobblestone] = "VFX_Footstep_Concrete",
+	[Enum.Material.Slate] = "VFX_Footstep_Concrete",
+	[Enum.Material.Granite] = "VFX_Footstep_Concrete",
+	[Enum.Material.Marble] = "VFX_Footstep_Concrete",
+	[Enum.Material.Basalt] = "VFX_Footstep_Concrete",
+	[Enum.Material.Pavement] = "VFX_Footstep_Concrete",
+	[Enum.Material.Asphalt] = "VFX_Footstep_Concrete",
+	[Enum.Material.Rock] = "VFX_Footstep_Concrete",
+	[Enum.Material.Sandstone] = "VFX_Footstep_Concrete",
+
+	-- Metal
+	[Enum.Material.Metal] = "VFX_Footstep_Metal",
+	[Enum.Material.CorrodedMetal] = "VFX_Footstep_Metal",
+	[Enum.Material.DiamondPlate] = "VFX_Footstep_Metal",
+
+	-- Plástico / Genérico (suelos de Roblox por defecto)
+	[Enum.Material.Plastic] = "VFX_Footstep_Default",
+	[Enum.Material.SmoothPlastic] = "VFX_Footstep_Default",
+	[Enum.Material.Neon] = "VFX_Footstep_Default",
+	[Enum.Material.Glass] = "VFX_Footstep_Metal",
+	[Enum.Material.Wood] = "VFX_Footstep_Default",
+	[Enum.Material.WoodPlanks] = "VFX_Footstep_Default",
+
+	-- Terreno / Exterior
+	[Enum.Material.Grass] = "VFX_Footstep_Default",
+	[Enum.Material.LeafyGrass] = "VFX_Footstep_Default",
+	[Enum.Material.Sand] = "VFX_Footstep_Default",
+	[Enum.Material.Mud] = "VFX_Footstep_Default",
+	[Enum.Material.Snow] = "VFX_Footstep_Default",
+	[Enum.Material.Ice] = "VFX_Footstep_Default",
+	[Enum.Material.Ground] = "VFX_Footstep_Default",
+
+	[Enum.Material.Wood] = "VFX_Footstep_Wood",
+}
+
 SoundConfig.VFX_Footstep_Concrete = {
-	Ids = { "rbxassetid://92257857206687", "rbxassetid://92257857206688", "rbxassetid://92257857206689" },
+	Ids = {
+		"rbxassetid://80761632071414",
+		"rbxassetid://76353333185990",
+		"rbxassetid://78911742598635",
+		"rbxassetid://74355740947839",
+		"rbxassetid://76917027608612",
+	},
 	Random = true,
 	Looped = false,
 	Scope = "Global",
@@ -58,8 +108,25 @@ SoundConfig.VFX_Footstep_Concrete = {
 	PitchVariation = 0.08,
 }
 
+SoundConfig.VFX_Footstep_Wood = {
+	Ids = {
+		"rbxassetid://137526436035209",
+	},
+	Random = true,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 50,
+	PitchVariation = 0.1,
+}
+
 SoundConfig.VFX_Footstep_Metal = {
-	Ids = { "rbxassetid://92257857206690", "rbxassetid://92257857206691" },
+	Ids = {
+		"rbxassetid://140728903346385",
+		"rbxassetid://122747308545707",
+		"rbxassetid://106405856376224",
+	},
 	Random = true,
 	Looped = false,
 	Scope = "Global",
@@ -70,14 +137,7 @@ SoundConfig.VFX_Footstep_Metal = {
 }
 
 SoundConfig.VFX_RoadieRun_Breath = {
-	Ids = {
-		"rbxassetid://86515006936488",
-		"rbxassetid://100334711376180",
-		"rbxassetid://95939420328974",
-		"rbxassetid://79307768470377",
-		"rbxassetid://126380801612911",
-		"rbxassetid://133621117309123",
-	},
+	Ids = {},
 	Random = true,
 	Looped = false,
 	Scope = "Player",

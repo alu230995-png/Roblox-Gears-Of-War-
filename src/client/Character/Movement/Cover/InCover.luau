@@ -180,40 +180,45 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 		end
 	end
 
-	-- 4. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
-	-- Si hay movimiento lateral significativo, preguntar al sensor si hay una
-	-- pared perpendicular justo enfrente. Si sí: actualizar normal + rotar CFrame
-	-- + recalcular todo en el MISMO FRAME → movimiento continuo sin frenar.
-	local sensor = self._state.envSensor
-	if sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
-		local newNormal, newPosition, newInstance = sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
-
-		if newNormal then
-			-- A) Actualizar estado compartido con la nueva pared
-			self._state.coverNormal = newNormal
-			self._state.coverPosition = newPosition
-			self._state.coverInstance = newInstance
-			self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
-
-			-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
-
-			-- C) Recalcular el riel y la proyección con la nueva normal
-			coverNormal = newNormal
-			wallRight = Vector3.yAxis:Cross(coverNormal)
-			if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
-				hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-				self:_applyWallGlue(hrp)
-				return
-			end
-			wallRight = wallRight.Unit
-			movementScale = moveDirWorld:Dot(wallRight)
-		end
-	end
-
-	-- 5. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
+	-- 4. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
+	-- IMPORTANTE: debe ocurrir ANTES de CheckInnerCorner.
+	-- Inner corner y outer corner son mutuamente excluyentes; si estamos en
+	-- esquina externa (vacío), el raycast de CheckInnerCorner puede rozar la
+	-- arista del Part y devolver una normal corrupta → jitter.
 	if self._cornerCover and math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		if self._cornerCover:IsBlocked(movementScale) then
 			movementScale = 0
+		end
+	end
+
+	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
+	-- Solo ejecuta si el movimiento NO está bloqueado por una esquina externa.
+	local sensor = self._state.envSensor
+	if math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+		if sensor then
+			local newNormal, newPosition, newInstance =
+				sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
+
+			if newNormal then
+				-- A) Actualizar estado compartido con la nueva pared
+				self._state.coverNormal = newNormal
+				self._state.coverPosition = newPosition
+				self._state.coverInstance = newInstance
+				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
+
+				-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
+
+				-- C) Recalcular el riel y la proyección con la nueva normal
+				coverNormal = newNormal
+				wallRight = Vector3.yAxis:Cross(coverNormal)
+				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
+					hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+					self:_applyWallGlue(hrp)
+					return
+				end
+				wallRight = wallRight.Unit
+				movementScale = moveDirWorld:Dot(wallRight)
+			end
 		end
 	end
 
@@ -230,9 +235,12 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 		self:_applyWallGlue(hrp)
 	end
 
-	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover (solo en esquinas internas)
-	-- Saltar durante settle para no pelear con _applySettleRotation
-	if not self._needsSettle and sensor and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover, siempre activo.
+	-- Llamar incondicionalmente (igual que CoverRunning) para que la orientación
+	-- del HRP esté siempre estabilizada contra coverNormal.
+	-- Sin esto, cuando movementScale=0 (esquina bloqueada) el wallGlue corrige
+	-- posición cada frame sin ancla de orientación → jitter de ida y vuelta.
+	if not self._needsSettle then
 		self:_smoothRotation(hrp, dt)
 	end
 
