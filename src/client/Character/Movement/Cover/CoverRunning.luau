@@ -56,6 +56,7 @@ end
 --- Inicia CoverRunning.
 function CoverRunning:Begin()
 	self._isActive = true
+	self._cornerCooldown = 0 -- BUG-002 fix: resetear cooldown residual de sesión anterior
 end
 
 --- Detiene CoverRunning.
@@ -132,42 +133,21 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 
 	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared 30°–90°)
 	if self._cornerCooldown <= 0 and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
-		local sensor = self._state.envSensor
-		if sensor then
-			local newNormal, newPosition, newInstance =
-				sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
+		local newCoverNormal, newWallRight, newMovementScale, transitioned =
+			CoverMovementUtils.handleInnerCornerTransition(
+				self._state, hrp, coverNormal, wallRight, movementScale, moveDirWorld
+			)
 
-			if newNormal then
-				-- A) Actualizar estado compartido con la nueva pared
-				self._state.coverNormal = newNormal
-				self._state.coverPosition = newPosition
-				self._state.coverInstance = newInstance
-				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
+		if transitioned then
+			coverNormal = newCoverNormal
+			wallRight = newWallRight
+			movementScale = newMovementScale
+			self._cornerCooldown = Constants.CORNER_TRANSITION_COOLDOWN
 
-				-- B) Crossover push: empujar al personaje pasada la juntura
-				local newWallRight = self._state.wallRight
-				local pushDir = newWallRight * math.sign(movementScale)
-				hrp.CFrame = hrp.CFrame + pushDir * Constants.CORNER_CROSSOVER_PUSH
-
-				-- C) Cooldown: impedir re-detección inmediata
-				self._cornerCooldown = Constants.CORNER_TRANSITION_COOLDOWN
-
-				-- D) Notificar a la cámara para nudge de yaw hacia la nueva normal
-				local camCtrl = self._state.cameraController
-				if camCtrl and camCtrl.NotifyInnerCornerTransition then
-					camCtrl:NotifyInnerCornerTransition(newNormal)
-				end
-
-				-- E) Recalcular el riel y la proyección con la nueva normal
-				coverNormal = newNormal
-				wallRight = Vector3.yAxis:Cross(coverNormal)
-				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
-					hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-					self:_applyWallGlue(hrp)
-					return
-				end
-				wallRight = wallRight.Unit
-				movementScale = moveDirWorld:Dot(wallRight)
+			if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
+				hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+				self:_applyWallGlue(hrp)
+				return
 			end
 		end
 	end
@@ -208,17 +188,7 @@ end
 ------------------------------------------------------------------------
 
 function CoverRunning:_getHRP(): BasePart?
-	local character = self._state.player.Character
-	if not character then
-		self._cachedCharacter = nil
-		self._cachedHRP = nil
-		return nil
-	end
-	if character ~= self._cachedCharacter then
-		self._cachedCharacter = character
-		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	end
-	return self._cachedHRP
+	return CoverMovementUtils.getHRP(self._state, self)
 end
 
 return CoverRunning

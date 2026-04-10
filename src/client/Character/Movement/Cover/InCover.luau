@@ -64,6 +64,7 @@ function InCover:NotifyEnterFromSnap()
 	self._needsSettle = true
 	self._settleTimer = 0
 	self._settleStartRot = nil -- se captura en el primer frame de _applySettleRotation
+	self._cornerCooldown = 0 -- BUG-003 fix: resetear cooldown residual de cover anterior
 
 	-- Notificar a la cámara que el settle está activo (desactiva Dynamic Framing)
 	local cam = self._state.cameraController
@@ -220,41 +221,22 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	local sensor = self._state.envSensor
 	if self._cornerCooldown <= 0 and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
 		if sensor then
-			local newNormal, newPosition, newInstance =
-				sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
+			local newCoverNormal, newWallRight, newMovementScale, transitioned =
+				CoverMovementUtils.handleInnerCornerTransition(
+					self._state, hrp, coverNormal, wallRight, movementScale, moveDirWorld
+				)
 
-			if newNormal then
-				-- A) Actualizar estado compartido con la nueva pared
-				self._state.coverNormal = newNormal
-				self._state.coverPosition = newPosition
-				self._state.coverInstance = newInstance
-				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
-
-				-- B) Crossover push: empujar al personaje pasada la juntura para
-				--    evitar ping-pong entre la pared vieja y la nueva.
-				local newWallRight = self._state.wallRight
-				local pushDir = newWallRight * math.sign(movementScale)
-				hrp.CFrame = hrp.CFrame + pushDir * Constants.CORNER_CROSSOVER_PUSH
-
-				-- C) Cooldown: impedir re-detección inmediata
+			if transitioned then
+				coverNormal = newCoverNormal
+				wallRight = newWallRight
+				movementScale = newMovementScale
 				self._cornerCooldown = Constants.CORNER_TRANSITION_COOLDOWN
 
-				-- D) Notificar a la cámara para nudge de yaw hacia la nueva normal
-				local camCtrl = self._state.cameraController
-				if camCtrl and camCtrl.NotifyInnerCornerTransition then
-					camCtrl:NotifyInnerCornerTransition(newNormal)
-				end
-
-				-- E) Recalcular el riel y la proyección con la nueva normal
-				coverNormal = newNormal
-				wallRight = Vector3.yAxis:Cross(coverNormal)
 				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
 					hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 					self:_applyWallGlue(hrp)
 					return
 				end
-				wallRight = wallRight.Unit
-				movementScale = moveDirWorld:Dot(wallRight)
 			end
 		end
 	end
@@ -374,10 +356,16 @@ end
 ------------------------------------------------------------------------
 
 --- Limpia NoCollisionConstraint y restaura estado al terminar/abortar settle.
-function InCover:_cleanupSettle(hrp: BasePart)
-	local noCol = hrp:FindFirstChild("CoverSettleNoCollision")
-	if noCol then
-		noCol:Destroy()
+function InCover:_cleanupSettle(hrp: BasePart?)
+	-- BUG-005 fix: guard defensivo si hrp es nil (evita constraint huérfana)
+	if not hrp then
+		hrp = self:_getHRP()
+	end
+	if hrp then
+		local noCol = hrp:FindFirstChild("CoverSettleNoCollision")
+		if noCol then
+			noCol:Destroy()
+		end
 	end
 
 	-- Solo desbloquear el settle guard. NO activar Dynamic Framing aquí:
@@ -392,17 +380,7 @@ end
 
 --- Obtiene el HumanoidRootPart del personaje local con cache (nil si no existe).
 function InCover:_getHRP(): BasePart?
-	local character = self._state.player.Character
-	if not character then
-		self._cachedCharacter = nil
-		self._cachedHRP = nil
-		return nil
-	end
-	if character ~= self._cachedCharacter then
-		self._cachedCharacter = character
-		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	end
-	return self._cachedHRP
+	return CoverMovementUtils.getHRP(self._state, self)
 end
 
 return InCover

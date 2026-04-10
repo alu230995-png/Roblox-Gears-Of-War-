@@ -110,7 +110,11 @@ SoundConfig.VFX_Footstep_Concrete = {
 
 SoundConfig.VFX_Footstep_Wood = {
 	Ids = {
-		"rbxassetid://137526436035209",
+		"rbxassetid://140525304232464",
+		"rbxassetid://136048161800254",
+		"rbxassetid://126265702355433",
+		"rbxassetid://112726790019701",
+		"rbxassetid://92923866257079",
 	},
 	Random = true,
 	Looped = false,
@@ -137,13 +141,13 @@ SoundConfig.VFX_Footstep_Metal = {
 }
 
 SoundConfig.VFX_RoadieRun_Breath = {
-	Ids = {},
+	Ids = { "rbxassetid://135925258529833" },
 	Random = true,
 	Looped = false,
 	Scope = "Player",
 	Group = "VFX",
 	Volume = 0.3,
-	PitchVariation = 0.05,
+	PitchVariation = 0.5,
 }
 
 SoundConfig.VFX_CoverSlide = {
@@ -157,7 +161,7 @@ SoundConfig.VFX_CoverSlide = {
 }
 
 SoundConfig.VFX_CoverEnter = {
-	Ids = { "rbxassetid://92257857206686", "rbxassetid://92257857206687" },
+	Ids = { "rbxassetid://92257857206686"},
 	Random = true,
 	Looped = false,
 	Scope = "Global",

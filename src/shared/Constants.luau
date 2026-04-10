@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -250,6 +250,7 @@ Constants.COVER_HEIGHT_LOW_MAX = 6
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 Constants.COVER_CORNER_DETECTION_RANGE = 2.0
 Constants.COVER_CORNER_PUSH_IN = 2.0
+Constants.COVER_SWAP_SPHERE_RADIUS = 0.5
 
 -- EnvironmentSensor internals
 Constants.ENV_FILTER_REFRESH_FRAMES = 45

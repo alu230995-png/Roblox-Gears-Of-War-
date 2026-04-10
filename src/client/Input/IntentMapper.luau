@@ -3,13 +3,13 @@
 	═══════════════════════════════════════════════════════════════
 	CAPA 2: Raw Inputs → Intenciones Semánticas
 	═══════════════════════════════════════════════════════════════
-	
+
 	Arquitectura AAA: Action-Based Input Mapping.
-	
+
 	El hardware JAMÁS habla directamente con el personaje.
-	Esta capa es un DICCIONARIO PURO DE DATOS que traduce eventos
-	físicos (Tap, Hold, Pressed, Released) en intenciones abstractas.
-	
+	Esta capa traduce eventos físicos (Tap, Hold, Pressed, Released)
+	en intenciones abstractas usando un mapa dinámico reconstruible.
+
 	Filosofía clave:
 	  - Un solo botón puede inyectar MÚLTIPLES intenciones simultáneas.
 	    ej: CoverButton.Tap → { WantsCover, WantsMantle, WantsEvade }
@@ -18,115 +18,29 @@
 	  - Todas las intenciones del mismo evento comparten un BatchId.
 	    Cuando el buffer consume una, las demás del batch se descartan
 	    automáticamente (batch consumption).
-	  - Para rebind de controles, solo se modifica INTENT_MAP.
-	    La lógica del personaje permanece intacta.
-	
-	Tabla de inyección (INTENT_MAP):
-	  CoverButton   Tap       → WantsCover, WantsMantle, WantsEvade
-	  CoverButton   HoldStart → WantsRoadieRun
-	  CoverButton   Release   → stop WantsRoadieRun
-	  SprintModifier Pressed  → WantsRoadieRun
-	  SprintModifier Released → stop WantsRoadieRun
-	  EvadeButton   Pressed   → WantsEvade
-	  FireButton    Pressed   → WantsShoot
-	  FireButton    Released  → stop WantsShoot
-	  AimButton     Pressed   → WantsAim
-	  AimButton     Released  → stop WantsAim
-	  ReloadButton  Pressed   → WantsReload
-	  BlindFireButton Pressed → WantsBlindFire
-	  BlindFireButton Released→ stop WantsBlindFire
-	  MeleeButton   Tap       → WantsMelee
-	  MeleeButton   HoldStart → WantsChainsaw
-	  MeleeButton   Release   → stop WantsChainsaw
-	  InteractButton Pressed  → WantsInteract
-	  SwapWeapon    Pressed   → WantsSwapWeapon
+	  - Para rebind de controles, llamar RebuildBindings() con una nueva
+	    tabla de PlayerBindings. La lógica del personaje permanece intacta.
+
+	El mapa se construye dinámicamente desde PlayerBindings:
+	  IntentName → { RawInput, Mode, StopMode? }  (o array de binds)
+	  → Builder invierte a: RawInput → Mode → { intents[], stop[] }
+	  → Binds con Mode="Pressed" + StopMode="Released" generan
+	    entradas en CONTINUOUS_HELD automáticamente.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local PlayerBindings = require(script.Parent.PlayerBindings)
 
 local IntentMapper = {}
 IntentMapper.__index = IntentMapper
 
 ------------------------------------------------------------------------
--- INTENT_MAP — Diccionario puro de datos (sin funciones, sin lógica)
---
--- Estructura: [RawName] = { [Mode] = mapping }
--- mapping.intents = { "Intent1", "Intent2", ... }  → se activan con BatchId
--- mapping.stop    = { "IntentToStop", ... }         → se desactivan + emiten WantsStop*
---
--- Para rebind: solo mover/copiar entries. Nada más cambia.
-------------------------------------------------------------------------
-
-local INTENT_MAP = {
-	CoverButton = {
-		Tap = { intents = { "WantsCover", "WantsMantle", "WantsEvade", "WantsVault" } },
-		HoldStart = { intents = { "WantsRoadieRun" } },
-		Release = { stop = { "WantsRoadieRun" } },
-	},
-
-	SprintModifier = {
-		Pressed = { intents = { "WantsRoadieRun" } },
-		Released = { stop = { "WantsRoadieRun" } },
-	},
-
-	EvadeButton = {
-		Pressed = { intents = { "WantsEvade" } },
-	},
-
-	FireButton = {
-		Pressed = { intents = { "WantsShoot" } },
-		Released = { stop = { "WantsShoot" } },
-	},
-
-	AimButton = {
-		Pressed = { intents = { "WantsAim" } },
-		Released = { stop = { "WantsAim" } },
-	},
-
-	ReloadButton = {
-		Pressed = { intents = { "WantsReload" } },
-	},
-
-	BlindFireButton = {
-		Pressed = { intents = { "WantsBlindFire" } },
-		Released = { stop = { "WantsBlindFire" } },
-	},
-
-	MeleeButton = {
-		Tap = { intents = { "WantsMelee" } },
-		HoldStart = { intents = { "WantsChainsaw" } },
-		Release = { stop = { "WantsChainsaw" } },
-	},
-
-	InteractButton = {
-		Pressed = { intents = { "WantsInteract", "WantsVault" } },
-	},
-
-	SwapWeapon = {
-		Pressed = { intents = { "WantsSwapWeapon" } },
-	},
-}
-
-------------------------------------------------------------------------
--- CONTINUOUS_HELD — Intents re-evaluados cada frame por polling.
--- Si el raw input está held, la intención se activa.
--- Movement direction y WantsExitCover son especiales (calculados aparte).
-------------------------------------------------------------------------
-
-local CONTINUOUS_HELD = {
-	{ raw = "SprintModifier", intent = "WantsRoadieRun" },
-	{ raw = "AimButton", intent = "WantsAim" },
-	{ raw = "FireButton", intent = "WantsShoot" },
-	{ raw = "BlindFireButton", intent = "WantsBlindFire" },
-}
-
-------------------------------------------------------------------------
 -- CLASS
 ------------------------------------------------------------------------
 
-function IntentMapper.new(inputDetector)
+function IntentMapper.new(inputDetector, bindings)
 	local self = setmetatable({}, IntentMapper)
 
 	self._inputDetector = inputDetector
@@ -137,6 +51,14 @@ function IntentMapper.new(inputDetector)
 	-- Contador auto-incremental de batch: cada evento discreto genera un ID único
 	self._nextBatchId = 1
 
+	-- Mapa dinámico construido desde bindings
+	-- Estructura: [RawName] = { [Mode] = { intents = {}, stop = {} } }
+	self._intentMap = {}
+	-- Intents continuos construidos desde bindings (polling cada frame)
+	self._continuousHeld = {}
+
+	self:RebuildBindings(bindings or PlayerBindings.DEFAULT.Intents)
+
 	return self
 end
 
@@ -146,6 +68,62 @@ end
 
 function IntentMapper:Destroy()
 	table.clear(self._activeIntents)
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API: Rebuild
+------------------------------------------------------------------------
+
+--- Reconstruye el mapa de intenciones desde una tabla de bindings.
+--- Formato de bindings: { [intentName] = bindInfo | { bindInfo, ... } }
+---   bindInfo = { RawInput: string, Mode: string, StopMode: string? }
+--- Llamar para cambiar controles en runtime sin tocar lógica del juego.
+function IntentMapper:RebuildBindings(bindings)
+	local intentMap = {}
+	local continuousHeld = {}
+
+	for intentName, bindValue in bindings do
+		-- Normalizar: single bind → array de 1
+		local bindList
+		if bindValue.RawInput then
+			bindList = { bindValue }
+		else
+			bindList = bindValue
+		end
+
+		for _, bind in bindList do
+			local raw = bind.RawInput
+			local mode = bind.Mode
+			local stopMode = bind.StopMode
+
+			-- Asegurar estructura: intentMap[raw][mode] = { intents = {}, stop = {} }
+			if not intentMap[raw] then
+				intentMap[raw] = {}
+			end
+			if not intentMap[raw][mode] then
+				intentMap[raw][mode] = { intents = {}, stop = {} }
+			end
+
+			-- Inyectar la intención de inicio
+			table.insert(intentMap[raw][mode].intents, intentName)
+
+			-- Inyectar la intención de detención (si la acción requiere soltar el botón)
+			if stopMode then
+				if not intentMap[raw][stopMode] then
+					intentMap[raw][stopMode] = { intents = {}, stop = {} }
+				end
+				table.insert(intentMap[raw][stopMode].stop, intentName)
+			end
+
+			-- Auto-detectar continuous held: Mode="Pressed" + StopMode="Released"
+			if mode == "Pressed" and stopMode == "Released" then
+				table.insert(continuousHeld, { raw = raw, intent = intentName })
+			end
+		end
+	end
+
+	self._intentMap = intentMap
+	self._continuousHeld = continuousHeld
 end
 
 ------------------------------------------------------------------------
@@ -198,7 +176,7 @@ end
 ------------------------------------------------------------------------
 
 function IntentMapper:_processEvent(event)
-	local rawModes = INTENT_MAP[event.Name]
+	local rawModes = self._intentMap[event.Name]
 	if not rawModes then
 		return
 	end
@@ -208,7 +186,7 @@ function IntentMapper:_processEvent(event)
 	end
 
 	-- Intenciones positivas: activar con BatchId compartido
-	if mapping.intents then
+	if mapping.intents and #mapping.intents > 0 then
 		local batchId = self._nextBatchId
 		self._nextBatchId += 1
 
@@ -218,7 +196,7 @@ function IntentMapper:_processEvent(event)
 	end
 
 	-- Intenciones stop: desactivar la continua + emitir el WantsStop* discreto
-	if mapping.stop then
+	if mapping.stop and #mapping.stop > 0 then
 		for _, intentName in mapping.stop do
 			self:_setIntent(intentName, false)
 			self:_setIntent("WantsStop" .. string.sub(intentName, 6), true) -- "Wants" = 5 chars → "WantsStop" + resto
@@ -241,7 +219,7 @@ function IntentMapper:_processContinuousState()
 	self:_setIntent("WantsMoveRight", moveDir.X > Constants.MOVE_DIRECTION_THRESHOLD)
 
 	-- Held-based continuous intents (data-driven loop)
-	for _, entry in CONTINUOUS_HELD do
+	for _, entry in self._continuousHeld do
 		if detector:IsRawHeld(entry.raw) then
 			self:_setIntent(entry.intent, true)
 		end

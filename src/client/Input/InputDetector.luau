@@ -3,10 +3,13 @@
 	═══════════════════════════════════════════════════════════════
 	CAPA 1: Detección de Raw Inputs
 	═══════════════════════════════════════════════════════════════
-	
+
 	Solo detecta hechos físicos. No decide significado.
 	Un input es un hecho: tecla presionada, gatillo activado, stick movido.
-	
+
+	Todos los mapeos de teclas se leen de PlayerBindings (perfil).
+	Para rebind: llamar RebuildBindings() con un perfil modificado.
+
 	Emite eventos discretos (queued para consumir por frame):
 	  CoverButton   → Tap | HoldStart | Release
 	  SprintModifier → Pressed | Released
@@ -18,23 +21,25 @@
 	  EvadeButton   → Pressed
 	  InteractButton → Pressed
 	  SwapWeapon    → Pressed (data = slot number)
-	
+
 	Provee polling continuo:
 	  GetMoveDirection() → Vector2
-	  IsHeld(rawName)    → boolean
+	  IsRawHeld(rawName) → boolean
+
+	Ruta móvil:
+	  FireUIButton(rawName, mode, data?) → inyecta evento directo
+	  Los botones touch del HUD llaman este método.
 ]]
 
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Constants = require(Shared:WaitForChild("Constants"))
+local PlayerBindings = require(script.Parent.PlayerBindings)
 
 local InputDetector = {}
 InputDetector.__index = InputDetector
 
-function InputDetector.new()
+function InputDetector.new(bindings)
 	local self = setmetatable({}, InputDetector)
 
 	-- Cola de eventos discretos (drenada cada frame por IntentMapper)
@@ -53,78 +58,14 @@ function InputDetector.new()
 	-- Dirección de movimiento actual (polling)
 	self._moveDirection = Vector2.zero
 
-	-- WASD → vectores de dirección
-	self._moveKeys = {
-		[Enum.KeyCode.W] = Vector2.new(0, 1),
-		[Enum.KeyCode.S] = Vector2.new(0, -1),
-		[Enum.KeyCode.A] = Vector2.new(-1, 0),
-		[Enum.KeyCode.D] = Vector2.new(1, 0),
-	}
+	-- Mapeos leídos de PlayerBindings (perfil)
+	self._keyToRaw = {}
+	self._gamepadToRaw = {}
+	self._moveKeys = {}
+	self._holdThresholds = {}
+	self._weaponSlots = {}
 
-	------------------------------------------------------------------------
-	-- MAPEO: KeyCode/UserInputType → RawInputName
-	-- Basado en el layout de Gears of War adaptado a PC
-	------------------------------------------------------------------------
-	self._keyToRaw = {
-		-- Botón contexto-sensitivo (tap/hold como GoW A button)
-		[Enum.KeyCode.Space] = "CoverButton",
-
-		-- Sprint separado en PC (Shift = RoadieRun)
-		[Enum.KeyCode.LeftShift] = "SprintModifier",
-
-		-- Evade separado en PC (Alt = Roll)
-		[Enum.KeyCode.LeftAlt] = "EvadeButton",
-
-		-- Combate
-		[Enum.UserInputType.MouseButton1] = "FireButton",
-		[Enum.UserInputType.MouseButton2] = "AimButton",
-		[Enum.KeyCode.R] = "ReloadButton",
-		[Enum.KeyCode.Q] = "BlindFireButton",
-
-		-- Melee (tap = golpe, hold = chainsaw)
-		[Enum.KeyCode.V] = "MeleeButton",
-
-		-- Interacción (curb stomp, rescatar, activar objetos)
-		[Enum.KeyCode.E] = "InteractButton",
-		[Enum.KeyCode.F] = "InteractButton",
-
-		-- Swap weapon
-		[Enum.KeyCode.One] = "SwapWeapon",
-		[Enum.KeyCode.Two] = "SwapWeapon",
-		[Enum.KeyCode.Three] = "SwapWeapon",
-	}
-
-	------------------------------------------------------------------------
-	-- MAPEO GAMEPAD (contexto-sensitivo como GoW original)
-	------------------------------------------------------------------------
-	self._gamepadToRaw = {
-		[Enum.KeyCode.ButtonA] = "CoverButton", -- A = contexto-sensitivo
-		[Enum.KeyCode.ButtonR2] = "FireButton",
-		[Enum.KeyCode.ButtonL2] = "AimButton",
-		[Enum.KeyCode.ButtonR1] = "ReloadButton",
-		[Enum.KeyCode.ButtonB] = "MeleeButton",
-		[Enum.KeyCode.ButtonX] = "InteractButton",
-		[Enum.KeyCode.ButtonY] = "SwapWeapon",
-	}
-
-	------------------------------------------------------------------------
-	-- Botones que usan detección TAP vs HOLD
-	-- Los demás emiten Pressed/Released inmediato
-	------------------------------------------------------------------------
-	self._holdThresholds = {
-		CoverButton = Constants.HOLD_THRESHOLD, -- 150ms
-		MeleeButton = Constants.MELEE_HOLD_THRESHOLD, -- 500ms
-	}
-
-	------------------------------------------------------------------------
-	-- Mapeo de teclas numéricas a slot de arma
-	------------------------------------------------------------------------
-	self._weaponSlots = {
-		[Enum.KeyCode.One] = 1,
-		[Enum.KeyCode.Two] = 2,
-		[Enum.KeyCode.Three] = 3,
-		[Enum.KeyCode.ButtonY] = 0, -- Gamepad: cycle
-	}
+	self:RebuildBindings(bindings or PlayerBindings.DEFAULT)
 
 	return self
 end
@@ -214,6 +155,26 @@ function InputDetector:GetHoldDuration(rawName: string): number
 		end
 	end
 	return 0
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API: Rebuild
+------------------------------------------------------------------------
+
+--- Recarga los mapeos físicos desde un perfil de PlayerBindings.
+--- Limpia estado de tracking para evitar phantom held keys.
+function InputDetector:RebuildBindings(bindings)
+	self._keyToRaw = bindings.Keyboard
+	self._gamepadToRaw = bindings.Gamepad
+	self._moveKeys = bindings.MoveKeys
+	self._holdThresholds = bindings.HoldThresholds
+	self._weaponSlots = bindings.WeaponSlots
+
+	-- Reset tracking: evita phantom held keys de bindings anteriores
+	table.clear(self._heldKeys)
+	table.clear(self._holdEmitted)
+	table.clear(self._heldByRaw)
+	table.clear(self._eventQueue)
 end
 
 ------------------------------------------------------------------------

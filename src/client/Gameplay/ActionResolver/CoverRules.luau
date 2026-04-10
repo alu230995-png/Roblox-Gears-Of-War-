@@ -132,7 +132,22 @@ CoverRules.BlindFire = {
 CoverRules.Idle = {
 	ExitCover, -- Prio 1
 
-	-- Prio 2: Vault (cover bajo + moving into cover + cover/mantle/vault button)
+	-- Prio 2: Cover Swap (salto entre coberturas adyacentes en esquina)
+	-- Evaluado ANTES de Vault: si hay swap válido en la esquina, el swap
+	-- tiene prioridad sobre vault. Batch consumption limpia WantsEvade.
+	{
+		id = "CoverSwapIdle",
+		check = function(resolver, ctx)
+			return Helpers.checkCoverSwap(resolver, ctx)
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			return "CoverSwap", "CoverSwap", ctx._swapData
+		end,
+	},
+
+	-- Prio 3: Vault (cover bajo + moving into cover + cover/mantle/vault button)
+	-- Solo si no hay swap válido (ya evaluado arriba).
 	{
 		id = "Vault",
 		check = function(_resolver, ctx)
@@ -155,22 +170,7 @@ CoverRules.Idle = {
 		end,
 	},
 
-	-- Prio 3: Cover Swap (salto entre coberturas adyacentes en esquina)
-	-- Evaluado ANTES de RollOutOfCover: CoverButton.Tap inyecta WantsCover +
-	-- WantsEvade en el mismo batch. Si hay swap válido, batch consumption
-	-- limpia WantsEvade. Si no hay swap, RollOutOfCover lo captura abajo.
-	{
-		id = "CoverSwapIdle",
-		check = function(resolver, ctx)
-			return Helpers.checkCoverSwap(resolver, ctx)
-		end,
-		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-			return "CoverSwap", "CoverSwap", ctx._swapData
-		end,
-	},
-
-	RollOutOfCover, -- Prio 4 (fallback si no hay vault ni swap)
+	RollOutOfCover, -- Prio 4 (fallback si no hay swap ni vault)
 	PopUpAim, -- Prio 5
 	BlindFire, -- Prio 6 (cubre BlindFire explícito + ShootAsBlindFire)
 	ReloadInCover, -- Prio 7
@@ -194,64 +194,67 @@ CoverRules.Idle = {
 CoverRules.Walking = {
 	ExitCover, -- Prio 1
 
-	-- Prio 2: Vault (cover bajo + moving into cover)
-	{
-		id = "VaultWalking",
-		check = function(_resolver, ctx)
-	return (
-		ctx.Buffer:HasIntent("WantsCover")
-		or ctx.Buffer:HasIntent("WantsMantle")
-		or ctx.Buffer:HasIntent("WantsVault")
-	)
-		and ctx.Env.CoverType == "Low"
-		and Helpers.isMovingIntoCover(ctx)
-		end,
-		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-	return "Vault", "Vaulting", {
-		coverNormal = ctx.Env.CoverNormal,
-		coverInstance = ctx.Env.CoverInstance,
-	}
-		end,
-	},
-
-	-- Prio 3: Cover Swap (antes de RollOutOfCover por misma razón que Idle)
+	-- Prio 2: Cover Swap (antes de Vault — si hay swap válido, no saltear)
 	{
 		id = "CoverSwapWalking",
 		check = function(resolver, ctx)
-	return Helpers.checkCoverSwap(resolver, ctx)
+			return Helpers.checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-	return "CoverSwap", "CoverSwap", ctx._swapData
+			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
 
-	RollOutOfCover, -- Prio 4 (fallback si no hay swap)
+	-- Prio 3: Vault (cover bajo + moving into cover)
+	-- Solo si no hay swap válido (ya evaluado arriba).
+	{
+		id = "VaultWalking",
+		check = function(_resolver, ctx)
+			return (
+				ctx.Buffer:HasIntent("WantsCover")
+				or ctx.Buffer:HasIntent("WantsMantle")
+				or ctx.Buffer:HasIntent("WantsVault")
+			)
+				and ctx.Env.CoverType == "Low"
+				and Helpers.isMovingIntoCover(ctx)
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			return "Vault", "Vaulting", {
+				coverNormal = ctx.Env.CoverNormal,
+				coverInstance = ctx.Env.CoverInstance,
+			}
+		end,
+	},
+
+	RollOutOfCover, -- Prio 4 (fallback si no hay swap ni vault)
 	BlockCoverTap, -- Prio 5
 	PopUpAim, -- Prio 6
 	BlindFire, -- Prio 7
 	ReloadInCover, -- Prio 8
 
-	-- Prio 9: Stop CoverWalking → CoverIdle (sin movimiento)
-	{
-		id = "StopCoverWalking",
-		check = function(_resolver, ctx)
-	return not Helpers.hasMovementIntent(ctx.Intents)
-		end,
-		execute = function()
-	return "StopCoverWalking", "CoverIdle", nil
-		end,
-	},
-
-	-- Prio 10: Start CoverRunning (sprint intent mientras camina en cover)
+	-- Prio 9: Start CoverRunning (sprint intent mientras camina en cover)
+	-- Evaluado ANTES de StopCoverWalking: si sprint + soltar movimiento
+	-- ocurren en el mismo frame, sprint tiene prioridad (BUG-001 fix).
 	{
 		id = "StartCoverRunning",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsRoadieRun")
+			return ctx.Intents:HasIntent("WantsRoadieRun") and Helpers.hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
 			return "StartCoverRunning", "CoverRunning", nil
+		end,
+	},
+
+	-- Prio 10: Stop CoverWalking → CoverIdle (sin movimiento)
+	{
+		id = "StopCoverWalking",
+		check = function(_resolver, ctx)
+			return not Helpers.hasMovementIntent(ctx.Intents)
+		end,
+		execute = function()
+			return "StopCoverWalking", "CoverIdle", nil
 		end,
 	},
 }

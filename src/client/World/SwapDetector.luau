@@ -89,7 +89,7 @@ function SwapDetector:Check(
 	end
 	local rayDirection = flatInput * Constants.COVER_SWAP_MAX_DISTANCE
 
-	local hitResult = workspace:Raycast(origin, rayDirection, self._rayParams)
+	local hitResult = workspace:Spherecast(origin, Constants.COVER_SWAP_SPHERE_RADIUS, rayDirection, self._rayParams)
 
 	if Constants.DEBUG_MODE then
 		self:_debugStep1(origin, rayDirection, flatInput, hitResult)

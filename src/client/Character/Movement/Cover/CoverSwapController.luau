@@ -36,6 +36,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 
+local CoverMovementUtils = require(script.Parent.CoverMovementUtils)
+
 -- Debris solo se usa en debug — lazy-require para evitar costo en producción
 local Debris = nil :: any
 if Constants.DEBUG_MODE then
@@ -91,6 +93,11 @@ end
 function CoverSwapController:Begin(swapData)
 	local hrp = self:_getHRP()
 	if not hrp then
+		return
+	end
+
+	-- BUG-004 fix: validar que tengamos una normal válida antes de calcular
+	if not swapData.newNormal and not self._state.coverNormal then
 		return
 	end
 
@@ -343,17 +350,7 @@ end
 ------------------------------------------------------------------------
 
 function CoverSwapController:_getHRP(): BasePart?
-	local character = self._state.player.Character
-	if not character then
-		self._cachedCharacter = nil
-		self._cachedHRP = nil
-		return nil
-	end
-	if character ~= self._cachedCharacter then
-		self._cachedCharacter = character
-		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	end
-	return self._cachedHRP
+	return CoverMovementUtils.getHRP(self._state, self)
 end
 
 return CoverSwapController
