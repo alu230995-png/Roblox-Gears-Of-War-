@@ -33,9 +33,14 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Debris = game:GetService("Debris")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+
+-- Debris solo se usa en debug — lazy-require para evitar costo en producción
+local Debris = nil :: any
+if Constants.DEBUG_MODE then
+	Debris = game:GetService("Debris")
+end
 
 local CoverSwapController = {}
 CoverSwapController.__index = CoverSwapController
@@ -69,6 +74,10 @@ function CoverSwapController.new(coverState)
 	self._newWallRight = nil :: Vector3?
 	self._newCoverPart = nil :: BasePart?
 	self._newCoverType = nil :: string?
+
+	-- Cache de character refs (evita FindFirstChild cada frame durante swap)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHRP = nil :: BasePart?
 
 	return self
 end
@@ -336,9 +345,15 @@ end
 function CoverSwapController:_getHRP(): BasePart?
 	local character = self._state.player.Character
 	if not character then
+		self._cachedCharacter = nil
+		self._cachedHRP = nil
 		return nil
 	end
-	return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	end
+	return self._cachedHRP
 end
 
 return CoverSwapController

@@ -244,6 +244,7 @@ Constants.CAM_CORNER_YAW_SPEED = 8
 ------------------------------------------------------------------------
 
 Constants.COVER_SCAN_RANGE = 32
+Constants.COVER_FALLBACK_ENABLED = true -- false en producción para desactivar fallback permisivo
 Constants.COVER_FALLBACK_MIN_SIZE = 2 -- _isCoverObject: tamaño mínimo para fallback dev
 Constants.COVER_HEIGHT_LOW_MAX = 6
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)

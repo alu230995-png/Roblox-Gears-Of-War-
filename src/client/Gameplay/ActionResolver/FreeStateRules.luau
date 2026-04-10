@@ -11,9 +11,6 @@
 	  …y así sucesivamente hasta Movement como fallback.
 ]]
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Constants = require(Shared:WaitForChild("Constants"))
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
 
 local FreeStateRules = {
@@ -21,18 +18,18 @@ local FreeStateRules = {
 	{
 		id = "EnterCover",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsCover") and ctx.Env.HasCoverNearby and ctx.StateConfig.canTakeCover
+	return ctx.Buffer:HasIntent("WantsCover") and ctx.Env.HasCoverNearby and ctx.StateConfig.canTakeCover
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsCover")
-			return "EnterCover",
-				"CoverEntering",
-				{
-					coverNormal = ctx.Env.CoverNormal,
-					coverPos = ctx.Env.CoverPosition,
-					coverInstance = ctx.Env.CoverInstance,
-					coverType = ctx.Env.CoverType,
-				}
+	ctx.Buffer:Consume("WantsCover")
+	return "EnterCover",
+		"CoverEntering",
+		{
+			coverNormal = ctx.Env.CoverNormal,
+			coverPos = ctx.Env.CoverPosition,
+			coverInstance = ctx.Env.CoverInstance,
+			coverType = ctx.Env.CoverType,
+		}
 		end,
 	},
 

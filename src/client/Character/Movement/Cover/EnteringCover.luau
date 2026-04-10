@@ -40,6 +40,11 @@ function EnteringCover.new(coverState)
 	-- Es la referencia fija para decidir si el jugador se está alejando (cancelación).
 	self._cancelNormal = nil :: Vector3?
 
+	-- RaycastParams reutilizable (evita allocation en cada _buildEnteringData)
+	self._groundParams = RaycastParams.new()
+	self._groundParams.FilterType = Enum.RaycastFilterType.Exclude
+	self._lastFilterCharacter = nil :: Model?
+
 	return self
 end
 
@@ -193,10 +198,13 @@ function EnteringCover:_buildEnteringData(coverPart: BasePart, hitPos: Vector3, 
 
 	local rawTarget = safeHit + wallNormal * Constants.COVER_OFFSET
 
-	local groundParams = RaycastParams.new()
-	groundParams.FilterType = Enum.RaycastFilterType.Exclude
+	-- Reutilizar RaycastParams cacheados (actualizar filtro solo si el character cambió)
 	local character = rootPart.Parent
-	groundParams.FilterDescendantsInstances = if character then { character } else {}
+	if character ~= self._lastFilterCharacter then
+		self._lastFilterCharacter = character
+		self._groundParams.FilterDescendantsInstances = if character then { character } else {}
+	end
+	local groundParams = self._groundParams
 
 	local playerGround =
 		workspace:Raycast(rootPart.Position, Vector3.new(0, -Constants.COVER_GROUND_RAY_DOWN, 0), groundParams)

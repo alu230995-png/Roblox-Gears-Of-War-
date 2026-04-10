@@ -25,7 +25,6 @@
 	  - FireImpulseShake(rotX, rotY) — kick de cámara
 ]]
 
-local _RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -479,7 +478,7 @@ function CameraController:Update(dt: number)
 	-- Usa AssemblyLinearVelocity (igual que SoundController) para detectar
 	-- movimiento real en todos los estados, incluso con WalkSpeed=0.
 	local vel = hrp.AssemblyLinearVelocity
-	local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local horizontalSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
 	self._targetBobMultiplier = if horizontalSpeed > Constants.CAM_BOB_VELOCITY_THRESHOLD
 		then self._stateBobMultiplier
 		else 0
@@ -506,14 +505,15 @@ function CameraController:Update(dt: number)
 	self._currentShoulderX = self._currentShoulderX
 		+ (self._targetShoulderX - self._currentShoulderX) * math.min(1, Constants.CAM_SHOULDER_LERP_SPEED * dt)
 
+	-- Rotación a partir de yaw/pitch acumulados (calculada una sola vez, reutilizada en Spring Arm y base CFrame)
+	local rotationCF = CFrame.Angles(0, math.rad(self._yaw), 0) * CFrame.Angles(math.rad(self._pitch), 0, 0)
+
 	-- 4. Spring Arm — calcular longitud real de brazo
-	local armLength = self:_computeSpringArm(hrp, camera, dt)
+	local armLength = self:_computeSpringArm(hrp, camera, dt, rotationCF)
 
 	-- 5. Construir CFrame base de la cámara
 	local pivot = hrp.Position + Constants.CAM_ARM_PIVOT_OFFSET
 
-	-- Rotación a partir de yaw/pitch acumulados
-	local rotationCF = CFrame.Angles(0, math.rad(self._yaw), 0) * CFrame.Angles(math.rad(self._pitch), 0, 0)
 	local lookDir = rotationCF.LookVector
 	local rightDir = rotationCF.RightVector
 
@@ -631,11 +631,10 @@ end
 ------------------------------------------------------------------------
 
 --- SphereCast desde pivot hacia atrás. Acercamiento rápido, alejamiento lento.
-function CameraController:_computeSpringArm(hrp: BasePart, _camera: Camera, dt: number): number
+function CameraController:_computeSpringArm(hrp: BasePart, _camera: Camera, dt: number, rotationCF: CFrame): number
 	local pivot = hrp.Position + Constants.CAM_ARM_PIVOT_OFFSET
 
-	-- Dirección de la cámara a partir de yaw/pitch acumulados
-	local rotationCF = CFrame.Angles(0, math.rad(self._yaw), 0) * CFrame.Angles(math.rad(self._pitch), 0, 0)
+	-- Dirección de la cámara reutilizada desde Update (evita recalcular CFrame.Angles)
 	local lookDir = rotationCF.LookVector
 	local ideal = Constants.CAM_ARM_LENGTH
 

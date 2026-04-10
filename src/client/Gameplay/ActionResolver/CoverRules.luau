@@ -12,10 +12,6 @@
 ]]
 
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = ReplicatedStorage:WaitForChild("Shared")
-local _Constants = require(Shared:WaitForChild("Constants"))
-
 local CoverRules = {}
 
 ------------------------------------------------------------------------
@@ -231,24 +227,24 @@ CoverRules.Walking = {
 		end,
 	},
 
-	RollOutOfCover, -- Prio 3 (fallback si no hay swap)
-	BlockCoverTap, -- Prio 4
-	PopUpAim, -- Prio 5
-	BlindFire, -- Prio 6
-	ReloadInCover, -- Prio 7
+	RollOutOfCover, -- Prio 4 (fallback si no hay swap)
+	BlockCoverTap, -- Prio 5
+	PopUpAim, -- Prio 6
+	BlindFire, -- Prio 7
+	ReloadInCover, -- Prio 8
 
-	-- Prio 7: Stop CoverWalking → CoverIdle (sin movimiento)
+	-- Prio 9: Stop CoverWalking → CoverIdle (sin movimiento)
 	{
 		id = "StopCoverWalking",
 		check = function(_resolver, ctx)
-			return not Helpers.hasMovementIntent(ctx.Intents)
+	return not Helpers.hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-			return "StopCoverWalking", "CoverIdle", nil
+	return "StopCoverWalking", "CoverIdle", nil
 		end,
 	},
 
-	-- Prio 8: Start CoverRunning (sprint intent mientras camina en cover)
+	-- Prio 10: Start CoverRunning (sprint intent mientras camina en cover)
 	{
 		id = "StartCoverRunning",
 		check = function(_resolver, ctx)

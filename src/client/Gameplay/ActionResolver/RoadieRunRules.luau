@@ -14,17 +14,17 @@ local RoadieRunRules = {
 	{
 		id = "SlideIntoCover",
 		check = function(_resolver, ctx)
-	return ctx.Env.HasCoverNearby
+			return ctx.Env.HasCoverNearby
 		end,
 		execute = function(_resolver, ctx)
-	return "SlideIntoCover",
-		"CoverSlide",
-		{
-			coverNormal = ctx.Env.CoverNormal,
-			coverPos = ctx.Env.CoverPosition,
-			coverInstance = ctx.Env.CoverInstance,
-			coverType = ctx.Env.CoverType,
-		}
+			return "SlideIntoCover",
+				"CoverSlide",
+				{
+					coverNormal = ctx.Env.CoverNormal,
+					coverPos = ctx.Env.CoverPosition,
+					coverInstance = ctx.Env.CoverInstance,
+					coverType = ctx.Env.CoverType,
+				}
 		end,
 	},
 
@@ -32,12 +32,12 @@ local RoadieRunRules = {
 	{
 		id = "EvadeRoadie",
 		check = function(resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsEvade") and Helpers.isEvadeCooldownMet(resolver)
+			return ctx.Buffer:HasIntent("WantsEvade") and Helpers.isEvadeCooldownMet(resolver)
 		end,
 		execute = function(resolver, ctx)
-	resolver._evadeStartTime = os.clock()
-	ctx.Buffer:Consume("WantsEvade")
-	return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
+			resolver._evadeStartTime = os.clock()
+			ctx.Buffer:Consume("WantsEvade")
+			return "Evade", "Evading", { direction = ctx.Env.MoveDirection }
 		end,
 	},
 

@@ -53,6 +53,12 @@ function RotationHandler.new(inputDetector)
 	self._roadieRunTimer = 0 -- tiempo en RoadieRun (para Quick Snap → Heavy Steering)
 	self._lastState = ""
 	self._lockedRunDirection = nil :: Vector3? -- Direction Caching: dirección fija durante Fase 1
+
+	-- Cache de character refs (evita FindFirstChild cada frame)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHumanoid = nil :: Humanoid?
+	self._cachedHRP = nil :: BasePart?
+
 	return self
 end
 
@@ -66,8 +72,15 @@ function RotationHandler:Update(dt: number, state: string, _coverNormal: Vector3
 		return
 	end
 
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	-- Actualizar cache si el character cambió (respawn)
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHumanoid = character:FindFirstChildOfClass("Humanoid")
+		self._cachedHRP = character:FindFirstChild("HumanoidRootPart")
+	end
+
+	local humanoid = self._cachedHumanoid
+	local hrp = self._cachedHRP
 	if not humanoid or not hrp then
 		return
 	end

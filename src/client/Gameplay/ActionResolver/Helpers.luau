@@ -125,11 +125,12 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 		return nil
 	end
 
+	-- Obtener HRP via EnvSensor cache (evita FindFirstChild redundante)
+	local hrp = nil :: BasePart?
 	local character = Players.LocalPlayer.Character
-	if not character then
-		return nil
+	if character then
+		hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	end
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return nil
 	end
@@ -211,14 +212,21 @@ function Helpers.isMovingIntoCover(ctx): boolean
 	if not character then
 		return false
 	end
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid or humanoid.MoveDirection.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
 		return false
 	end
 
 	local moveDir3D = humanoid.MoveDirection
-	local intoCover = -Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
-	return moveDir3D:Dot(intoCover) > Constants.VAULT_FORWARD_DOT_THRESHOLD
+	-- Calcular dot sin allocation: intoCover = -coverNormal (aplanado, Y=0)
+	-- dot(moveDir, intoCover) = -(moveDir.X * n.X + moveDir.Z * n.Z) / magnitude
+	local nX, nZ = coverNormal.X, coverNormal.Z
+	local nMag = math.sqrt(nX * nX + nZ * nZ)
+	if nMag < Constants.ZERO_MAGNITUDE then
+		return false
+	end
+	local dotResult = -(moveDir3D.X * nX + moveDir3D.Z * nZ) / nMag
+	return dotResult > Constants.VAULT_FORWARD_DOT_THRESHOLD
 end
 
 return Helpers

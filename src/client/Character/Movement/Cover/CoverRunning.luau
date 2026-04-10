@@ -27,8 +27,6 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 local CoverMovementUtils = require(script.Parent.CoverMovementUtils)
 
-local Workspace = game:GetService("Workspace")
-
 local CoverRunning = {}
 CoverRunning.__index = CoverRunning
 
@@ -43,6 +41,10 @@ function CoverRunning.new(coverState, cornerCover)
 	self._cornerCover = cornerCover -- para bloqueo en esquinas
 	self._isActive = false
 	self._cornerCooldown = 0 -- cooldown tras transición de esquina interna (anti ping-pong)
+
+	-- Cache de character refs (evita FindFirstChild cada frame)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHRP = nil :: BasePart?
 
 	return self
 end
@@ -101,7 +103,7 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 		moveDirWorld = humanoid.MoveDirection
 	else
 		-- Fallback: usar Camera LookVector aplanado (auto-forward estilo RoadieRun)
-		local camera = Workspace.CurrentCamera
+		local camera = workspace.CurrentCamera
 		if camera then
 			local lookDir = camera.CFrame.LookVector
 			local flat = Vector3.new(lookDir.X, 0, lookDir.Z)
@@ -208,9 +210,15 @@ end
 function CoverRunning:_getHRP(): BasePart?
 	local character = self._state.player.Character
 	if not character then
+		self._cachedCharacter = nil
+		self._cachedHRP = nil
 		return nil
 	end
-	return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	end
+	return self._cachedHRP
 end
 
 return CoverRunning

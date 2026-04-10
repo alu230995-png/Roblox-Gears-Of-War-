@@ -52,6 +52,10 @@ function InCover.new(coverState, cornerCover)
 	self._needsSettle = false -- true si viene de entering/swap y necesita alinear a normal
 	self._cornerCooldown = 0 -- cooldown tras transición de esquina interna (anti ping-pong)
 
+	-- Cache de character refs (evita FindFirstChild cada frame)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHRP = nil :: BasePart?
+
 	return self
 end
 
@@ -386,13 +390,19 @@ function InCover:_cleanupSettle(hrp: BasePart)
 	end
 end
 
---- Obtiene el HumanoidRootPart del personaje local (nil si no existe).
+--- Obtiene el HumanoidRootPart del personaje local con cache (nil si no existe).
 function InCover:_getHRP(): BasePart?
 	local character = self._state.player.Character
 	if not character then
+		self._cachedCharacter = nil
+		self._cachedHRP = nil
 		return nil
 	end
-	return character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	end
+	return self._cachedHRP
 end
 
 return InCover
