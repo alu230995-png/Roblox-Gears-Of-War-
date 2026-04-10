@@ -20,6 +20,7 @@ export type PlayerState =
 	| "CoverSwap"
 	| "Evading"
 	| "Mantling"
+	| "Vaulting"
 	| "DBNO"
 	| "Executing"
 	| "Reloading"
@@ -143,6 +144,7 @@ export type Intent =
 	| "WantsInteract"
 	| "WantsSwapWeapon"
 	| "WantsMantle"
+	| "WantsVault"
 	| "WantsExitCover"
 
 -- RESERVED Phase 3 — not yet used (only referenced in comments)

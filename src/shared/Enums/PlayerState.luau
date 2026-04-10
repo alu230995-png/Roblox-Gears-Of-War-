@@ -148,6 +148,7 @@ local CAPABILITY_EXCEPTIONS = {
 	CoverExiting = ALL_LOCKED,
 	CoverSwap = ALL_LOCKED,
 	Mantling = ALL_LOCKED,
+	Vaulting = ALL_LOCKED,
 	Executing = ALL_LOCKED,
 
 	Evading = ALL_LOCKED_INVULNERABLE, -- iframes parciales
@@ -176,7 +177,7 @@ local CAPABILITY_EXCEPTIONS = {
 PlayerState.Transitions = {
 	-- Transiciones de grupo (heredadas por todos los hijos)
 	AliveGroup = { "DBNO" },
-	FreeMovementGroup = { "CoverSlide", "CoverEntering", "Evading", "Mantling" },
+	FreeMovementGroup = { "CoverSlide", "CoverEntering", "Evading", "Mantling", "Vaulting" },
 	CoverGroup = { "Evading", "Idle", "CoverExiting" },
 	ActionGroup = { "Idle" },
 
@@ -190,10 +191,19 @@ PlayerState.Transitions = {
 	ActiveReloading = { "Idle", "Evading", "CoverIdle" },
 
 	-- Transiciones específicas — Cover Group
-	CoverIdle = { "CoverAim", "CoverBlindFire", "CoverWalking", "CoverCorners", "CoverSwap", "Reloading", "Mantling" },
+	CoverIdle = {
+		"CoverAim",
+		"CoverBlindFire",
+		"CoverWalking",
+		"CoverCorners",
+		"CoverSwap",
+		"Reloading",
+		"Mantling",
+		"Vaulting",
+	},
 	CoverAim = { "CoverIdle", "Firing" },
 	CoverBlindFire = { "CoverIdle" },
-	CoverWalking = { "CoverIdle", "CoverRunning", "CoverAim", "CoverBlindFire", "CoverSwap" },
+	CoverWalking = { "CoverIdle", "CoverRunning", "CoverAim", "CoverBlindFire", "CoverSwap", "Vaulting" },
 	CoverRunning = { "CoverWalking", "CoverIdle" },
 	CoverCorners = { "CoverIdle", "CoverAim", "CoverBlindFire", "Idle", "CoverSwap" },
 
@@ -204,6 +214,7 @@ PlayerState.Transitions = {
 	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking", "Idle" },
 	Evading = { "Idle" },
 	Mantling = { "Idle" },
+	Vaulting = { "Idle", "Walking", "RoadieRun" },
 	Executing = { "Idle" },
 
 	-- DBNO
@@ -245,6 +256,7 @@ PlayerState.Groups = {
 			"CoverSwap",
 			"Evading",
 			"Mantling",
+			"Vaulting",
 			"Executing",
 		},
 	},
@@ -258,7 +270,7 @@ PlayerState.Groups = {
 	},
 	ActionGroup = {
 		Parent = "AliveGroup",
-		States = { "Evading", "Mantling", "CoverSlide", "CoverEntering", "CoverExiting", "CoverSwap", "Executing" },
+		States = { "Evading", "Mantling", "Vaulting", "CoverSlide", "CoverEntering", "CoverExiting", "CoverSwap", "Executing" },
 	},
 	DBNOGroup = {
 		Parent = nil,

@@ -61,7 +61,7 @@ IntentMapper.__index = IntentMapper
 
 local INTENT_MAP = {
 	CoverButton = {
-		Tap = { intents = { "WantsCover", "WantsMantle", "WantsEvade" } },
+		Tap = { intents = { "WantsCover", "WantsMantle", "WantsEvade", "WantsVault" } },
 		HoldStart = { intents = { "WantsRoadieRun" } },
 		Release = { stop = { "WantsRoadieRun" } },
 	},
@@ -101,7 +101,7 @@ local INTENT_MAP = {
 	},
 
 	InteractButton = {
-		Pressed = { intents = { "WantsInteract" } },
+		Pressed = { intents = { "WantsInteract", "WantsVault" } },
 	},
 
 	SwapWeapon = {

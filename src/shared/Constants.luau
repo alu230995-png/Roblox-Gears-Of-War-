@@ -111,6 +111,9 @@ Constants.CAM_SENSITIVITY_COVER = 1.0
 Constants.CAM_SENSITIVITY_AIM = 0.5
 Constants.CAM_SENSITIVITY_DBNO = 0.4
 
+-- Base multiplier applied to mouse delta (internal scaling)
+Constants.CAM_MOUSE_SENSITIVITY_BASE = 0.3
+
 -- Camera bob
 Constants.CAMERA_BOB_ENABLED = true
 Constants.CAMERA_BOB_FREQUENCY = 8
@@ -118,6 +121,8 @@ Constants.CAMERA_BOB_AMPLITUDE_X = 0.3
 Constants.CAMERA_BOB_AMPLITUDE_Y = 0.5
 Constants.CAMERA_BOB_ROADIE_MULTIPLIER = 2.5
 Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
+Constants.CAM_BOB_LERP_SPEED = 6
+Constants.CAM_BOB_VELOCITY_THRESHOLD = 1.0
 
 -- Spring Arm (anti-colisión)
 Constants.CAM_ARM_LENGTH = 8.0
@@ -192,6 +197,7 @@ Constants.COVER_RUN_SPEED = 20
 
 -- Wall-glue: corrección de posición contra la pared
 Constants.COVER_GLUE_MAX_DIST = 0.3
+Constants.COVER_GLUE_CORRECTION_SPEED = 60 -- Velocidad proporcional de corrección basada en velocidad (converge en 2-3 frames)
 
 -- Entering: rotación en dos fases
 Constants.COVER_APPROACH_ROT_SPEED = 12 -- Fase 1: velocidad de rotación hacia el punto de impacto
@@ -199,6 +205,7 @@ Constants.COVER_NORMAL_ROT_START = 0.8 -- Fase 2: empezar a rotar hacia la norma
 Constants.COVER_ROTATION_BLEND_MIN = 0.05 -- al entrar en la zona de rotación (t=0.8), el Lerp usa factor 8% — giro muy lento al inicio
 Constants.COVER_ROTATION_BLEND_MAX = 0.32 -- al llegar al destino (t=1.0), el Lerp usa factor 35% — giro más agresivo al final
 Constants.COVER_STUCK_TIMEOUT = 1.8
+Constants.COVER_SETTLE_DURATION = 0.3
 
 -- Entering: raycasts de suelo para calcular Y del destino
 Constants.COVER_GROUND_RAY_DOWN = 10
@@ -216,10 +223,21 @@ Constants.COVER_SPHERECAST_RADIUS = 0.2
 ------------------------------------------------------------------------
 
 Constants.COVER_TRANSITION_TRIGGER_DIST = 1.5
-Constants.COVER_TRANSITION_DOT_THRESHOLD = 0.5
+Constants.COVER_TRANSITION_DOT_THRESHOLD = 0.87 -- cos(30°) ≈ 0.866 → permite esquinas de 30° a 90°
 -- Velocidad del lerp de rotación al girar en esquina interna
 -- Con 15, ~90% del giro se completa en ~0.15 s.
 Constants.CORNER_TURN_SPEED = 15
+-- Crossover push: studs que se empuja al personaje al cruzar una esquina interna
+-- para evitar ping-pong entre paredes. Debe ser ≥ COVER_TRANSITION_TRIGGER_DIST.
+Constants.CORNER_CROSSOVER_PUSH = 1.8
+-- Cooldown (segundos) tras una transición de esquina interna antes de permitir otra
+Constants.CORNER_TRANSITION_COOLDOWN = 0.25
+-- Frames de histéresis para bloqueo de esquinas (activación instantánea, desactivación retardada)
+Constants.CORNER_HYSTERESIS_FRAMES = 5
+-- Fracción del delta-yaw que se aplica a la cámara al girar en esquina interna (0-1)
+Constants.CAM_CORNER_YAW_FRACTION = 0.45
+-- Velocidad del lerp del yaw nudge de cámara en esquina interna
+Constants.CAM_CORNER_YAW_SPEED = 8
 
 ------------------------------------------------------------------------
 -- 8. COVER SCANNING — detección y raycast
@@ -227,7 +245,7 @@ Constants.CORNER_TURN_SPEED = 15
 
 Constants.COVER_SCAN_RANGE = 32
 Constants.COVER_FALLBACK_MIN_SIZE = 2 -- _isCoverObject: tamaño mínimo para fallback dev
-Constants.COVER_HEIGHT_LOW_MAX = 3.5
+Constants.COVER_HEIGHT_LOW_MAX = 6
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 Constants.COVER_CORNER_DETECTION_RANGE = 2.0
 Constants.COVER_CORNER_PUSH_IN = 2.0
@@ -274,6 +292,15 @@ Constants.EVADE_MIN_SPEED = 0.5
 -- Duración de acciones de traversal (segundos)
 Constants.MANTLE_DURATION = 0.6
 Constants.VAULT_DURATION = 0.5
+
+-- Vault over low cover — Bezier 3D
+Constants.VAULT_FORWARD_DIST = 4
+Constants.VAULT_ARC_HEIGHT = 2
+Constants.VAULT_FORWARD_DOT_THRESHOLD = 0.9 -- mínimo dot entre input forward y dirección al cover para permitir vault
+Constants.VAULT_OVERHEAD_RAY_HEIGHT = 2.5
+Constants.VAULT_LANDING_RAY_DOWN = 10
+Constants.VAULT_LANDING_RAY_UP = 3
+Constants.VAULT_COLLISION_RESTORE_PROGRESS = 0.85
 
 ------------------------------------------------------------------------
 -- 11. ROADIE RUN

@@ -343,9 +343,13 @@ function EnvironmentSensor:CheckSwapCover(
 
 	local origin = hrp.Position + Constants.COVER_RAY_ORIGIN_OFFSET
 
+	-- Usar la dirección de input real (camera-relative, ya convertida a world
+	-- por Helpers.scanCoverSwap). Esto permite que diagonales (W+D) apunten
+	-- el rayo en la dirección combinada, no en un eje fijo del riel.
+	-- Aplanar al plano horizontal por seguridad.
 	local flatInput = Vector3.new(inputDirection.X, 0, inputDirection.Z)
 	if flatInput.Magnitude < Constants.ZERO_MAGNITUDE then
-		flatInput = wallRight * moveDir
+		flatInput = wallRight * moveDir -- fallback al riel si input es nulo
 	else
 		flatInput = flatInput.Unit
 	end
@@ -522,7 +526,57 @@ function EnvironmentSensor:CheckSwapCover(
 	end
 
 	-- ═══════════════════════════════════════════════════════════
+	-- PASO 6: Validación de obstrucción tangente
+	-- Lanzar un rayo desde el jugador en la dirección tangente
+	-- (wallRight × moveDir) hasta la distancia al punto de impacto.
+	-- Si hay algo en el camino que NO sea la cover destino ni la
+	-- cover actual, el swap se cancela — el jugador permanece.
+	-- ═══════════════════════════════════════════════════════════
+	local tangentDir = wallRight * moveDir
+	local swapDistance = (hitResult.Position - origin).Magnitude
+
+	-- Reutilizar swapParams pero excluir character + ambas covers
+	swapParams.FilterDescendantsInstances = { character, currentCoverInstance, newPart }
+	local obstructionResult = workspace:Raycast(origin, tangentDir * (swapDistance + 8), swapParams)
+
+	if Constants.DEBUG_MODE then
+		local endPt = origin + tangentDir * swapDistance
+		local midPt = (origin + endPt) / 2
+		local debugObs = Instance.new("Part")
+		debugObs.Name = "DEBUG_SwapObstruction"
+		debugObs.Anchored = true
+		debugObs.CanCollide = false
+		debugObs.CanQuery = false
+		debugObs.CastShadow = false
+		debugObs.Size = Vector3.new(0.06, 0.06, swapDistance)
+		debugObs.CFrame = CFrame.new(midPt, endPt)
+		debugObs.Color = if obstructionResult then Color3.fromRGB(255, 0, 0) else Color3.fromRGB(0, 255, 0)
+		debugObs.Material = Enum.Material.Neon
+		debugObs.Parent = workspace
+		Debris:AddItem(debugObs, 1.5)
+
+		if obstructionResult then
+			print(
+				string.format(
+					"[SwapRay] P6 OBSTRUCCIÓN: %s en (%.1f,%.1f,%.1f) — swap cancelado",
+					obstructionResult.Instance.Name,
+					obstructionResult.Position.X,
+					obstructionResult.Position.Y,
+					obstructionResult.Position.Z
+				)
+			)
+		else
+			print("[SwapRay] P6 Camino libre — sin obstrucción")
+		end
+	end
+
+	if obstructionResult then
+		return nil, nil, nil
+	end
+
+	-- ═══════════════════════════════════════════════════════════
 	-- VÁLIDO — Normal ganadora del Paso 4 + coplanaridad del Paso 5
+	--          + camino libre del Paso 6
 	-- ═══════════════════════════════════════════════════════════
 	if Constants.DEBUG_MODE then
 		print(
@@ -641,30 +695,44 @@ function EnvironmentSensor:_snapNormalToFace(
 	end
 
 	-- FASE 3: Corner push-in (anti-esquinas)
+	-- Proteger contra Parts pequeños donde margin/pushIn > halfSize → min > max
 	local margin = Constants.COVER_CORNER_MARGIN
 	local pushIn = Constants.COVER_CORNER_PUSH_IN
-	local clampedHit = Vector3.new(
-		math.clamp(localHit.X, -halfSize.X + margin, halfSize.X - margin),
-		localHit.Y,
-		math.clamp(localHit.Z, -halfSize.Z + margin, halfSize.Z - margin)
-	)
+
+	local mxMin = -halfSize.X + margin
+	local mxMax = halfSize.X - margin
+	if mxMin > mxMax then
+		local mid = 0
+		mxMin, mxMax = mid, mid
+	end
+	local mzMin = -halfSize.Z + margin
+	local mzMax = halfSize.Z - margin
+	if mzMin > mzMax then
+		local mid = 0
+		mzMin, mzMax = mid, mid
+	end
+
+	local clampedHit =
+		Vector3.new(math.clamp(localHit.X, mxMin, mxMax), localHit.Y, math.clamp(localHit.Z, mzMin, mzMax))
 
 	-- Si el hit estaba justo en el borde → empujar hacia el centro del Part
 	if slideAxis == "X" then
 		if math.abs(localHit.X) > (halfSize.X - margin - Constants.ENV_CORNER_EPSILON) then
-			clampedHit = Vector3.new(
-				math.clamp(clampedHit.X, -halfSize.X + pushIn, halfSize.X - pushIn),
-				clampedHit.Y,
-				clampedHit.Z
-			)
+			local pxMin = -halfSize.X + pushIn
+			local pxMax = halfSize.X - pushIn
+			if pxMin > pxMax then
+				pxMin, pxMax = 0, 0
+			end
+			clampedHit = Vector3.new(math.clamp(clampedHit.X, pxMin, pxMax), clampedHit.Y, clampedHit.Z)
 		end
 	else
 		if math.abs(localHit.Z) > (halfSize.Z - margin - Constants.ENV_CORNER_EPSILON) then
-			clampedHit = Vector3.new(
-				clampedHit.X,
-				clampedHit.Y,
-				math.clamp(clampedHit.Z, -halfSize.Z + pushIn, halfSize.Z - pushIn)
-			)
+			local pzMin = -halfSize.Z + pushIn
+			local pzMax = halfSize.Z - pushIn
+			if pzMin > pzMax then
+				pzMin, pzMax = 0, 0
+			end
+			clampedHit = Vector3.new(clampedHit.X, clampedHit.Y, math.clamp(clampedHit.Z, pzMin, pzMax))
 		end
 	end
 
@@ -761,7 +829,11 @@ function EnvironmentSensor:_isCoverObject(part: BasePart): boolean
 	end
 
 	-- Fallback durante desarrollo: cualquier pared anchored que sea suficientemente grande
-	if part.Anchored and part.Size.Y >= Constants.COVER_FALLBACK_MIN_SIZE and part.Size.X >= Constants.COVER_FALLBACK_MIN_SIZE then
+	if
+		part.Anchored
+		and part.Size.Y >= Constants.COVER_FALLBACK_MIN_SIZE
+		and part.Size.X >= Constants.COVER_FALLBACK_MIN_SIZE
+	then
 		return true
 	end
 
@@ -774,6 +846,63 @@ function EnvironmentSensor:_classifyCover(part: BasePart): string
 	else
 		return "High"
 	end
+end
+
+------------------------------------------------------------------------
+-- VAULT SAFETY — validación para VaultHandler
+------------------------------------------------------------------------
+
+--- Verifica que la instancia de cover siga existiendo y sea válida.
+function EnvironmentSensor:ValidateCoverInstance(instance: BasePart?): boolean
+	if not instance then
+		return false
+	end
+	if not instance:IsDescendantOf(workspace) then
+		return false
+	end
+	return true
+end
+
+--- Lanza raycasts de seguridad para verificar que el destino del vault es transitable.
+--- Usa _swapRayParams (Exclude mode) para ignorar el character y la cover.
+--- @param startPos Vector3 — posición actual del character
+--- @param forwardDir Vector3 — dirección horizontal normalizada del vault (-coverNormal)
+--- @param character Model — el character del jugador
+--- @param coverInstance BasePart — la pieza de cover que se salta
+--- @return boolean, Vector3? — (isSafe, landingPosition)
+function EnvironmentSensor:CheckVaultSafety(
+	startPos: Vector3,
+	forwardDir: Vector3,
+	character: Model,
+	coverInstance: BasePart
+): (boolean, Vector3?)
+	-- Config Exclude para ignorar character + cover
+	self._swapRayParams.FilterDescendantsInstances = { character, coverInstance }
+
+	-- 1) Overhead clearance: rayo vertical encima del end-point
+	local endHorizontal = startPos + forwardDir * Constants.VAULT_FORWARD_DIST
+	local overheadOrigin = endHorizontal + Vector3.new(0, Constants.VAULT_OVERHEAD_RAY_HEIGHT, 0)
+	local overheadResult =
+		workspace:Raycast(overheadOrigin, Vector3.new(0, -Constants.VAULT_OVERHEAD_RAY_HEIGHT, 0), self._swapRayParams)
+	-- Si el overhead ray golpea algo, hay un techo bajo → no seguro
+	if overheadResult then
+		return false, nil
+	end
+
+	-- 2) Landing zone: rayo hacia abajo desde el end-point elevado
+	local landingOrigin = endHorizontal + Vector3.new(0, Constants.VAULT_LANDING_RAY_UP, 0)
+	local landingResult = workspace:Raycast(
+		landingOrigin,
+		Vector3.new(0, -(Constants.VAULT_LANDING_RAY_UP + Constants.VAULT_LANDING_RAY_DOWN), 0),
+		self._swapRayParams
+	)
+	if not landingResult then
+		-- No hay suelo → no seguro
+		return false, nil
+	end
+
+	local landingPos = landingResult.Position
+	return true, landingPos
 end
 
 return EnvironmentSensor

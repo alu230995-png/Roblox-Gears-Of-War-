@@ -64,22 +64,46 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 		return nil
 	end
 
-	local character = Players.LocalPlayer.Character
-	if not character then
-		return nil
-	end
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
-	if not humanoid or humanoid.MoveDirection.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+	-- Usar dirección cruda de InputDetector (ctx.Env.MoveDirection, Vector2 WASD)
+	-- + cámara para convertir a mundo. Esto es independiente de humanoid.MoveDirection
+	-- que puede ser cero cuando WalkSpeed=0 (estados de cover).
+	local camera = workspace.CurrentCamera
+	if not camera then
 		return nil
 	end
 
-	local movementScale = humanoid.MoveDirection:Dot(wallRight)
+	local moveDir2D = ctx.Env.MoveDirection -- Vector2 de InputDetector (WASD crudo)
+	if not moveDir2D or moveDir2D.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+		return nil
+	end
+
+	local camCF = camera.CFrame
+	local camRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+	local camForward = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+	if camRight.Magnitude > Constants.ZERO_MAGNITUDE then
+		camRight = camRight.Unit
+	end
+	if camForward.Magnitude > Constants.ZERO_MAGNITUDE then
+		camForward = camForward.Unit
+	end
+
+	local moveDirWorld = camRight * moveDir2D.X + camForward * moveDir2D.Y
+	if moveDirWorld.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+		return nil
+	end
+	moveDirWorld = moveDirWorld.Unit
+
+	local movementScale = moveDirWorld:Dot(wallRight)
 	if math.abs(movementScale) < Constants.LATERAL_TRIGGER_THRESHOLD then
 		return nil
 	end
 
-	local env = ctx.Env
-	local atCorner = (movementScale > 0 and env.IsAtCornerRight) or (movementScale < 0 and env.IsAtCornerLeft)
+	-- Usar flags con histéresis de CornerCover (via CoverMain) en vez de los flags
+	-- crudos del EnvironmentSensor. Esto garantiza que el scan de swap y el bloqueo
+	-- de movimiento vean el MISMO estado de esquina, eliminando el flicker que
+	-- causaba que el swap no se detectara al presionar hacia el vacío.
+	local atCorner = (movementScale > 0 and coverHandler:IsAtCornerRight())
+		or (movementScale < 0 and coverHandler:IsAtCornerLeft())
 
 	if Constants.DEBUG_MODE then
 		local now = os.clock()
@@ -90,8 +114,8 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 					"[CoverSwap] Escaneo pasivo: scale=%.2f | esquina=%s (izq=%s, der=%s)",
 					movementScale,
 					tostring(atCorner),
-					tostring(env.IsAtCornerLeft),
-					tostring(env.IsAtCornerRight)
+					tostring(coverHandler:IsAtCornerLeft()),
+					tostring(coverHandler:IsAtCornerRight())
 				)
 			)
 		end
@@ -101,6 +125,10 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 		return nil
 	end
 
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return nil
+	end
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return nil
@@ -113,7 +141,7 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 	end
 
 	local newPart, newNormal, hitPos =
-		ctx.EnvSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance, humanoid.MoveDirection)
+		ctx.EnvSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance, moveDirWorld)
 
 	if newPart and newNormal and hitPos then
 		if Constants.DEBUG_MODE then
@@ -165,6 +193,32 @@ function Helpers.checkCoverSwap(resolver, ctx): boolean
 
 	ctx._swapData = scanData
 	return true
+end
+
+------------------------------------------------------------------------
+-- VAULT HELPERS
+------------------------------------------------------------------------
+
+--- Verifica que el humanoid se mueve hacia la cover (dot product contra -coverNormal).
+--- Usa un margen de error para permitir ángulos no perfectamente perpendiculares.
+function Helpers.isMovingIntoCover(ctx): boolean
+	local coverNormal = ctx.Env.CoverNormal
+	if not coverNormal then
+		return false
+	end
+
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	if not humanoid or humanoid.MoveDirection.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
+		return false
+	end
+
+	local moveDir3D = humanoid.MoveDirection
+	local intoCover = -Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+	return moveDir3D:Dot(intoCover) > Constants.VAULT_FORWARD_DOT_THRESHOLD
 end
 
 return Helpers

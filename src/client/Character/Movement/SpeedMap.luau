@@ -30,6 +30,7 @@ local MAP = {
 	CoverAim = 0,
 	CoverBlindFire = 0,
 	Mantling = 0,
+	Vaulting = 0, -- WalkSpeed=0: posición controlada 100% por VaultHandler (Bezier)
 	DBNO = Constants.WALK_SPEED * 0.2,
 	Executing = 0,
 	Aiming = Constants.WALK_SPEED * 0.6,

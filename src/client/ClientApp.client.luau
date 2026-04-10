@@ -137,6 +137,10 @@ RunService.Heartbeat:Connect(function(dt: number)
 	-- Paso 5: Update continuo (timers, cover snap, rotación, evade decay)
 	movementController:Update(dt)
 
+	-- Paso 5b: Cámara DESPUÉS de movement — garantiza que lea el HRP post-corrección
+	-- (wall-glue, smooth rotation) sin jitter de 1-frame lag.
+	cameraController:Update(dt)
+
 	-- Paso 6: StateMachine update (callbacks OnUpdate de estados)
 	stateMachine:Update(dt)
 end)

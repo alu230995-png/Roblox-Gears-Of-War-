@@ -14,7 +14,7 @@
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local Constants = require(Shared:WaitForChild("Constants"))
+local _Constants = require(Shared:WaitForChild("Constants"))
 
 local CoverRules = {}
 
@@ -136,17 +136,26 @@ CoverRules.BlindFire = {
 CoverRules.Idle = {
 	ExitCover, -- Prio 1
 
-	-- Prio 2: Vault (cover bajo + forward + cover/mantle button)
+	-- Prio 2: Vault (cover bajo + moving into cover + cover/mantle/vault button)
 	{
 		id = "Vault",
 		check = function(_resolver, ctx)
-	return (ctx.Buffer:HasIntent("WantsCover") or ctx.Buffer:HasIntent("WantsMantle"))
-		and ctx.Env.CoverType == "Low"
-		and ctx.Env.MoveDirection.Y > Constants.FORWARD_INPUT_THRESHOLD
+			return (
+				ctx.Buffer:HasIntent("WantsCover")
+				or ctx.Buffer:HasIntent("WantsMantle")
+				or ctx.Buffer:HasIntent("WantsVault")
+			)
+				and ctx.Env.CoverType == "Low"
+				and Helpers.isMovingIntoCover(ctx)
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-	return "Vault", "Mantling", nil
+			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			return "Vault",
+				"Vaulting",
+				{
+					coverNormal = ctx.Env.CoverNormal,
+					coverInstance = ctx.Env.CoverInstance,
+				}
 		end,
 	},
 
@@ -157,11 +166,11 @@ CoverRules.Idle = {
 	{
 		id = "CoverSwapIdle",
 		check = function(resolver, ctx)
-	return Helpers.checkCoverSwap(resolver, ctx)
+			return Helpers.checkCoverSwap(resolver, ctx)
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-	return "CoverSwap", "CoverSwap", ctx._swapData
+			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			return "CoverSwap", "CoverSwap", ctx._swapData
 		end,
 	},
 
@@ -174,10 +183,10 @@ CoverRules.Idle = {
 	{
 		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
-	return Helpers.hasMovementIntent(ctx.Intents)
+			return Helpers.hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-	return "StartCoverWalking", "CoverWalking", nil
+			return "StartCoverWalking", "CoverWalking", nil
 		end,
 	},
 }
@@ -189,7 +198,28 @@ CoverRules.Idle = {
 CoverRules.Walking = {
 	ExitCover, -- Prio 1
 
-	-- Prio 2: Cover Swap (antes de RollOutOfCover por misma razón que Idle)
+	-- Prio 2: Vault (cover bajo + moving into cover)
+	{
+		id = "VaultWalking",
+		check = function(_resolver, ctx)
+	return (
+		ctx.Buffer:HasIntent("WantsCover")
+		or ctx.Buffer:HasIntent("WantsMantle")
+		or ctx.Buffer:HasIntent("WantsVault")
+	)
+		and ctx.Env.CoverType == "Low"
+		and Helpers.isMovingIntoCover(ctx)
+		end,
+		execute = function(_resolver, ctx)
+	ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+	return "Vault", "Vaulting", {
+		coverNormal = ctx.Env.CoverNormal,
+		coverInstance = ctx.Env.CoverInstance,
+	}
+		end,
+	},
+
+	-- Prio 3: Cover Swap (antes de RollOutOfCover por misma razón que Idle)
 	{
 		id = "CoverSwapWalking",
 		check = function(resolver, ctx)

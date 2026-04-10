@@ -48,7 +48,6 @@ local COVER_ACTIONS: { [string]: boolean } = {
 	EnterCover = true,
 	SlideIntoCover = true,
 	ExitCover = true,
-	Vault = true,
 	StartCoverRunning = true,
 	StopCoverRunning = true,
 	CoverSwap = true,
@@ -235,6 +234,16 @@ function CoverMain:IsSnapping(): boolean
 	return self._enteringCover:IsActive()
 end
 
+--- Retorna true si está en esquina derecha (con histéresis).
+function CoverMain:IsAtCornerRight(): boolean
+	return self._cornerCover:IsAtRight()
+end
+
+--- Retorna true si está en esquina izquierda (con histéresis).
+function CoverMain:IsAtCornerLeft(): boolean
+	return self._cornerCover:IsAtLeft()
+end
+
 --- Limpia todo el estado de cover (usado por EvadeHandler al hacer RollOutOfCover).
 function CoverMain:ResetCover()
 	self._enteringCover:Cancel()
@@ -264,9 +273,13 @@ CoverMain._handlers = {
 	self._coverState.coverInstance = data.coverInstance
 	self._coverState.coverType = data.coverType
 
-	-- Notificar a la cámara la normal de cover para Dynamic Framing
-	if self._cameraController then
-		self._cameraController:SetCoverNormal(data.coverNormal)
+	-- NO activar Dynamic Framing aquí — durante CoverEntering el HRP se
+	-- mueve y rota activamente, lo que hace oscilar el target del framing
+	-- y provoca que la cámara gire sin control. La normal se inyecta en
+	-- _cleanupSettle (cuando InCover termina el settle) via _onSettleComplete.
+	-- Bloquear Dynamic Framing preventivamente durante entering + settle:
+	if self._cameraController and self._cameraController.SetCoverSettleActive then
+		self._cameraController:SetCoverSettleActive(true)
 	end
 
 	-- Delegar entering al sub-módulo
@@ -284,9 +297,10 @@ CoverMain._handlers = {
 	self._coverState.coverInstance = data.coverInstance
 	self._coverState.coverType = data.coverType
 
-	-- Notificar a la cámara la normal de cover para Dynamic Framing
-	if self._cameraController then
-		self._cameraController:SetCoverNormal(data.coverNormal)
+	-- NO activar Dynamic Framing aquí — misma razón que EnterCover.
+	-- Se activa al completar el settle en InCover._cleanupSettle.
+	if self._cameraController and self._cameraController.SetCoverSettleActive then
+		self._cameraController:SetCoverSettleActive(true)
 	end
 
 	self._enteringCover:BeginSlide(data)
@@ -314,14 +328,6 @@ CoverMain._handlers = {
 			self._pendingIdleTransition = true
 		end
 	end)
-	end,
-
-	--- Vault sobre cover bajo.
-	Vault = function(self, _data)
-	self._enteringCover:Cancel()
-	self._cornerCover:Reset()
-	self._coverRunning:Stop()
-	self:_clearCoverState()
 	end,
 
 	--- Inicia CoverRunning (sprint en cover).

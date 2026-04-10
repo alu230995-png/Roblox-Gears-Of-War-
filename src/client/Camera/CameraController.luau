@@ -25,7 +25,7 @@
 	  - FireImpulseShake(rotX, rotY) — kick de cámara
 ]]
 
-local RunService = game:GetService("RunService")
+local _RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -51,6 +51,7 @@ local STATE_FOV = table.freeze({
 	CoverSwap = Constants.ROADIE_RUN_FOV,
 	Evading = Constants.DEFAULT_FOV,
 	Mantling = Constants.DEFAULT_FOV,
+	Vaulting = Constants.DEFAULT_FOV,
 	Aiming = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_AIM_OFFSET,
 	Firing = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_FIRING_OFFSET,
 	Reloading = Constants.DEFAULT_FOV,
@@ -64,7 +65,6 @@ local STATE_FOV = table.freeze({
 
 -- Velocidad horizontal mínima (studs/s) para activar el bob.
 -- Igual que SoundController — detecta movimiento real sin importar cómo se aplica la velocidad.
-local CAM_BOB_VELOCITY_THRESHOLD = 1.0
 
 ------------------------------------------------------------------------
 -- BOB multiplier por estado
@@ -85,6 +85,7 @@ local STATE_BOB_MULTIPLIER = table.freeze({
 	CoverSwap = 0.5,
 	Evading = 0,
 	Mantling = 0,
+	Vaulting = 0.3,
 	Aiming = 0.2,
 	Firing = 0.3,
 	Reloading = 0.5,
@@ -115,6 +116,7 @@ local STATE_SENSITIVITY = table.freeze({
 	CoverSwap = Constants.CAM_SENSITIVITY_ROADIE,
 	Evading = Constants.CAM_SENSITIVITY_ROADIE,
 	Mantling = Constants.CAM_SENSITIVITY_ROADIE,
+	Vaulting = Constants.CAM_SENSITIVITY_ROADIE,
 	Aiming = Constants.CAM_SENSITIVITY_AIM,
 	Firing = Constants.CAM_SENSITIVITY_AIM,
 	Reloading = Constants.CAM_SENSITIVITY_DEFAULT,
@@ -145,6 +147,7 @@ local STATE_FOLLOW_YAW = table.freeze({
 	CoverSwap = 0,
 	Evading = Constants.CAM_FOLLOW_YAW_EVADE,
 	Mantling = 0,
+	Vaulting = 0,
 	Aiming = 0,
 	Firing = 0,
 	Reloading = 0,
@@ -209,9 +212,17 @@ function CameraController.new(stateMachine, actionResolver)
 	self._followYawStrength = 0
 	self._roadieYawTimer = 0
 
+	-- Inner corner yaw nudge (solo cámara, no player)
+	self._cornerYawNudge = 0
+
+	-- Cover settle guard: true mientras InCover hace settle rotation.
+	-- Dynamic Framing se desactiva hasta que termine para evitar spinning.
+	self._coverSettleActive = false
+
 	-- Spring Arm: RaycastParams reutilizable (evita allocation por frame)
 	self._raycastParams = RaycastParams.new()
 	self._raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	self._lastFilterCharacter = nil :: Model?
 
 	-- Conexiones gestionadas (cleanup en Destroy)
 	self._connections = {}
@@ -256,10 +267,9 @@ function CameraController:Start()
 		end
 	)
 
-	-- Heartbeat para orquestar el frame de cámara
-	self._connections.heartbeat = RunService.Heartbeat:Connect(function(dt: number)
-		self:_update(dt)
-	end)
+	-- Heartbeat de cámara ELIMINADO: ahora ClientApp llama Update(dt) después
+	-- de movementController:Update(dt) para garantizar que la cámara siempre
+	-- vea el estado post-corrección del HRP (sin jitter de 1-frame lag).
 
 	-- Re-forzar Scriptable si la cámara cambia (respawn, etc.)
 	self._connections.cameraChanged = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
@@ -317,6 +327,23 @@ end
 function CameraController:FireImpulseShake(rotX: number, rotY: number)
 	-- Acumulamos en el target; el _update lo lerpa suavemente hacia _shakeImpulseCFrame
 	self._shakeImpulseTarget = self._shakeImpulseTarget * CFrame.Angles(rotX, rotY, 0)
+end
+
+--- Notifica una transición de esquina interna.
+--- Aplica un nudge suave al yaw de la cámara hacia la nueva normal
+--- para re-encuadrar al personaje de frente sin rotar al player.
+function CameraController:NotifyInnerCornerTransition(newNormal: Vector3)
+	local targetYaw = math.deg(math.atan2(newNormal.X, newNormal.Z))
+	local diff = targetYaw - self._yaw
+	-- Normalizar a [-180, 180]
+	diff = ((diff + 180) % 360) - 180
+	self._cornerYawNudge = diff * Constants.CAM_CORNER_YAW_FRACTION
+end
+
+--- Indica a la cámara si InCover está en fase de settle rotation.
+--- Mientras es true, Dynamic Framing se desactiva para evitar spinning.
+function CameraController:SetCoverSettleActive(active: boolean)
+	self._coverSettleActive = active
 end
 
 ------------------------------------------------------------------------
@@ -390,6 +417,7 @@ function CameraController:_onStateChanged(newState: string, oldState: string)
 	-- Dynamic Framing: desactivar al salir de cover
 	if not inCoverGroup then
 		self:SetCoverNormal(nil)
+		self._coverSettleActive = false
 	end
 
 	-- Pitch damping: más pesado al correr
@@ -426,10 +454,10 @@ function CameraController:_onActionResolved(action: string)
 end
 
 ------------------------------------------------------------------------
--- INTERNAL: Frame Update — Orquestador
+-- PUBLIC API: Frame Update (llamado por ClientApp después de movement)
 ------------------------------------------------------------------------
 
-function CameraController:_update(dt: number)
+function CameraController:Update(dt: number)
 	local camera = workspace.CurrentCamera
 	if not camera then
 		return
@@ -452,13 +480,24 @@ function CameraController:_update(dt: number)
 	-- movimiento real en todos los estados, incluso con WalkSpeed=0.
 	local vel = hrp.AssemblyLinearVelocity
 	local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
-	self._targetBobMultiplier = if horizontalSpeed > CAM_BOB_VELOCITY_THRESHOLD then self._stateBobMultiplier else 0
+	self._targetBobMultiplier = if horizontalSpeed > Constants.CAM_BOB_VELOCITY_THRESHOLD
+		then self._stateBobMultiplier
+		else 0
 
 	-- 1. Procesar input de mouse → acumular yaw/pitch
 	self:_processMouseInput(dt)
 
 	-- 1b. Follow-yaw: rotar cámara suavemente hacia dirección de movimiento
 	self:_applyFollowYaw(hrp, dt)
+
+	-- 1c. Corner yaw nudge: rotar cámara suavemente tras esquina interna
+	if math.abs(self._cornerYawNudge) > 0.1 then
+		local step = self._cornerYawNudge * math.min(1, Constants.CAM_CORNER_YAW_SPEED * dt)
+		self._yaw = self._yaw + step
+		self._cornerYawNudge = self._cornerYawNudge - step
+	else
+		self._cornerYawNudge = 0
+	end
 
 	-- 2. FOV
 	self:_interpolateFOV(dt, camera)
@@ -483,7 +522,10 @@ function CameraController:_update(dt: number)
 	local baseCF = CFrame.new(camPos) * rotationCF
 
 	-- 6. Dynamic Framing en Cover
-	if self._coverFrameActive and self._coverNormal then
+	-- SOLO aplicar cuando el settle de rotación ya terminó.
+	-- Durante el settle el HRP rota rápidamente → el yaw target oscila
+	-- cada frame y la cámara se vuelve inestable (spinning bug).
+	if self._coverFrameActive and self._coverNormal and not self._coverSettleActive then
 		baseCF = self:_applyDynamicFraming(baseCF, hrp, dt)
 	end
 
@@ -527,9 +569,9 @@ function CameraController:_processMouseInput(_dt: number)
 		-- pitchSens mantiene el valor del estado (CAM_SENSITIVITY_ROADIE = 0.2)
 	end
 
-	self._yaw = self._yaw - delta.X * 0.3 * sens
+	self._yaw = self._yaw - delta.X * Constants.CAM_MOUSE_SENSITIVITY_BASE * sens
 	self._pitch = math.clamp(
-		self._pitch - delta.Y * 0.3 * pitchSens * self._pitchDamping,
+		self._pitch - delta.Y * Constants.CAM_MOUSE_SENSITIVITY_BASE * pitchSens * self._pitchDamping,
 		Constants.CAM_PITCH_MIN,
 		Constants.CAM_PITCH_MAX
 	)
@@ -597,7 +639,11 @@ function CameraController:_computeSpringArm(hrp: BasePart, _camera: Camera, dt: 
 	local lookDir = rotationCF.LookVector
 	local ideal = Constants.CAM_ARM_LENGTH
 
-	self._raycastParams.FilterDescendantsInstances = { hrp.Parent }
+	local character = hrp.Parent
+	if character ~= self._lastFilterCharacter then
+		self._lastFilterCharacter = character
+		self._raycastParams.FilterDescendantsInstances = { character }
+	end
 
 	local castDir = -lookDir * ideal
 	local hit = workspace:Spherecast(pivot, Constants.CAM_ARM_SPHERE_RADIUS, castDir, self._raycastParams)
@@ -623,17 +669,39 @@ end
 -- INTERNAL: Dynamic Framing en Cover
 ------------------------------------------------------------------------
 
---- Slerp de rotación hacia un encuadre cinemático frente a la cover normal.
+--- Nudge suave del yaw de cámara hacia la dirección de la cover normal.
+--- Converge y se auto-desactiva — no corre indefinidamente.
+--- El pitch queda 100% controlado por el mouse.
 function CameraController:_applyDynamicFraming(baseCF: CFrame, hrp: BasePart, dt: number): CFrame
-	-- Centro del encuadre: posición del jugador + offset hacia la normal (fuera de la pared)
-	local lookTarget = hrp.Position + self._coverNormal * 1.5 + Vector3.new(0, 0.5, 0)
+	local n = self._coverNormal
+	-- Target estable: yaw que mira en la dirección de coverNormal.
+	-- CFrame.Angles(0, yaw, 0) produce LookVector = (-sin(yaw), 0, -cos(yaw))
+	-- Entonces: yaw = atan2(-n.X, -n.Z) para alinear LookVector con coverNormal.
+	local targetYaw = math.atan2(-n.X, -n.Z)
+	local currentYaw = math.rad(self._yaw)
 
-	-- CFrame objetivo: misma posición, mirando al target
-	local targetCF = CFrame.new(baseCF.Position, lookTarget)
+	-- Diferencia angular más corta (normalizada a [-π, π])
+	local diff = targetYaw - currentYaw
+	diff = ((diff + math.pi) % (2 * math.pi)) - math.pi
 
-	-- Slerp suave entre la rotación actual y la objetivo
+	-- Convergió → desactivar hasta el próximo cambio de cover
+	if math.abs(diff) < 0.01 then
+		self._coverFrameActive = false
+		return baseCF
+	end
+
+	-- Blend suave solo del yaw — pitch y roll permanecen intactos
 	local alpha = math.min(1, Constants.CAM_COVER_FRAME_SPEED * dt)
-	return CFrame.new(baseCF.Position) * baseCF.Rotation:Lerp(targetCF.Rotation, alpha)
+	self._yaw = self._yaw + math.deg(diff * alpha)
+
+	-- Reconstruir baseCF con el yaw corregido (pitch y shoulder ya aplicados)
+	local rotationCF = CFrame.Angles(0, math.rad(self._yaw), 0) * CFrame.Angles(math.rad(self._pitch), 0, 0)
+	local lookDir = rotationCF.LookVector
+	local rightDir = rotationCF.RightVector
+
+	local pivot = hrp.Position + Constants.CAM_ARM_PIVOT_OFFSET
+	local camPos = pivot + rightDir * self._currentShoulderX - lookDir * self._currentArmLength
+	return CFrame.new(camPos) * rotationCF
 end
 
 ------------------------------------------------------------------------
@@ -644,7 +712,7 @@ end
 function CameraController:_computeBobOffset(dt: number): CFrame
 	-- Lerp suave del multiplicador para evitar saltos al cambiar de estado
 	self._currentBobMultiplier = self._currentBobMultiplier
-		+ (self._targetBobMultiplier - self._currentBobMultiplier) * math.min(1, 6 * dt)
+		+ (self._targetBobMultiplier - self._currentBobMultiplier) * math.min(1, Constants.CAM_BOB_LERP_SPEED * dt)
 
 	if not Constants.CAMERA_BOB_ENABLED or self._currentBobMultiplier < 0.001 then
 		-- No resetear _bobTime: así al reactivar no hay salto de fase

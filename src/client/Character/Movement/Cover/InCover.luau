@@ -50,6 +50,7 @@ function InCover.new(coverState, cornerCover)
 	self._cornerCover = cornerCover -- referencia a CornerCover para consultar bloqueos
 	self._settleTimer = 0 -- timer para rotación de asentamiento al entrar
 	self._needsSettle = false -- true si viene de entering/swap y necesita alinear a normal
+	self._cornerCooldown = 0 -- cooldown tras transición de esquina interna (anti ping-pong)
 
 	return self
 end
@@ -59,6 +60,12 @@ function InCover:NotifyEnterFromSnap()
 	self._needsSettle = true
 	self._settleTimer = 0
 	self._settleStartRot = nil -- se captura en el primer frame de _applySettleRotation
+
+	-- Notificar a la cámara que el settle está activo (desactiva Dynamic Framing)
+	local cam = self._state.cameraController
+	if cam and cam.SetCoverSettleActive then
+		cam:SetCoverSettleActive(true)
+	end
 
 	local hrp = self:_getHRP()
 	if not hrp then
@@ -81,6 +88,12 @@ function InCover:NotifyEnterFromSnap()
 	-- 1. DESACTIVAR COLISIONES (Para evitar que se atore con la pared)
 	local coverPart = self._state.coverInstance
 	if coverPart then
+		-- Destruir constraint existente para evitar acumulación si se llama antes de cleanup
+		local existing = hrp:FindFirstChild("CoverSettleNoCollision")
+		if existing then
+			existing:Destroy()
+		end
+
 		local noCol = Instance.new("NoCollisionConstraint")
 		noCol.Name = "CoverSettleNoCollision"
 		noCol.Part0 = hrp
@@ -100,10 +113,10 @@ end
 ------------------------------------------------------------------------
 
 --- Actualiza la física de CoverIdle cada frame.
---- Velocidad horizontal = 0, wall-glue activo.
---- @param _dt number — delta time (reservado para futuras mecánicas)
+--- Velocidad horizontal = 0, wall-glue activo, rotación estabilizada.
+--- @param dt number — delta time
 --- @param _envContext table? — EnvironmentContext del EnvironmentSensor
-function InCover:UpdateIdle(_dt: number, _envContext: any?)
+function InCover:UpdateIdle(dt: number, _envContext: any?)
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
@@ -112,13 +125,16 @@ function InCover:UpdateIdle(_dt: number, _envContext: any?)
 	-- Restricción total: velocidad horizontal = 0
 	hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 
-	-- Pegamento: corregir posición si la física empujó al personaje
 	if not self._needsSettle then
+		-- Pegamento: corregir posición si la física empujó al personaje
 		self:_applyWallGlue(hrp)
+		-- Smooth rotation: mantener alineación a la normal de cover
+		-- (necesario después de settle y tras transiciones de esquina interna)
+		self:_smoothRotation(hrp, dt)
 	end
 
 	-- Rotación de asentamiento: solo si viene de entering/swap (breve, ~0.3s)
-	self:_applySettleRotation(hrp, _dt)
+	self:_applySettleRotation(hrp, dt)
 end
 
 ------------------------------------------------------------------------
@@ -173,28 +189,32 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	-- 3b. SHOULDER SWAP: notificar a la cámara el lado del movimiento
 	local cam = self._state.cameraController
 	if cam then
-		if movementScale < -0.1 then
+		if movementScale < -Constants.MOVE_DIRECTION_THRESHOLD then
 			cam:SetShoulderSide("Left")
-		elseif movementScale > 0.1 then
+		elseif movementScale > Constants.MOVE_DIRECTION_THRESHOLD then
 			cam:SetShoulderSide("Right")
 		end
 	end
 
-	-- 4. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
+	-- 4. COOLDOWN de transición de esquina interna (anti ping-pong)
+	if self._cornerCooldown > 0 then
+		self._cornerCooldown = self._cornerCooldown - dt
+	end
+
+	-- 4b. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
 	-- IMPORTANTE: debe ocurrir ANTES de CheckInnerCorner.
-	-- Inner corner y outer corner son mutuamente excluyentes; si estamos en
-	-- esquina externa (vacío), el raycast de CheckInnerCorner puede rozar la
-	-- arista del Part y devolver una normal corrupta → jitter.
 	if self._cornerCover and math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		if self._cornerCover:IsBlocked(movementScale) then
 			movementScale = 0
+			-- Anclar velocidad tangencial inmediatamente para evitar que la física
+			-- filtre movimiento residual que causa oscilación en la esquina.
+			hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 		end
 	end
 
-	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
-	-- Solo ejecuta si el movimiento NO está bloqueado por una esquina externa.
+	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared 30°–90°)
 	local sensor = self._state.envSensor
-	if math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+	if self._cornerCooldown <= 0 and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
 		if sensor then
 			local newNormal, newPosition, newInstance =
 				sensor:CheckInnerCorner(hrp, coverNormal, wallRight, movementScale)
@@ -206,9 +226,22 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 				self._state.coverInstance = newInstance
 				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
 
-				-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
+				-- B) Crossover push: empujar al personaje pasada la juntura para
+				--    evitar ping-pong entre la pared vieja y la nueva.
+				local newWallRight = self._state.wallRight
+				local pushDir = newWallRight * math.sign(movementScale)
+				hrp.CFrame = hrp.CFrame + pushDir * Constants.CORNER_CROSSOVER_PUSH
 
-				-- C) Recalcular el riel y la proyección con la nueva normal
+				-- C) Cooldown: impedir re-detección inmediata
+				self._cornerCooldown = Constants.CORNER_TRANSITION_COOLDOWN
+
+				-- D) Notificar a la cámara para nudge de yaw hacia la nueva normal
+				local camCtrl = self._state.cameraController
+				if camCtrl and camCtrl.NotifyInnerCornerTransition then
+					camCtrl:NotifyInnerCornerTransition(newNormal)
+				end
+
+				-- E) Recalcular el riel y la proyección con la nueva normal
 				coverNormal = newNormal
 				wallRight = Vector3.yAxis:Cross(coverNormal)
 				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then
@@ -233,18 +266,12 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	-- 7. WALL-GLUE: corregir posición cada frame
 	if not self._needsSettle then
 		self:_applyWallGlue(hrp)
-	end
-
-	-- 8. SMOOTH ROTATION: lerp hacia la normal de cover, siempre activo.
-	-- Llamar incondicionalmente (igual que CoverRunning) para que la orientación
-	-- del HRP esté siempre estabilizada contra coverNormal.
-	-- Sin esto, cuando movementScale=0 (esquina bloqueada) el wallGlue corrige
-	-- posición cada frame sin ancla de orientación → jitter de ida y vuelta.
-	if not self._needsSettle then
+		-- Smooth rotation: mantener alineación a la normal de cover
+		-- (corrige orientación tras transición de esquina interna)
 		self:_smoothRotation(hrp, dt)
 	end
 
-	-- 9. Settle rotation (si viene de entering/swap)
+	-- 8. Settle rotation (si viene de entering/swap)
 	self:_applySettleRotation(hrp, dt)
 end
 
@@ -252,7 +279,7 @@ end
 -- INTERNAL: Settle Rotation — solo al inicio desde entering/swap
 ------------------------------------------------------------------------
 
-local SETTLE_DURATION = 0.3 -- duración del asentamiento en segundos
+local SETTLE_DURATION = Constants.COVER_SETTLE_DURATION
 
 function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	if not self._needsSettle then
@@ -297,6 +324,7 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	local startRot = self._settleStartRot
 	if not startRot then
 		self._needsSettle = false
+		self._settleStartDist = nil
 		self:_cleanupSettle(hrp)
 		return
 	end
@@ -341,11 +369,20 @@ end
 -- INTERNAL: Helpers
 ------------------------------------------------------------------------
 
---- Limpia NoCollisionConstraint y restaura AutoRotate al terminar/abortar settle.
+--- Limpia NoCollisionConstraint y restaura estado al terminar/abortar settle.
 function InCover:_cleanupSettle(hrp: BasePart)
 	local noCol = hrp:FindFirstChild("CoverSettleNoCollision")
 	if noCol then
 		noCol:Destroy()
+	end
+
+	-- Solo desbloquear el settle guard. NO activar Dynamic Framing aquí:
+	-- durante CoverIdle normal la cámara no debe ser empujada cada frame
+	-- hacia la cover normal. SetCoverNormal solo se llama cuando la cover
+	-- realmente cambia (esquina interna, cover swap).
+	local cam = self._state.cameraController
+	if cam and cam.SetCoverSettleActive then
+		cam:SetCoverSettleActive(false)
 	end
 end
 

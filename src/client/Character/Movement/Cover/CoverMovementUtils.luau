@@ -16,7 +16,9 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local CoverMovementUtils = {}
 
 --- Corrige la posición del HRP para mantenerlo pegado a la pared de cover.
---- Anula la componente de velocidad perpendicular si el error excede el umbral.
+--- Usa corrección basada en velocidad (no CFrame snap) para evitar luchar
+--- contra el motor de física. Converge en 2-3 frames sin provocar respuestas
+--- de colisión espurias.
 --- @param state table — coverState compartido (coverNormal, coverPosition)
 --- @param hrp BasePart — HumanoidRootPart
 function CoverMovementUtils.applyWallGlue(state: any, hrp: BasePart)
@@ -30,17 +32,25 @@ function CoverMovementUtils.applyWallGlue(state: any, hrp: BasePart)
 	local perpDist = toPlayer:Dot(coverNormal)
 	local err = perpDist - Constants.COVER_OFFSET
 
-	if math.abs(err) > Constants.COVER_GLUE_MAX_DIST then
-		local correction = coverNormal * err
-		hrp.CFrame = hrp.CFrame - Vector3.new(correction.X, 0, correction.Z)
+	-- Siempre anular la componente de velocidad perpendicular a la pared
+	-- para prevenir drift acumulativo, independientemente del error.
+	local vel = hrp.AssemblyLinearVelocity
+	local perpVel = coverNormal * vel:Dot(coverNormal)
 
-		local vel = hrp.AssemblyLinearVelocity
-		hrp.AssemblyLinearVelocity = vel - coverNormal * vel:Dot(coverNormal)
+	if math.abs(err) > Constants.COVER_GLUE_MAX_DIST then
+		-- Inyectar velocidad correctiva proporcional al error en vez de snap de CFrame.
+		-- El motor de física integra esta velocidad naturalmente sin generar colisiones.
+		local correctionVel = coverNormal * -err * Constants.COVER_GLUE_CORRECTION_SPEED
+		hrp.AssemblyLinearVelocity =
+			Vector3.new(vel.X - perpVel.X + correctionVel.X, vel.Y, vel.Z - perpVel.Z + correctionVel.Z)
+	else
+		-- Sin error significativo: solo limpiar componente perpendicular
+		hrp.AssemblyLinearVelocity = vel - perpVel
 	end
 end
 
 --- Interpola la orientación del HRP hacia coverNormal (exponential smoothing,
---- frame-rate independent).
+--- frame-rate independent). Solo toca ROTACIÓN — nunca modifica posición.
 --- @param state table — coverState compartido (coverNormal)
 --- @param hrp BasePart — HumanoidRootPart
 --- @param dt number — delta time
@@ -50,9 +60,9 @@ function CoverMovementUtils.smoothRotation(state: any, hrp: BasePart, dt: number
 		return
 	end
 
-	local pos = hrp.Position
-	local targetCF = CFrame.lookAt(pos, pos + coverNormal)
-	hrp.CFrame = hrp.CFrame:Lerp(targetCF, 1 - math.exp(-Constants.CORNER_TURN_SPEED * dt))
+	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
+	local alpha = 1 - math.exp(-Constants.CORNER_TURN_SPEED * dt)
+	hrp.CFrame = CFrame.new(hrp.Position) * hrp.CFrame.Rotation:Lerp(targetRot, alpha)
 end
 
 return CoverMovementUtils

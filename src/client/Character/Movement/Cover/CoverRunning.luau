@@ -42,6 +42,7 @@ function CoverRunning.new(coverState, cornerCover)
 	self._state = coverState -- referencia al estado compartido de CoverMain
 	self._cornerCover = cornerCover -- para bloqueo en esquinas
 	self._isActive = false
+	self._cornerCooldown = 0 -- cooldown tras transición de esquina interna (anti ping-pong)
 
 	return self
 end
@@ -113,17 +114,22 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 	-- 3. PROYECTAR SOBRE EL RIEL (producto punto)
 	local movementScale = moveDirWorld:Dot(wallRight)
 
-	-- 4. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
-	-- IMPORTANTE: debe ocurrir ANTES de CheckInnerCorner (mismo fix que InCover).
+	-- 4. COOLDOWN de transición de esquina interna (anti ping-pong)
+	if self._cornerCooldown > 0 then
+		self._cornerCooldown = self._cornerCooldown - dt
+	end
+
+	-- 4b. BLOQUEAR EN ESQUINAS EXTERNAS via CornerCover
 	if self._cornerCover and math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
 		if self._cornerCover:IsBlocked(movementScale) then
 			movementScale = 0
+			-- Anclar velocidad tangencial inmediatamente para evitar oscilación en esquina
+			hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 		end
 	end
 
-	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared perpendicular)
-	-- Solo ejecuta si el movimiento NO está bloqueado por una esquina externa.
-	if math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
+	-- 5. TRANSICIÓN FLUIDA: esquina interna (pared 30°–90°)
+	if self._cornerCooldown <= 0 and math.abs(movementScale) > Constants.LATERAL_TRIGGER_THRESHOLD then
 		local sensor = self._state.envSensor
 		if sensor then
 			local newNormal, newPosition, newInstance =
@@ -136,9 +142,21 @@ function CoverRunning:Update(dt: number, _envContext: any?)
 				self._state.coverInstance = newInstance
 				self._state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
 
-				-- B) Rotación delegada a _smoothRotation (lerp al final del frame)
+				-- B) Crossover push: empujar al personaje pasada la juntura
+				local newWallRight = self._state.wallRight
+				local pushDir = newWallRight * math.sign(movementScale)
+				hrp.CFrame = hrp.CFrame + pushDir * Constants.CORNER_CROSSOVER_PUSH
 
-				-- C) Recalcular el riel y la proyección con la nueva normal
+				-- C) Cooldown: impedir re-detección inmediata
+				self._cornerCooldown = Constants.CORNER_TRANSITION_COOLDOWN
+
+				-- D) Notificar a la cámara para nudge de yaw hacia la nueva normal
+				local camCtrl = self._state.cameraController
+				if camCtrl and camCtrl.NotifyInnerCornerTransition then
+					camCtrl:NotifyInnerCornerTransition(newNormal)
+				end
+
+				-- E) Recalcular el riel y la proyección con la nueva normal
 				coverNormal = newNormal
 				wallRight = Vector3.yAxis:Cross(coverNormal)
 				if wallRight.Magnitude < Constants.ZERO_MAGNITUDE then

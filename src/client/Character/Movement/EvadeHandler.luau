@@ -30,7 +30,6 @@ local EVADE_ACTIONS: { [string]: boolean } = {
 	Evade = true,
 	RollOutOfCover = true,
 	Mantle = true,
-	Vault = true,
 }
 
 ------------------------------------------------------------------------
@@ -115,82 +114,71 @@ end
 
 EvadeHandler._handlers = {
 	Evade = function(self, _data)
-		local character = self._player.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
-		if not hrp or not humanoid then
-			return
-		end
+	local character = self._player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
+	if not hrp or not humanoid then
+		return
+	end
 
-		self._stateMachine:Lock()
+	self._stateMachine:Lock()
 
-		-- Dirección: hacia donde camina, o forward si está quieto
-		if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
-			self._evadeDirection = humanoid.MoveDirection.Unit
-		else
-			local look = hrp.CFrame.LookVector
-			self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
-		end
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		self:_applyImpulseToHRP(hrp)
+	-- Dirección: hacia donde camina, o forward si está quieto
+	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
+		self._evadeDirection = humanoid.MoveDirection.Unit
+	else
+		local look = hrp.CFrame.LookVector
+		self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
+	end
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	RollOutOfCover = function(self, _data)
-		local character = self._player.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not hrp then
-			return
-		end
+	local character = self._player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
 
-		local coverNormal = self._coverHandler:GetNormal()
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	local coverNormal = self._coverHandler:GetNormal()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		-- Dirección: alejarse de la pared (cover normal) o backward
-		if coverNormal then
-			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
-		else
-			local look = hrp.CFrame.LookVector
-			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
-		end
+	-- Dirección: alejarse de la pared (cover normal) o backward
+	if coverNormal then
+		self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+	else
+		local look = hrp.CFrame.LookVector
+		self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+	end
 
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		self:_applyImpulseToHRP(hrp)
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	Mantle = function(self, _data)
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		self:_startTimer(Constants.MANTLE_DURATION, function()
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
-	end,
-
-	Vault = function(self, _data)
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
-
-		-- Timer: animación de vault (más corto que mantle)
-		self:_startTimer(Constants.VAULT_DURATION, function()
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.MANTLE_DURATION, function()
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 }
 

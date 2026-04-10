@@ -26,6 +26,7 @@ local CoverMain = require(script.Parent.Cover)
 local EvadeHandler = require(script.Parent.EvadeHandler)
 local RotationHandler = require(script.Parent.RotationHandler)
 local SpeedMap = require(script.Parent.SpeedMap)
+local VaultHandler = require(script.Parent.VaultHandler)
 
 local MovementController = {}
 MovementController.__index = MovementController
@@ -49,6 +50,7 @@ function MovementController.new(
 	-- Sub-handlers
 	self._coverHandler = CoverMain.new(stateMachine, environmentSensor, cameraController)
 	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
+	self._vaultHandler = VaultHandler.new(stateMachine, self._coverHandler, environmentSensor)
 	self._rotationHandler = RotationHandler.new(inputDetector)
 
 	-- Conexiones gestionadas (cleanup en Destroy)
@@ -109,14 +111,16 @@ function MovementController:ExecuteAction(action: string, targetState: string?, 
 		end
 	end
 
-	-- Intentar delegar a sub-handlers (cover → evade → fallback)
+	-- Intentar delegar a sub-handlers (cover → vault → evade → fallback)
 	if not self._coverHandler:HandleAction(action, data) then
-		if not self._evadeHandler:HandleAction(action, data) then
-			-- Acciones que no requieren handler especializado
-			-- (StartWalking, StopWalking, StartRoadieRun, StopRoadieRun,
-			--  StartAim, StopAim, Shoot, StopShoot, Reload, ActiveReload,
-			--  Melee, Chainsaw, Interact, SwapWeapon, Crawl)
-			-- Velocidad se aplica automáticamente abajo por estado.
+		if not self._vaultHandler:HandleAction(action, data) then
+			if not self._evadeHandler:HandleAction(action, data) then
+				-- Acciones que no requieren handler especializado
+				-- (StartWalking, StopWalking, StartRoadieRun, StopRoadieRun,
+				--  StartAim, StopAim, Shoot, StopShoot, Reload, ActiveReload,
+				--  Melee, Chainsaw, Interact, SwapWeapon, Crawl)
+				-- Velocidad se aplica automáticamente abajo por estado.
+			end
 		end
 	end
 
@@ -136,6 +140,7 @@ function MovementController:Update(dt: number)
 
 	self._coverHandler:Update(dt, self._envSensor:GetContext(), wantsCoverRedirect)
 	self._evadeHandler:Update(dt)
+	self._vaultHandler:Update(dt)
 
 	-- Re-leer estado: los sub-handlers pueden haber provocado una transición
 	local stateAfter = self._stateMachine:GetCurrentState()

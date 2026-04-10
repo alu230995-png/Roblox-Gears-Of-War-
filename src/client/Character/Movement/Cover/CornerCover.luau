@@ -10,11 +10,12 @@
 	Responsabilidades:
 	  - Detectar si el jugador está en una esquina (izq/der)
 	  - Bloquear movimiento lateral en esa dirección
-	  - Servir de fuente de verdad para InCover y CoverRunning
-	
-	STATUS: Stub — usa datos de EnvironmentSensor directamente.
-	         Se expandirá con lógica de peek, corner swap, etc.
+	  - Servir de fuente de verdad para InCover, CoverRunning y CoverSwap
 ]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
 
 local CornerCover = {}
 CornerCover.__index = CornerCover
@@ -28,9 +29,15 @@ function CornerCover.new(coverState)
 
 	self._state = coverState -- referencia al estado compartido de CoverMain
 
-	-- Flags de esquina actualizados cada frame por Update
+	-- Flags de esquina actualizados cada frame por Update (con histéresis)
 	self._atCornerRight = false
 	self._atCornerLeft = false
+
+	-- Histéresis: una vez que se activa el bloqueo, se mantiene un mínimo
+	-- de frames antes de poder desactivarse. Esto previene el parpadeo
+	-- de raycasts en la frontera de la esquina.
+	self._lockRightFrames = 0
+	self._lockLeftFrames = 0
 
 	return self
 end
@@ -39,16 +46,38 @@ end
 -- PUBLIC API
 ------------------------------------------------------------------------
 
+-- Mínimo de frames consecutivos que el sensor debe reportar "no corner"
+-- antes de desactivar el bloqueo. Previene flicker de raycasts.
+local HYSTERESIS_FRAMES = Constants.CORNER_HYSTERESIS_FRAMES
+
 --- Actualiza el estado de esquinas a partir del EnvironmentContext.
+--- Usa histéresis: activación instantánea, desactivación retardada.
 --- Llamado cada frame por CoverMain mientras estés en cover.
 --- @param envContext table? — EnvironmentContext del EnvironmentSensor
 function CornerCover:Update(envContext: any?)
-	if envContext then
-		self._atCornerRight = envContext.IsAtCornerRight or false
-		self._atCornerLeft = envContext.IsAtCornerLeft or false
+	local rawRight = envContext and (envContext.IsAtCornerRight or false) or false
+	local rawLeft = envContext and (envContext.IsAtCornerLeft or false) or false
+
+	-- Derecha: activar inmediato, desactivar solo tras N frames sin detección
+	if rawRight then
+		self._atCornerRight = true
+		self._lockRightFrames = HYSTERESIS_FRAMES
 	else
-		self._atCornerRight = false
-		self._atCornerLeft = false
+		self._lockRightFrames = math.max(0, self._lockRightFrames - 1)
+		if self._lockRightFrames <= 0 then
+			self._atCornerRight = false
+		end
+	end
+
+	-- Izquierda: mismo patrón
+	if rawLeft then
+		self._atCornerLeft = true
+		self._lockLeftFrames = HYSTERESIS_FRAMES
+	else
+		self._lockLeftFrames = math.max(0, self._lockLeftFrames - 1)
+		if self._lockLeftFrames <= 0 then
+			self._atCornerLeft = false
+		end
 	end
 end
 
@@ -79,47 +108,8 @@ end
 function CornerCover:Reset()
 	self._atCornerRight = false
 	self._atCornerLeft = false
-end
-
---- Comprueba si hay una cobertura adyacente alineada para hacer Cover Swap.
---- Solo se ejecuta cuando el jugador está en esquina y presiona hacia el vacío.
----
---- @param lateralAmount number — dot product con wallRight (+derecha, -izquierda)
---- @param envSensor any — EnvironmentSensor con CheckSwapCover()
---- @param hrp BasePart — HumanoidRootPart
---- @return table? — { newPart, newNormal, hitPosition, moveDir } o nil
-function CornerCover:CheckSwapTrigger(lateralAmount: number, envSensor: any, hrp: BasePart): any?
-	-- Solo intentar swap si el movimiento está bloqueado por una esquina
-	if not self:IsBlocked(lateralAmount) then
-		return nil
-	end
-
-	local coverNormal = self._state.coverNormal
-	local wallRight = self._state.wallRight
-	local coverInstance = self._state.coverInstance
-
-	if not coverNormal or not wallRight or not coverInstance then
-		return nil
-	end
-
-	local moveDir = if lateralAmount > 0 then 1 else -1
-
-	local humanoid = hrp.Parent and hrp.Parent:FindFirstChild("Humanoid") :: Humanoid?
-	local inputDirection = if humanoid then humanoid.MoveDirection else Vector3.zero
-
-	local newPart, newNormal, hitPosition =
-		envSensor:CheckSwapCover(hrp, coverNormal, wallRight, moveDir, coverInstance, inputDirection)
-
-	if not newPart or not newNormal or not hitPosition then
-		return nil
-	end
-
-	return {
-		newPart = newPart,
-		newNormal = newNormal,
-		hitPosition = hitPosition,
-		moveDir = moveDir,
-	}
+	self._lockRightFrames = 0
+	self._lockLeftFrames = 0
 end
 
 return CornerCover

@@ -36,18 +36,21 @@ local FreeStateRules = {
 		end,
 	},
 
-	-- Prio 2: Mantle (requiere forward input — el IntentMapper ya no pre-filtra)
+	-- Prio 2: Vault (cover bajo + moving into cover + InteractButton/CoverButton)
 	{
-		id = "Mantle",
+		id = "Vault",
 		check = function(_resolver, ctx)
-			return ctx.Buffer:HasIntent("WantsMantle")
-				and ctx.Env.HasCoverNearby
-				and ctx.Env.CoverType == "Low"
-				and ctx.Env.MoveDirection.Y > Constants.FORWARD_INPUT_THRESHOLD
+	return ctx.Buffer:HasIntent("WantsVault")
+		and ctx.Env.HasCoverNearby
+		and ctx.Env.CoverType == "Low"
+		and Helpers.isMovingIntoCover(ctx)
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsMantle")
-			return "Mantle", "Mantling", nil
+	ctx.Buffer:Consume("WantsVault")
+	return "Vault", "Vaulting", {
+		coverNormal = ctx.Env.CoverNormal,
+		coverInstance = ctx.Env.CoverInstance,
+	}
 		end,
 	},
 
