@@ -30,6 +30,7 @@ local EVADE_ACTIONS: { [string]: boolean } = table.freeze({
 	Evade = true,
 	RollOutOfCover = true,
 	CornerRollOut = true,
+	ExitCorner = true,
 	Mantle = true,
 })
 
@@ -119,118 +120,160 @@ end
 
 EvadeHandler._handlers = {
 	Evade = function(self, _data)
-		self:_refreshCache()
-		local hrp = self._cachedHRP
-		local humanoid = self._cachedHumanoid
-		if not hrp or not humanoid then
-			return
-		end
+	self:_refreshCache()
+	local hrp = self._cachedHRP
+	local humanoid = self._cachedHumanoid
+	if not hrp or not humanoid then
+		return
+	end
 
-		self._stateMachine:Lock()
+	self._stateMachine:Lock()
 
-		-- Dirección: hacia donde camina, o forward si está quieto
-		if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
-			self._evadeDirection = humanoid.MoveDirection.Unit
-		else
-			local look = hrp.CFrame.LookVector
-			self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
-		end
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		self:_applyImpulseToHRP(hrp)
+	-- Dirección: hacia donde camina, o forward si está quieto
+	if humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD then
+		self._evadeDirection = humanoid.MoveDirection.Unit
+	else
+		local look = hrp.CFrame.LookVector
+		self._evadeDirection = Vector3.new(look.X, 0, look.Z).Unit
+	end
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	RollOutOfCover = function(self, _data)
-		local hrp = self:_getCachedHRP()
-		if not hrp then
-			return
-		end
+	local hrp = self:_getCachedHRP()
+	if not hrp then
+		return
+	end
 
-		local coverNormal = self._coverHandler:GetNormal()
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	local coverNormal = self._coverHandler:GetNormal()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		-- Dirección: usar vector del input (CornerEvade) si presente,
-		-- sino alejarse de la pared (cover normal) o backward como fallback
-		if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
-			local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
-			if flat.Magnitude > Constants.ZERO_MAGNITUDE then
-				self._evadeDirection = flat.Unit
-			else
-				self._evadeDirection = Vector3.new(0, 0, -1)
-			end
-		elseif coverNormal then
-			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+	-- Dirección: usar vector del input (CornerEvade) si presente,
+	-- sino alejarse de la pared (cover normal) o backward como fallback
+	if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
+		local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
+		if flat.Magnitude > Constants.ZERO_MAGNITUDE then
+			self._evadeDirection = flat.Unit
 		else
-			local look = hrp.CFrame.LookVector
-			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+			self._evadeDirection = Vector3.new(0, 0, -1)
 		end
+	elseif coverNormal then
+		self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+	else
+		local look = hrp.CFrame.LookVector
+		self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+	end
 
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		self:_applyImpulseToHRP(hrp)
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	Mantle = function(self, _data)
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		self:_startTimer(Constants.MANTLE_DURATION, function()
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.MANTLE_DURATION, function()
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 
 	--- CornerRollOut: salida direccional desde esquina exterior.
 	--- Misma física que RollOutOfCover (impulso + decay) pero nombre propio
 	--- para que el sistema de animaciones pueda diferenciarla.
 	CornerRollOut = function(self, _data)
-		local hrp = self:_getCachedHRP()
-		if not hrp then
-			return
-		end
+	local hrp = self:_getCachedHRP()
+	if not hrp then
+		return
+	end
 
-		self._coverHandler:ResetCover()
-		self._stateMachine:Lock()
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
 
-		if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
-			local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
-			if flat.Magnitude > Constants.ZERO_MAGNITUDE then
-				self._evadeDirection = flat.Unit
-			else
-				self._evadeDirection = Vector3.new(0, 0, -1)
-			end
+	if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
+		local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
+		if flat.Magnitude > Constants.ZERO_MAGNITUDE then
+			self._evadeDirection = flat.Unit
 		else
-			local coverNormal = self._coverHandler:GetNormal()
-			if coverNormal then
-				self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
-			else
-				local look = hrp.CFrame.LookVector
-				self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
-			end
+			self._evadeDirection = Vector3.new(0, 0, -1)
 		end
+	else
+		local coverNormal = self._coverHandler:GetNormal()
+		if coverNormal then
+			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+		else
+			local look = hrp.CFrame.LookVector
+			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+		end
+	end
 
-		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-		self:_applyImpulseToHRP(hrp)
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
 
-		self:_startTimer(Constants.EVADE_DURATION, function()
-			self._evadeSpeed = 0
-			self._evadeDirection = nil
-			self._stateMachine:Unlock()
-			self._stateMachine:TransitionTo("Idle")
-		end)
+	self:_startTimer(Constants.EVADE_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
+	end,
+
+	--- ExitCorner: salida diagonal desde esquina exterior.
+	--- Mismo impulso que CornerRollOut pero duración más corta (EXIT_CORNER_DURATION).
+	--- Sin animación de marometa — AnimationController diferencia por nombre de acción.
+	--- Al terminar, transiciona a Idle; ActionResolver detecta inputs retenidos (Walking/RoadieRun)
+	--- en el frame siguiente — el buffering es natural via continuous intents.
+	ExitCorner = function(self, _data)
+	local hrp = self:_getCachedHRP()
+	if not hrp then
+		return
+	end
+
+	self._coverHandler:ResetCover()
+	self._stateMachine:Lock()
+
+	if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
+		local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
+		if flat.Magnitude > Constants.ZERO_MAGNITUDE then
+			self._evadeDirection = flat.Unit
+		else
+			self._evadeDirection = Vector3.new(0, 0, -1)
+		end
+	else
+		local coverNormal = self._coverHandler:GetNormal()
+		if coverNormal then
+			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+		else
+			local look = hrp.CFrame.LookVector
+			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+		end
+	end
+
+	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+	self:_applyImpulseToHRP(hrp)
+
+	self:_startTimer(Constants.EXIT_CORNER_DURATION, function()
+		self._evadeSpeed = 0
+		self._evadeDirection = nil
+		self._stateMachine:Unlock()
+		self._stateMachine:TransitionTo("Idle")
+	end)
 	end,
 }
 

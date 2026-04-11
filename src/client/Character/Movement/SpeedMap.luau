@@ -26,6 +26,7 @@ local MAP = table.freeze({
 	CoverRunning = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en CoverRunning
 	CoverCorners = Constants.WALK_SPEED * 0.3,
 	Evading = 0, -- Controlado por impulso decreciente
+	ExitCorner = 0, -- Controlado por impulso decreciente (duración más corta que Evading)
 	CoverIdle = 0, -- WalkSpeed=0: wall-glue + velocidad=0 (reposo total)
 	CoverAim = 0,
 	CoverBlindFire = 0,

@@ -37,17 +37,23 @@ local FreeStateRules = {
 	{
 		id = "Vault",
 		check = function(_resolver, ctx)
-	return ctx.Buffer:HasIntent("WantsVault")
-		and ctx.Env.HasCoverNearby
-		and ctx.Env.CoverType == "Low"
-		and Helpers.isMovingIntoCover(ctx)
+			if not (ctx.Buffer:HasIntent("WantsVault")
+				and ctx.Env.HasCoverNearby
+				and ctx.Env.CoverType == "Low"
+				and Helpers.isMovingIntoCover(ctx)) then
+				return false
+			end
+			return Helpers.preCheckVault(ctx, ctx.Env.CoverNormal, ctx.Env.CoverInstance)
 		end,
 		execute = function(_resolver, ctx)
-	ctx.Buffer:Consume("WantsVault")
-	return "Vault", "Vaulting", {
-		coverNormal = ctx.Env.CoverNormal,
-		coverInstance = ctx.Env.CoverInstance,
-	}
+			ctx.Buffer:Consume("WantsVault")
+			local vd = ctx._vaultData
+			return "Vault", "Vaulting", {
+				coverNormal = ctx.Env.CoverNormal,
+				coverInstance = ctx.Env.CoverInstance,
+				landingPos = vd.landingPos,
+				landingType = vd.landingType,
+			}
 		end,
 	},
 

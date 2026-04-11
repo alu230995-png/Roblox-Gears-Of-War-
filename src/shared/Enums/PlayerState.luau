@@ -12,7 +12,7 @@
 	  │   ├── CoverGroup (activamente en cover — tomando decisiones)
 	  │   │   └── CoverIdle, CoverAim, CoverBlindFire, CoverWalking, CoverRunning, CoverCorners
 	  │   └── ActionGroup (animaciones comprometidas — bloqueadas)
-	  │       └── Evading, Mantling, CoverSlide, CoverEntering, CoverExiting, CoverSwap, Executing
+	  │       └── Evading, Mantling, CoverSlide, CoverEntering, CoverExiting, CoverSwap, ExitCorner, Executing
 	  ├── DBNOGroup (down but not out)
 	  │   └── DBNO
 	  └── InactiveGroup (sin character ni mecánicas de movimiento)
@@ -32,7 +32,7 @@ PlayerState.Transitions = {
 	-- Transiciones de grupo (heredadas por todos los hijos)
 	AliveGroup = { "DBNO" },
 	FreeMovementGroup = { "CoverSlide", "CoverEntering", "Evading", "Mantling", "Vaulting" },
-	CoverGroup = { "Evading", "Idle", "CoverExiting" },
+	CoverGroup = { "Evading", "Idle", "CoverExiting", "ExitCorner" },
 	ActionGroup = { "Idle" },
 
 	-- Transiciones específicas de estados hoja — Free Movement
@@ -66,6 +66,7 @@ PlayerState.Transitions = {
 	CoverEntering = { "CoverIdle", "Idle", "Vaulting" },
 	CoverExiting = { "Idle" },
 	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking", "Idle" },
+	ExitCorner = { "Idle", "Walking", "RoadieRun" },
 	Evading = { "Idle" },
 	Mantling = { "Idle" },
 	Vaulting = { "Idle", "Walking", "RoadieRun" },
@@ -111,6 +112,7 @@ PlayerState.Groups = {
 			"Evading",
 			"Mantling",
 			"Vaulting",
+			"ExitCorner",
 			"Executing",
 		},
 	},
@@ -124,7 +126,7 @@ PlayerState.Groups = {
 	},
 	ActionGroup = {
 		Parent = "AliveGroup",
-		States = { "Evading", "Mantling", "Vaulting", "CoverSlide", "CoverEntering", "CoverExiting", "CoverSwap", "Executing" },
+		States = { "Evading", "Mantling", "Vaulting", "CoverSlide", "CoverEntering", "CoverExiting", "CoverSwap", "ExitCorner", "Executing" },
 	},
 	DBNOGroup = {
 		Parent = nil,

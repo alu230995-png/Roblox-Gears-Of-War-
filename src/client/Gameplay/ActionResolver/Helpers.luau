@@ -202,8 +202,69 @@ function Helpers.checkCoverSwap(resolver, ctx): boolean
 end
 
 ------------------------------------------------------------------------
+-- CORNER EXIT HELPERS
+------------------------------------------------------------------------
+
+--- Retorna el valor absoluto del producto escalar entre la dirección de input
+--- del jugador (world-space) y el vector lateral de la cover (wallRight).
+--- 1.0 = movimiento puramente lateral; 0.0 = movimiento perpendicular a la pared.
+--- Retorna 0 si no hay input válido o cover data.
+--- @param ctx table — ResolverContext
+--- @return number — [0, 1]
+function Helpers.computeLateralScale(ctx): number
+	local coverHandler = ctx.CoverHandler
+	if not coverHandler then
+		return 0
+	end
+	local wallRight = coverHandler:GetWallRight()
+	if not wallRight then
+		return 0
+	end
+	local moveDirWorld = _computeMoveDirWorld(ctx.Env.MoveDirection)
+	if not moveDirWorld then
+		return 0
+	end
+	print(math.abs(moveDirWorld:Dot(wallRight)))
+	return math.abs(moveDirWorld:Dot(wallRight))
+end
+
+------------------------------------------------------------------------
 -- VAULT HELPERS
 ------------------------------------------------------------------------
+
+--- Pre-valida el safety check del vault desde la regla del ActionResolver.
+--- Si es seguro, almacena el resultado en ctx._vaultData para VaultHandler.
+--- Al hacerlo aquí (en el check de la regla) la transición de estado ocurre
+--- SOLO si el vault es viable — evita el glitch de Vaulting+revert.
+--- @param ctx table — ResolverContext
+--- @param coverNormal Vector3 — normal de la cover a saltar
+--- @param coverInstance BasePart — la pieza de cover
+--- @return boolean isSafe
+function Helpers.preCheckVault(ctx, coverNormal: Vector3, coverInstance: BasePart): boolean
+	if not coverNormal or not coverInstance then
+		return false
+	end
+	local forwardDir = -Vector3.new(coverNormal.X, 0, coverNormal.Z)
+	if forwardDir.Magnitude < Constants.ZERO_MAGNITUDE then
+		return false
+	end
+	forwardDir = forwardDir.Unit
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return false
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return false
+	end
+	local isSafe, landingPos, landingType =
+		ctx.EnvSensor:CheckVaultSafety(hrp.Position, forwardDir, character, coverInstance)
+	if not isSafe then
+		return false
+	end
+	ctx._vaultData = { landingPos = landingPos, landingType = landingType }
+	return true
+end
 
 --- Verifica que el humanoid se mueve hacia la cover (dot product contra -coverNormal).
 --- Usa un margen de error para permitir ángulos no perfectamente perpendiculares.

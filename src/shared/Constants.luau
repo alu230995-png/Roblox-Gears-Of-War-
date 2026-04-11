@@ -188,7 +188,7 @@ Constants.CAM_PITCH_MAX = 80
 Constants.COVER_SNAP_SPEED = 24 -- Velocidad máxima del snap en studs/segundo — qué tan rápido se mueve al inicio
 Constants.COVER_SNAP_MIN_SPEED_FRAC = 0.6 -- Fracción mínima de esa velocidad al llegar — nunca baja de 24 × 0.6 = 14.4 studs/s
 Constants.COVER_OFFSET = 2 -- Distancia en studs desde la pared hasta el centro del personaje — el gap entre espalda y cover
-Constants.COVER_COMPLETION_XZ = 1 -- Radio de tolerancia en studs para considerar el snap "completado"
+Constants.COVER_COMPLETION_XZ = 0.6 -- Radio de tolerancia en studs para considerar el snap "completado"
 Constants.COVER_CORNER_MARGIN = 1.4 -- Margen en studs desde el borde del Part — evita que el snap quede en la arista
 
 -- Walking / Running lateral
@@ -196,7 +196,7 @@ Constants.COVER_WALK_SPEED = 15
 Constants.COVER_RUN_SPEED = 20
 
 -- Wall-glue: corrección de posición contra la pared
-Constants.COVER_GLUE_MAX_DIST = 0.3
+Constants.COVER_GLUE_MAX_DIST = 0.6 -- Distancia máxima en studs para aplicar corrección de wall-glue (si el personaje se aleja demasiado, no lo empuja de vuelta)
 Constants.COVER_GLUE_CORRECTION_SPEED = 60 -- Velocidad proporcional de corrección basada en velocidad (converge en 2-3 frames)
 
 -- Entering: rotación en dos fases
@@ -291,6 +291,12 @@ Constants.EVADE_COOLDOWN = 1.2
 Constants.EVADE_IMPULSE_SPEED = 45
 Constants.EVADE_DECELERATION = 4.0
 Constants.EVADE_MIN_SPEED = 0.5
+
+-- ExitCorner: salida diagonal desde esquina (más corta que un roll completo, sin marometa)
+Constants.EXIT_CORNER_DURATION = 0.3
+-- Umbral de lateralidad para separar CornerRollOut (lateral) de ExitCorner (diagonal)
+-- |moveDir · wallRight| >= threshold → CornerRollOut; < threshold → ExitCorner
+Constants.EXIT_CORNER_LATERAL_THRESHOLD = 0.95
 
 -- Duración de acciones de traversal (segundos)
 Constants.MANTLE_DURATION = 0.6

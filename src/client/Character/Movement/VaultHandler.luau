@@ -153,9 +153,19 @@ function VaultHandler:_startVault(data: any?)
 	end
 	forwardDir = forwardDir.Unit
 
-	-- Safety check via EnvironmentSensor
-	local isSafe, landingPos, landingType =
-		self._envSensor:CheckVaultSafety(hrp.Position, forwardDir, self._cachedCharacter, coverInstance)
+	-- Safety check:
+	-- Normal vault path (from CoverRules / FreeStateRules): pre-validated por ActionResolver
+	--   → data contiene landingPos + landingType, no hay que volver a lanzar raycasts.
+	-- VaultFromEntering: deferred path, data NO tiene landing info → fallback con raycasts.
+	local isSafe: boolean
+	local landingPos: Vector3?
+	local landingType: string?
+	if data.landingPos then
+		isSafe, landingPos, landingType = true, data.landingPos, data.landingType
+	else
+		isSafe, landingPos, landingType =
+			self._envSensor:CheckVaultSafety(hrp.Position, forwardDir, self._cachedCharacter, coverInstance)
+	end
 	if not isSafe or not landingPos then
 		if Constants.DEBUG_MODE then
 			print("[VaultHandler] Safety check FAILED — aborting vault")

@@ -130,6 +130,7 @@ function ActionResolver:_buildContext(state: string)
 	ctx.Intents = self._intents
 	ctx.HasMovement = Helpers.hasMovementIntent(self._intents)
 	ctx._swapData = nil -- Clear stale data from previous frame
+	ctx._vaultData = nil -- Clear stale vault pre-validation from previous frame
 	return ctx
 end
 

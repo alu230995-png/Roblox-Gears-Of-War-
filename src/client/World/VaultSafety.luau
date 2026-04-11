@@ -74,15 +74,14 @@ function VaultSafety:CheckSafety(
 	self._rayParams.FilterDescendantsInstances = { character, coverInstance }
 	self._landingParams.FilterDescendantsInstances = { character }
 
-	-- 1) Overhead clearance en la POSICIÓN DEL JUGADOR: rayo hacia arriba
-	-- Si hay techo/obstáculo justo encima → denegar vault
+	-- 1) Overhead clearance en la POSICIÓN DEL JUGADOR: rayo diagonal (forward + up)
+	-- Cubre el arco real del vault — detecta techos inclinados, vigas y obstáculos
+	-- que estén tanto adelante como arriba del personaje antes de arrancar.
 	local playerOverheadOrigin = startPos + Vector3.new(0, Constants.VAULT_OVERHEAD_CLEARANCE_OFFSET, 0)
-	local playerOverheadResult = workspace:Raycast(
-		playerOverheadOrigin,
-		Vector3.new(0, Constants.VAULT_OVERHEAD_CLEARANCE_UP, 0),
-		self._rayParams
-	)
+	local diagonalDir = (forwardDir + Vector3.new(0, 1, 0)).Unit * Constants.VAULT_OVERHEAD_CLEARANCE_UP
+	local playerOverheadResult = workspace:Raycast(playerOverheadOrigin, diagonalDir, self._rayParams)
 	if playerOverheadResult then
+		print("No se puede hacer vault")
 		return false, nil, nil
 	end
 

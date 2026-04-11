@@ -11,6 +11,9 @@
 	y permite ver de un vistazo toda la lógica de cover.
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
 local CoverRules = {}
 
@@ -37,23 +40,46 @@ local RollOutOfCover = {
 	execute = function(resolver, ctx)
 		resolver._evadeStartTime = os.clock()
 		ctx.Buffer:Consume("WantsEvade")
-	return "RollOutOfCover", "Evading", nil
+		return "RollOutOfCover", "Evading", nil
 	end,
 }
 
---- CornerExit (fallback de CoverSwap): En esquina exterior + WantsCover
---- y NO se encontró swap válido (CoverSwap de prioridad superior ya falló) →
---- RollOutOfCover con dirección lateral (input del jugador o coverNormal).
-local CornerExit = {
-	id = "CornerExit",
+--- CornerRollOut (fallback de CoverSwap): En esquina exterior + WantsCover
+--- y NO se encontró swap válido + dirección MUY lateral (≈ paralela a la pared) →
+--- roll completo con marometa (misma animación/sonido que Evade).
+local CornerRollOut = {
+	id = "CornerRollOut",
 	check = function(resolver, ctx)
-		return ctx.Env.IsAtOuterCorner and ctx.Buffer:HasIntent("WantsCover") and Helpers.isEvadeCooldownMet(resolver)
+		return ctx.Env.IsAtOuterCorner
+			and ctx.Buffer:HasIntent("WantsCover")
+			and Helpers.isEvadeCooldownMet(resolver)
+			and Helpers.computeLateralScale(ctx) >= Constants.EXIT_CORNER_LATERAL_THRESHOLD
 	end,
 	execute = function(resolver, ctx)
 		resolver._evadeStartTime = os.clock()
 		ctx.Buffer:Consume("WantsCover")
 		local dir = ctx.Env.RawMovementDirection or ctx.Env.CornerExitDirection
 		return "CornerRollOut", "Evading", { direction = dir }
+	end,
+}
+
+--- ExitCorner (fallback de CoverSwap): En esquina exterior + WantsCover
+--- y NO se encontró swap válido + dirección DIAGONAL (no puramente lateral) →
+--- salida rápida sin marometa, misma física pero duración más corta.
+--- Puede acumular con Idle → Walking → RoadieRun via input buffering natural.
+local ExitCorner = {
+	id = "ExitCorner",
+	check = function(resolver, ctx)
+		return ctx.Env.IsAtOuterCorner
+			and ctx.Buffer:HasIntent("WantsCover")
+			and Helpers.isEvadeCooldownMet(resolver)
+			and Helpers.computeLateralScale(ctx) < Constants.EXIT_CORNER_LATERAL_THRESHOLD
+	end,
+	execute = function(resolver, ctx)
+		resolver._evadeStartTime = os.clock()
+		ctx.Buffer:Consume("WantsCover")
+		local dir = ctx.Env.RawMovementDirection or ctx.Env.CornerExitDirection
+		return "ExitCorner", "ExitCorner", { direction = dir }
 	end,
 }
 
@@ -169,31 +195,38 @@ CoverRules.Idle = {
 		id = "Vault",
 		check = function(_resolver, ctx)
 			local handler = ctx.CoverHandler
-			return handler
+			if not (handler
 				and ctx.Buffer:HasIntent("WantsCover")
 				and handler:GetCoverType() == "Low"
-				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())
+				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())) then
+				return false
+			end
+			return Helpers.preCheckVault(ctx, handler:GetNormal(), handler:GetCoverInstance())
 		end,
 		execute = function(_resolver, ctx)
 			local handler = ctx.CoverHandler
 			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			local vd = ctx._vaultData
 			return "Vault",
 				"Vaulting",
 				{
 					coverNormal = handler:GetNormal(),
 					coverInstance = handler:GetCoverInstance(),
+					landingPos = vd.landingPos,
+					landingType = vd.landingType,
 				}
 		end,
 	},
 
-	CornerExit, -- Prio 4: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
-	RollOutOfCover, -- Prio 5: Evade roll (WantsEvade, cualquier posición)
-	PopUpAim, -- Prio 6
-	BlindFire, -- Prio 7 (cubre BlindFire explícito + ShootAsBlindFire)
-	ReloadInCover, -- Prio 8
-	BlockCoverTap, -- Prio 9: Consumir WantsCover huérfano
+	CornerRollOut, -- Prio 4: Fallback de CoverSwap en esquina (lateral → roll completo)
+	ExitCorner, -- Prio 5: Fallback de CoverSwap en esquina (diagonal → salida rápida)
+	RollOutOfCover, -- Prio 6: Evade roll (WantsEvade, cualquier posición)
+	PopUpAim, -- Prio 7
+	BlindFire, -- Prio 8 (cubre BlindFire explícito + ShootAsBlindFire)
+	ReloadInCover, -- Prio 9
+	BlockCoverTap, -- Prio 10: Consumir WantsCover huérfano
 
-	-- Prio 10: Start CoverWalking (cualquier input de movimiento)
+	-- Prio 11: Start CoverWalking (cualquier input de movimiento)
 	{
 		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
@@ -231,28 +264,35 @@ CoverRules.Walking = {
 		id = "VaultWalking",
 		check = function(_resolver, ctx)
 			local handler = ctx.CoverHandler
-			return handler
+			if not (handler
 				and ctx.Buffer:HasIntent("WantsCover")
 				and handler:GetCoverType() == "Low"
-				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())
+				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())) then
+				return false
+			end
+			return Helpers.preCheckVault(ctx, handler:GetNormal(), handler:GetCoverInstance())
 		end,
 		execute = function(_resolver, ctx)
 			local handler = ctx.CoverHandler
 			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
+			local vd = ctx._vaultData
 			return "Vault",
 				"Vaulting",
 				{
 					coverNormal = handler:GetNormal(),
 					coverInstance = handler:GetCoverInstance(),
+					landingPos = vd.landingPos,
+					landingType = vd.landingType,
 				}
 		end,
 	},
 
-	CornerExit, -- Prio 4: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
-	BlockCoverTap, -- Prio 5
-	PopUpAim, -- Prio 6
-	BlindFire, -- Prio 7
-	ReloadInCover, -- Prio 8
+	CornerRollOut, -- Prio 4: Fallback de CoverSwap en esquina (lateral → roll completo)
+	ExitCorner, -- Prio 5: Fallback de CoverSwap en esquina (diagonal → salida rápida)
+	BlockCoverTap, -- Prio 6
+	PopUpAim, -- Prio 7
+	BlindFire, -- Prio 8
+	ReloadInCover, -- Prio 9
 
 	-- Prio 10: Start CoverRunning (sprint intent mientras camina en cover)
 	-- Evaluado ANTES de StopCoverWalking: si sprint + soltar movimiento
@@ -285,24 +325,25 @@ CoverRules.Walking = {
 
 CoverRules.Running = {
 	ExitCover, -- Prio 1
-	CornerExit, -- Prio 2: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
-	BlockCoverTap, -- Prio 3
-	PopUpAim, -- Prio 4
-	BlindFire, -- Prio 5
-	ReloadInCover, -- Prio 6
+	CornerRollOut, -- Prio 2: Fallback de CoverSwap en esquina (lateral → roll completo)
+	ExitCorner, -- Prio 3: Fallback de CoverSwap en esquina (diagonal → salida rápida)
+	BlockCoverTap, -- Prio 4
+	PopUpAim, -- Prio 5
+	BlindFire, -- Prio 6
+	ReloadInCover, -- Prio 7
 
-	-- Prio 7: Soltar sprint + aún moviéndose → CoverWalking
+	-- Prio 8: Soltar sprint + aún moviéndose → CoverWalking
 	{
 		id = "SlowDownToWalking",
 		check = function(_resolver, ctx)
-			return not ctx.Intents:HasIntent("WantsRoadieRun") and Helpers.hasMovementIntent(ctx.Intents)
+	return not ctx.Intents:HasIntent("WantsRoadieRun") and Helpers.hasMovementIntent(ctx.Intents)
 		end,
 		execute = function()
-			return "StopCoverRunning", "CoverWalking", nil
+	return "StopCoverRunning", "CoverWalking", nil
 		end,
 	},
 
-	-- Prio 8: Sin movimiento → CoverIdle
+	-- Prio 9: Sin movimiento → CoverIdle
 	{
 		id = "StopCoverRunning",
 		check = function(_resolver, ctx)

@@ -64,7 +64,7 @@ function InCover:NotifyEnterFromSnap()
 	self._needsSettle = true
 	self._settleTimer = 0
 	self._settleStartRot = nil -- se captura en el primer frame de _applySettleRotation
-	self._cornerCooldown = 0 -- BUG-003 fix: resetear cooldown residual de cover anterior
+	self._cornerCooldown = 0
 
 	-- Notificar a la cámara que el settle está activo (desactiva Dynamic Framing)
 	self._state.onCoverSettleChanged:Fire(true)
@@ -74,8 +74,6 @@ function InCover:NotifyEnterFromSnap()
 		return
 	end
 
-	-- SOLUCIÓN: Aplicar Wall-Glue una única vez para forzar la posición correcta
-	-- ANTES de que comience el settle y desactivar las colisiones.
 	self:_applyWallGlue(hrp)
 
 	-- Capturar rotación y posición iniciales (ahora la posición ya es la correcta).
@@ -125,10 +123,12 @@ function InCover:UpdateIdle(dt: number, _envContext: any?)
 	end
 
 	-- Pegamento: corregir posición si la física empujó al personaje
-	self:_applyWallGlue(hrp)
-	-- Smooth rotation: mantener alineación a la normal de cover
-	-- (necesario después de settle y tras transiciones de esquina interna)
-	self:_smoothRotation(hrp, dt)
+	if not self._needsSettle then
+		self:_applyWallGlue(hrp)
+		-- Smooth rotation: mantener alineación a la normal de cover
+		-- (necesario después de settle y tras transiciones de esquina interna)
+		self:_smoothRotation(hrp, dt)
+	end
 end
 
 ------------------------------------------------------------------------
@@ -314,6 +314,8 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
 	local blendedRot = startRot:Lerp(targetRot, eased)
 	hrp.CFrame = CFrame.new(pos) * blendedRot
+
+	
 end
 
 ------------------------------------------------------------------------
