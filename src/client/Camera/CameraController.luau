@@ -16,7 +16,7 @@
 	
 	Comunicación event-driven:
 	  - Escucha StateMachine.StateChanged → ajusta FOV, bob, shoulder, noise, sensitivity
-	  - Escucha ActionResolver.ActionResolved → impulse shake
+	  - Escucha MovementController.ActionExecuted → impulse shake
 	  - Heartbeat propio para orquestar el frame de cámara
 	
 	API pública adicional (llamada desde Cover system):
@@ -25,7 +25,6 @@
 	  - FireImpulseShake(rotX, rotY) — kick de cámara
 ]]
 
-local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -164,11 +163,12 @@ local STATE_FOLLOW_YAW = table.freeze({
 local CameraController = {}
 CameraController.__index = CameraController
 
-function CameraController.new(stateMachine, actionResolver)
+function CameraController.new(stateMachine, actionExecutedSignal, mouseInput)
 	local self = setmetatable({}, CameraController)
 
 	self._stateMachine = stateMachine
-	self._actionResolver = actionResolver
+	self._actionExecutedSignal = actionExecutedSignal
+	self._mouseInput = mouseInput
 
 	-- FOV
 	self._targetFOV = Constants.DEFAULT_FOV
@@ -238,12 +238,11 @@ function CameraController:Init()
 end
 
 function CameraController:Start()
-	-- Forzar Scriptable + lock de mouse
+	-- Forzar Scriptable
 	local camera = workspace.CurrentCamera
 	if camera then
 		camera.CameraType = Enum.CameraType.Scriptable
 	end
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 
 	-- Inicializar yaw desde la orientación actual de la cámara
 	if camera then
@@ -259,8 +258,8 @@ function CameraController:Start()
 		end
 	)
 
-	-- Escuchar acciones resueltas → impulse shake
-	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(
+	-- Escuchar acciones ejecutadas → impulse shake
+	self._connections.actionExecuted = self._actionExecutedSignal:Connect(
 		function(action: string, _targetState: string?, _data: any?)
 			self:_onActionResolved(action)
 		end
@@ -276,14 +275,6 @@ function CameraController:Start()
 		if cam then
 			cam.CameraType = Enum.CameraType.Scriptable
 		end
-	end)
-
-	------------------------------------------------------------------------
-	-- INTERNAL: Disable Humanoid AutoRotate on the client
-	------------------------------------------------------------------------
-	self:_disableAutoRotate()
-	self._connections.characterAdded = Players.LocalPlayer.CharacterAdded:Connect(function()
-		self:_disableAutoRotate()
 	end)
 
 	if Constants.DEBUG_MODE then
@@ -343,28 +334,6 @@ end
 --- Mientras es true, Dynamic Framing se desactiva para evitar spinning.
 function CameraController:SetCoverSettleActive(active: boolean)
 	self._coverSettleActive = active
-end
-
-------------------------------------------------------------------------
--- INTERNAL: Disable Humanoid AutoRotate on the client
-------------------------------------------------------------------------
-
-function CameraController:_disableAutoRotate()
-	local character = Players.LocalPlayer.Character
-	if not character then
-		return
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		humanoid.AutoRotate = false
-	else
-		task.spawn(function()
-			local h = character:WaitForChild("Humanoid", 5)
-			if h then
-				h.AutoRotate = false
-			end
-		end)
-	end
 end
 
 ------------------------------------------------------------------------
@@ -466,7 +435,6 @@ function CameraController:Update(dt: number)
 	if camera.CameraType ~= Enum.CameraType.Scriptable then
 		camera.CameraType = Enum.CameraType.Scriptable
 	end
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 
 	local character = Players.LocalPlayer.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -549,12 +517,12 @@ end
 -- INTERNAL: Mouse Rotation
 ------------------------------------------------------------------------
 
---- Lee GetMouseDelta() y acumula yaw/pitch con sensibilidad variable.
+--- Lee el delta via MouseInput (Capa 1) y acumula yaw/pitch con sensibilidad variable.
 --- Durante Fase 2 de RoadieRun (Steering):
 ---   - Yaw bloqueado (sens=0): la dirección del movimiento dicta la rotación horizontal.
 ---   - Pitch libre: el jugador puede mirar arriba/abajo con el mouse.
 function CameraController:_processMouseInput(_dt: number)
-	local delta = UserInputService:GetMouseDelta()
+	local delta = self._mouseInput:GetDelta()
 	if delta.Magnitude < 0.001 then
 		return
 	end

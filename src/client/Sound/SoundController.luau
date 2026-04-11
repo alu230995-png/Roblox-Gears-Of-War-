@@ -27,7 +27,6 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local _Constants = require(Shared:WaitForChild("Constants"))
 local SoundConfig = require(Shared:WaitForChild("SoundConfig"))
 local Signal = require(Shared:WaitForChild("Signal"))
 
@@ -54,6 +53,7 @@ SoundController.__index = SoundController
 ------------------------------------------------------------------------
 
 local REMOTE_SOUND_FROM_SERVER = "SoundFromServer"
+local REMOTE_SOUND_REPLICATE = "SoundReplicate"
 
 ------------------------------------------------------------------------
 -- SOUND DISPATCH TABLES — State Machine es el dueño
@@ -67,8 +67,17 @@ local STATE_ONE_SHOT = {
 	CoverSwap = "VFX_CoverSwap",
 	Evading = "VFX_Evade_Roll",
 	Mantling = "VFX_Mantle",
+	Vaulting = "VFX_Vault",
 	DBNO = "VFX_DBNO_Down",
 	Executing = "VFX_Execution",
+}
+
+--- TRANSITION_ONE_SHOT: suena 1 vez al entrar al estado SOLO si vienes de un estado específico.
+--- Key = newState, Value = { [oldState] = soundName }
+local TRANSITION_ONE_SHOT = {
+	CoverIdle = {
+		CoverEntering = "VFX_CoverImpact",
+	},
 }
 
 --- TIMED: se repiten a intervalos fijos mientras permaneces en el estado.
@@ -102,12 +111,18 @@ function SoundController.new(stateMachine: any, _actionResolver: any)
 
 	-- Remote para sonidos del servidor (alarmas, rondas)
 	self._remoteFromServer = nil
+	self._remoteReplicate = nil
 
 	-- Signal para que otros sistemas escuchen reproducciones
 	self.SoundPlayed = Signal.new()
 
 	-- Timers activos para el estado actual: { { sound, interval, elapsed } }
 	self._activeTimers = {}
+
+	-- Cached character references (updated on CharacterAdded)
+	self._character = nil :: Model?
+	self._hrp = nil :: BasePart?
+	self._humanoid = nil :: Humanoid?
 
 	return self
 end
@@ -123,6 +138,7 @@ end
 
 function SoundController:Start()
 	self._soundPlayer:Start()
+	self:_setupCharacterCache()
 	self:_connectStateSignal()
 	self:_connectHeartbeat()
 	self:_connectServerRemote()
@@ -169,6 +185,45 @@ function SoundController:GetSoundPlayer()
 end
 
 ------------------------------------------------------------------------
+-- CHARACTER CACHE — avoid FindFirstChild per frame
+------------------------------------------------------------------------
+
+function SoundController:_setupCharacterCache()
+	local localPlayer = Players.LocalPlayer
+	if not localPlayer then
+		return
+	end
+
+	local function cacheCharacter(character: Model?)
+		if character then
+			self._character = character
+			self._hrp = character:WaitForChild("HumanoidRootPart", 5) :: BasePart?
+			self._humanoid = character:WaitForChild("Humanoid", 5) :: Humanoid?
+		else
+			self._character = nil
+			self._hrp = nil
+			self._humanoid = nil
+		end
+	end
+
+	-- Cache current character
+	cacheCharacter(localPlayer.Character)
+
+	-- Update cache on respawn
+	local conn = localPlayer.CharacterAdded:Connect(function(character)
+		cacheCharacter(character)
+	end)
+	table.insert(self._connections, conn)
+
+	local removeConn = localPlayer.CharacterRemoving:Connect(function()
+		self._character = nil
+		self._hrp = nil
+		self._humanoid = nil
+	end)
+	table.insert(self._connections, removeConn)
+end
+
+------------------------------------------------------------------------
 -- STATE SIGNAL — Único driver de sonidos de jugador
 ------------------------------------------------------------------------
 
@@ -183,7 +238,7 @@ function SoundController:_connectStateSignal()
 	table.insert(self._connections, conn)
 end
 
-function SoundController:_onStateChanged(newState: string, _oldState: string)
+function SoundController:_onStateChanged(newState: string, oldState: string)
 	-- 1. Detener timers del estado anterior
 	table.clear(self._activeTimers)
 
@@ -193,7 +248,16 @@ function SoundController:_onStateChanged(newState: string, _oldState: string)
 		self:_playOnLocalCharacter(oneShot)
 	end
 
-	-- 3. Iniciar timers del nuevo estado
+	-- 3. Transition-specific one-shot (e.g. wall impact on CoverEntering → CoverIdle)
+	local transitionMap = TRANSITION_ONE_SHOT[newState]
+	if transitionMap then
+		local transSound = transitionMap[oldState]
+		if transSound then
+			self:_playOnLocalCharacter(transSound)
+		end
+	end
+
+	-- 4. Iniciar timers del nuevo estado
 	local timedConfig = STATE_TIMED[newState]
 	if timedConfig then
 		for _, entry in timedConfig do
@@ -222,22 +286,14 @@ function SoundController:_updateTimers(dt: number)
 		return
 	end
 
-	-- Guard: solo si el personaje se está moviendo de verdad
-	-- Usa AssemblyLinearVelocity horizontal en vez de MoveDirection.
-	-- Esto detecta movimiento real incluso en RoadieRun (WalkSpeed=0,
-	-- velocidad aplicada por AssemblyLinearVelocity directa).
-	local character = Players.LocalPlayer and Players.LocalPlayer.Character
-	if not character then
-		return
-	end
-
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local hrp = self._hrp
 	if not hrp then
 		return
 	end
 
+	-- Avoid Vector3 allocation: compute horizontal speed with math.sqrt
 	local vel = hrp.AssemblyLinearVelocity
-	local horizontalSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local horizontalSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
 
 	if horizontalSpeed < VELOCITY_MOVE_THRESHOLD then
 		return
@@ -267,18 +323,25 @@ function SoundController:_connectServerRemote()
 	end
 
 	self._remoteFromServer = remoteFolder:WaitForChild(REMOTE_SOUND_FROM_SERVER, 5)
-	if not self._remoteFromServer then
-		return
-	end
+	self._remoteReplicate = remoteFolder:WaitForChild(REMOTE_SOUND_REPLICATE, 5)
 
-	local conn = self._remoteFromServer.OnClientEvent:Connect(function(soundName: string, position: Vector3?)
-		if not SoundConfig[soundName] then
+	local function connectRemote(remote: RemoteEvent?)
+		if not remote then
 			return
 		end
-		self._soundPlayer:Play(soundName, position)
-		self.SoundPlayed:Fire(soundName)
-	end)
-	table.insert(self._connections, conn)
+
+		local conn = remote.OnClientEvent:Connect(function(soundName: string, position: Vector3?)
+			if not SoundConfig[soundName] then
+				return
+			end
+			self._soundPlayer:Play(soundName, position)
+			self.SoundPlayed:Fire(soundName)
+		end)
+		table.insert(self._connections, conn)
+	end
+
+	connectRemote(self._remoteFromServer)
+	connectRemote(self._remoteReplicate)
 end
 
 ------------------------------------------------------------------------
@@ -286,18 +349,11 @@ end
 ------------------------------------------------------------------------
 
 --- Retorna el material del suelo usando Humanoid.FloorMaterial.
---- Roblox lo actualiza nativamente cada frame — cero raycast, sin colisiones falsas.
 function SoundController:_getFloorMaterial(): Enum.Material?
-	local character = Players.LocalPlayer and Players.LocalPlayer.Character
-	if not character then
-		return nil
-	end
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	local humanoid = self._humanoid
 	if not humanoid then
 		return nil
 	end
-	-- FloorMaterial es Air cuando el personaje está en el aire;
-	-- en ese caso no hay suelo → devolver nil para usar el fallback.
 	local mat = humanoid.FloorMaterial
 	if mat == Enum.Material.Air then
 		return nil
@@ -329,7 +385,7 @@ end
 
 --- Reproduce un sonido 3D atado al personaje local.
 function SoundController:_playOnLocalCharacter(soundName: string)
-	local character = Players.LocalPlayer and Players.LocalPlayer.Character
+	local character = self._character
 	if not character then
 		return
 	end

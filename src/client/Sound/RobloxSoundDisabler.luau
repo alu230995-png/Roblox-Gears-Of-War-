@@ -40,6 +40,12 @@ local ROBLOX_SOUND_NAMES = {
 	"Swimming",
 }
 
+-- O(1) set for ChildAdded checks
+local ROBLOX_SOUND_SET = {}
+for _, name in ROBLOX_SOUND_NAMES do
+	ROBLOX_SOUND_SET[name] = true
+end
+
 ------------------------------------------------------------------------
 -- PUBLIC API
 ------------------------------------------------------------------------
@@ -127,21 +133,10 @@ function RobloxSoundDisabler._cleanCharacterSounds(character: Model)
 	-- Observar adiciones futuras de sonidos al rootPart (Roblox a veces los re-inserta)
 	if rootPart then
 		rootPart.ChildAdded:Connect(function(child)
-			if child:IsA("Sound") then
-				-- Verificar si es un sonido de Roblox (no nuestro)
-				local isRobloxSound = false
-				for _, name in ROBLOX_SOUND_NAMES do
-					if child.Name == name then
-						isRobloxSound = true
-						break
-					end
-				end
-
-				if isRobloxSound then
-					child.Volume = 0
-					child.PlayOnRemove = false
-					child:Destroy()
-				end
+			if child:IsA("Sound") and ROBLOX_SOUND_SET[child.Name] then
+				child.Volume = 0
+				child.PlayOnRemove = false
+				child:Destroy()
 			end
 		end)
 	end

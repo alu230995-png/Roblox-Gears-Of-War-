@@ -43,6 +43,7 @@ local INTENT_TTL = {
 	WantsInteract = Constants.BUFFER_TTL_INTERACT,
 	WantsSwapWeapon = Constants.BUFFER_TTL_DEFAULT,
 	WantsMantle = Constants.BUFFER_TTL_MANTLE,
+	WantsVault = Constants.BUFFER_TTL_VAULT,
 	WantsExitCover = Constants.BUFFER_TTL_DEFAULT,
 }
 

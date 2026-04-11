@@ -35,6 +35,7 @@ local ServiceLocator = require(script.Parent.Core.ServiceLocator)
 local InputDetector = require(script.Parent.Input.InputDetector)
 local IntentMapper = require(script.Parent.Input.IntentMapper)
 local InputBuffer = require(script.Parent.Input.InputBuffer)
+local MouseInput = require(script.Parent.Input.MouseInput)
 
 -- World
 local EnvironmentSensor = require(script.Parent.World.EnvironmentSensor)
@@ -72,20 +73,35 @@ end
 stateMachine:BuildGroupHierarchy()
 
 local inputDetector = InputDetector.new()
+local mouseInput = MouseInput.new()
 local envSensor = EnvironmentSensor.new()
 local intentMapper = IntentMapper.new(inputDetector)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
-local animationController = AnimationController.new(stateMachine, actionResolver)
-local cameraController = CameraController.new(stateMachine, actionResolver)
 local movementController =
-	MovementController.new(stateMachine, actionResolver, envSensor, inputBuffer, cameraController, inputDetector)
-actionResolver:SetCoverHandler(movementController:GetCoverHandler())
+	MovementController.new(stateMachine, actionResolver, envSensor, inputDetector)
+local animationController = AnimationController.new(stateMachine, movementController.ActionExecuted)
+local cameraController = CameraController.new(stateMachine, movementController.ActionExecuted, mouseInput)
+
+-- Conectar señales del Cover system a CameraController (Capa 4 → Capa 5 via signals)
+local coverHandler = movementController:GetCoverHandler()
+coverHandler.CoverSettleChanged:Connect(function(active)
+	cameraController:SetCoverSettleActive(active)
+end)
+coverHandler.ShoulderSideChanged:Connect(function(side)
+	cameraController:SetShoulderSide(side)
+end)
+coverHandler.InnerCornerTransition:Connect(function(newNormal)
+	cameraController:NotifyInnerCornerTransition(newNormal)
+end)
+
+-- Nota: SetCoverHandler se llama dentro de MovementController:Start() — no duplicar aquí.
 local soundController = SoundController.new(stateMachine)
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
 locator:Register("InputDetector", inputDetector)
+locator:Register("MouseInput", mouseInput)
 locator:Register("EnvironmentSensor", envSensor)
 locator:Register("IntentMapper", intentMapper)
 locator:Register("InputBuffer", inputBuffer)
@@ -102,8 +118,8 @@ locator:InitAll()
 -- Después de Start:
 --   InputDetector escucha UIS events (su propio Heartbeat interno)
 --   MovementController escucha ActionResolver.ActionResolved via Signal
---   AnimationController escucha StateChanged + ActionResolved
---   CameraController escucha StateChanged + ActionResolved + Heartbeat propio
+--   AnimationController escucha StateChanged + ActionExecuted
+--   CameraController escucha StateChanged + ActionExecuted
 locator:StartAll()
 
 ------------------------------------------------------------------------
@@ -137,7 +153,10 @@ RunService.Heartbeat:Connect(function(dt: number)
 	-- Paso 5: Update continuo (timers, cover snap, rotación, evade decay)
 	movementController:Update(dt)
 
-	-- Paso 5b: Cámara DESPUÉS de movement — garantiza que lea el HRP post-corrección
+	-- Paso 5b: MouseInput lee delta ANTES de la cámara
+	mouseInput:Update()
+
+	-- Paso 5c: Cámara DESPUÉS de movement — garantiza que lea el HRP post-corrección
 	-- (wall-glue, smooth rotation) sin jitter de 1-frame lag.
 	cameraController:Update(dt)
 

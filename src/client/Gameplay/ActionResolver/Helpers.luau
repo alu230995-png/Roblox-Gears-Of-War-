@@ -49,6 +49,35 @@ end
 --       - Si no hay cover válida → se ignora (protección contra salto suicida).
 ------------------------------------------------------------------------
 
+--- Convierte un Vector2 de input (WASD crudo) a dirección world-space via cámara.
+--- @return Vector3? — dirección horizontal unitaria, nil si inválida
+local function _computeMoveDirWorld(moveDir2D: Vector2): Vector3?
+	if not moveDir2D or moveDir2D.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+		return nil
+	end
+
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+
+	local camCF = camera.CFrame
+	local camRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+	local camForward = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+	if camRight.Magnitude > Constants.ZERO_MAGNITUDE then
+		camRight = camRight.Unit
+	end
+	if camForward.Magnitude > Constants.ZERO_MAGNITUDE then
+		camForward = camForward.Unit
+	end
+
+	local worldDir = camRight * moveDir2D.X + camForward * moveDir2D.Y
+	if worldDir.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+		return nil
+	end
+	return worldDir.Unit
+end
+
 --- Fase A: Escaneo pasivo — se ejecuta cada frame cuando el jugador está
 --- en esquina y tiene input lateral hacia el vacío.
 --- @return table? swapData — { newPart, newNormal, hitPosition, moveDir } o nil
@@ -64,34 +93,10 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 		return nil
 	end
 
-	-- Usar dirección cruda de InputDetector (ctx.Env.MoveDirection, Vector2 WASD)
-	-- + cámara para convertir a mundo. Esto es independiente de humanoid.MoveDirection
-	-- que puede ser cero cuando WalkSpeed=0 (estados de cover).
-	local camera = workspace.CurrentCamera
-	if not camera then
+	local moveDirWorld = _computeMoveDirWorld(ctx.Env.MoveDirection)
+	if not moveDirWorld then
 		return nil
 	end
-
-	local moveDir2D = ctx.Env.MoveDirection -- Vector2 de InputDetector (WASD crudo)
-	if not moveDir2D or moveDir2D.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
-		return nil
-	end
-
-	local camCF = camera.CFrame
-	local camRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
-	local camForward = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
-	if camRight.Magnitude > Constants.ZERO_MAGNITUDE then
-		camRight = camRight.Unit
-	end
-	if camForward.Magnitude > Constants.ZERO_MAGNITUDE then
-		camForward = camForward.Unit
-	end
-
-	local moveDirWorld = camRight * moveDir2D.X + camForward * moveDir2D.Y
-	if moveDirWorld.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD_LOW then
-		return nil
-	end
-	moveDirWorld = moveDirWorld.Unit
 
 	local movementScale = moveDirWorld:Dot(wallRight)
 	if math.abs(movementScale) < Constants.LATERAL_TRIGGER_THRESHOLD then
@@ -202,8 +207,12 @@ end
 
 --- Verifica que el humanoid se mueve hacia la cover (dot product contra -coverNormal).
 --- Usa un margen de error para permitir ángulos no perfectamente perpendiculares.
-function Helpers.isMovingIntoCover(ctx): boolean
-	local coverNormal = ctx.Env.CoverNormal
+--- @param ctx table — ResolverContext
+--- @param handlerNormal Vector3? — normal de la cover desde CoverHandler (fiable en cover states)
+function Helpers.isMovingIntoCover(ctx, handlerNormal: Vector3?): boolean
+	-- Priorizar la normal del CoverHandler (la cover real en la que estamos)
+	-- sobre ctx.Env.CoverNormal (que viene de _searchCover y puede ser otra pared).
+	local coverNormal = handlerNormal or ctx.Env.CoverNormal
 	if not coverNormal then
 		return false
 	end

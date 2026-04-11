@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = true
+Constants.DEBUG_MODE = false
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -280,6 +280,7 @@ Constants.COVER_SWAP_COPLANARITY_THRESHOLD = 1.5
 
 Constants.COVER_ENTRY_CANCEL_DOT = 0.85
 Constants.COVER_EXIT_DURATION = 0.15
+Constants.COVER_SLIDE_DURATION = 0.3
 
 ------------------------------------------------------------------------
 -- 10. EVADE / ROLL
@@ -293,16 +294,20 @@ Constants.EVADE_MIN_SPEED = 0.5
 
 -- Duración de acciones de traversal (segundos)
 Constants.MANTLE_DURATION = 0.6
-Constants.VAULT_DURATION = 0.5
+Constants.VAULT_DURATION = 1
 
 -- Vault over low cover — Bezier 3D
-Constants.VAULT_FORWARD_DIST = 4
-Constants.VAULT_ARC_HEIGHT = 2
+Constants.VAULT_FORWARD_DIST = 6
+Constants.VAULT_ARC_HEIGHT = 4
 Constants.VAULT_FORWARD_DOT_THRESHOLD = 0.9 -- mínimo dot entre input forward y dirección al cover para permitir vault
 Constants.VAULT_OVERHEAD_RAY_HEIGHT = 2.5
 Constants.VAULT_LANDING_RAY_DOWN = 10
 Constants.VAULT_LANDING_RAY_UP = 3
-Constants.VAULT_COLLISION_RESTORE_PROGRESS = 0.85
+Constants.VAULT_COLLISION_RESTORE_PROGRESS = 0.85 -- vault "through": restaurar colisión al 85%
+Constants.VAULT_COLLISION_RESTORE_TOP = 0.5 -- vault "top": restaurar en el pico del arco (50%)
+Constants.VAULT_OVERHEAD_CLEARANCE_OFFSET = 1.5 -- Y encima del HRP para inicio del ray de techo
+Constants.VAULT_OVERHEAD_CLEARANCE_UP = 5.0 -- altura del ray de techo hacia arriba
+Constants.VAULT_COVER_TOP_THRESHOLD = 0.75 -- tolerancia para clasificar "top" vs "through"
 
 ------------------------------------------------------------------------
 -- 11. ROADIE RUN
@@ -332,6 +337,7 @@ Constants.BUFFER_TTL_CHAINSAW = 0.05
 Constants.BUFFER_TTL_BLIND_FIRE = 0.0
 Constants.BUFFER_TTL_INTERACT = 0.1
 Constants.BUFFER_TTL_MANTLE = 0.12
+Constants.BUFFER_TTL_VAULT = 0.3
 Constants.BUFFER_TTL_DEFAULT = 0.1
 
 ------------------------------------------------------------------------
@@ -344,6 +350,7 @@ Constants.DISCRETE_INTENTS = table.freeze({
 	"WantsCover",
 	"WantsEvade",
 	"WantsMantle",
+	"WantsVault", -- FIX: estaba en BUFFERABLE_INTENTS pero no aquí → permanecía en _activeIntents indefinidamente → vault loop infinito
 	"WantsReload",
 	"WantsMelee",
 	"WantsChainsaw",
@@ -363,6 +370,7 @@ Constants.BUFFERABLE_INTENTS = table.freeze({
 	"WantsCover",
 	"WantsEvade",
 	"WantsMantle",
+	"WantsVault",
 	"WantsReload",
 	"WantsMelee",
 	"WantsChainsaw",

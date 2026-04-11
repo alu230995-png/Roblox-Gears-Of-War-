@@ -76,8 +76,10 @@ SoundConfig.FootstepMaterialMap = {
 	[Enum.Material.SmoothPlastic] = "VFX_Footstep_Default",
 	[Enum.Material.Neon] = "VFX_Footstep_Default",
 	[Enum.Material.Glass] = "VFX_Footstep_Metal",
-	[Enum.Material.Wood] = "VFX_Footstep_Default",
-	[Enum.Material.WoodPlanks] = "VFX_Footstep_Default",
+
+	-- Madera
+	[Enum.Material.Wood] = "VFX_Footstep_Wood",
+	[Enum.Material.WoodPlanks] = "VFX_Footstep_Wood",
 
 	-- Terreno / Exterior
 	[Enum.Material.Grass] = "VFX_Footstep_Default",
@@ -87,8 +89,6 @@ SoundConfig.FootstepMaterialMap = {
 	[Enum.Material.Snow] = "VFX_Footstep_Default",
 	[Enum.Material.Ice] = "VFX_Footstep_Default",
 	[Enum.Material.Ground] = "VFX_Footstep_Default",
-
-	[Enum.Material.Wood] = "VFX_Footstep_Wood",
 }
 
 SoundConfig.VFX_Footstep_Concrete = {
@@ -161,17 +161,28 @@ SoundConfig.VFX_CoverSlide = {
 }
 
 SoundConfig.VFX_CoverEnter = {
-	Ids = { "rbxassetid://92257857206686"},
+	Ids = { "rbxassetid://85551641202362", "rbxassetid://80466288495322" },
 	Random = true,
 	Looped = false,
 	Scope = "Global",
 	Group = "VFX",
-	Volume = 0.6,
+	Volume = 0.3,
 	MaxDistance = 35,
 }
 
+SoundConfig.VFX_CoverImpact = {
+	Ids = { "rbxassetid://110891318354053", "rbxassetid://81870089611551", "rbxassetid://101811697795422" },
+	Random = true,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 35,
+	PitchVariation = 0.08,
+}
+
 SoundConfig.VFX_Evade_Roll = {
-	Ids = { "rbxassetid://0", "rbxassetid://0" },
+	Ids = { "rbxassetid://117181583797374" },
 	Random = true,
 	Looped = false,
 	Scope = "Global",
@@ -188,6 +199,17 @@ SoundConfig.VFX_Mantle = {
 	Group = "VFX",
 	Volume = 0.6,
 	MaxDistance = 30,
+}
+
+SoundConfig.VFX_Vault = {
+	Ids = { "rbxassetid://120950121400483" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.55,
+	MaxDistance = 35,
+	PitchVariation = 0.04,
 }
 
 SoundConfig.VFX_Weapon_Lancer_Fire = {
@@ -469,28 +491,8 @@ SoundConfig.Server_Announcement_Generic = {
 }
 
 ------------------------------------------------------------------------
--- VFX — Sonidos de estado que faltaban (placeholders)
+-- VFX — Sonidos de estado adicionales
 ------------------------------------------------------------------------
-
-SoundConfig.VFX_DBNO_Down = {
-	Ids = { "rbxassetid://0" },
-	Random = false,
-	Looped = false,
-	Scope = "Global",
-	Group = "VFX",
-	Volume = 0.7,
-	MaxDistance = 40,
-}
-
-SoundConfig.VFX_Execution = {
-	Ids = { "rbxassetid://0" },
-	Random = false,
-	Looped = false,
-	Scope = "Global",
-	Group = "VFX",
-	Volume = 0.8,
-	MaxDistance = 50,
-}
 
 SoundConfig.VFX_CoverExit = {
 	Ids = { "rbxassetid://0" },

@@ -23,12 +23,15 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 
+local REMOTE_SOUND_REPLICATE = "SoundReplicate"
+local SOUND_VAULT = "VFX_Vault"
+
 local VaultHandler = {}
 VaultHandler.__index = VaultHandler
 
-local VAULT_ACTIONS: { [string]: boolean } = {
+local VAULT_ACTIONS: { [string]: boolean } = table.freeze({
 	Vault = true,
-}
+})
 
 function VaultHandler.new(stateMachine, coverHandler, environmentSensor)
 	local self = setmetatable({}, VaultHandler)
@@ -48,6 +51,11 @@ function VaultHandler.new(stateMachine, coverHandler, environmentSensor)
 	self._coverInstance = nil :: BasePart?
 	self._noCollision = nil :: NoCollisionConstraint?
 	self._collisionRestored = false
+	self._landingType = nil :: string? -- "through" | "top"
+
+	-- Cache de character refs (evita FindFirstChild cada frame durante vault)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHRP = nil :: BasePart?
 
 	return self
 end
@@ -73,10 +81,18 @@ function VaultHandler:Update(dt: number)
 	self._elapsed += dt
 	local t = math.clamp(self._elapsed / self._duration, 0, 1)
 
-	-- Restore collision before vault ends
-	if not self._collisionRestored and t >= Constants.VAULT_COLLISION_RESTORE_PROGRESS then
-		self:_restoreCollision()
-		self._collisionRestored = true
+	-- Restore collision before vault ends.
+	-- "top" vaults: restaurar en el pico del arco (t=0.5) para que el personaje
+	-- aterrice encima de la cover sin atravesarla.
+	-- "through" vaults: restaurar tarde (t=0.85) para no colisionar al cruzar.
+	if not self._collisionRestored then
+		local restoreThreshold = if self._landingType == "top"
+			then Constants.VAULT_COLLISION_RESTORE_TOP
+			else Constants.VAULT_COLLISION_RESTORE_PROGRESS
+		if t >= restoreThreshold then
+			self:_restoreCollision()
+			self._collisionRestored = true
+		end
 	end
 
 	-- Validate cover instance still exists
@@ -86,8 +102,7 @@ function VaultHandler:Update(dt: number)
 	end
 
 	-- Bezier interpolation
-	local character = self._player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local hrp = self:_getHRP()
 	if not hrp then
 		self:_finishVault()
 		return
@@ -120,8 +135,7 @@ end
 ------------------------------------------------------------------------
 
 function VaultHandler:_startVault(data: any?)
-	local character = self._player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local hrp = self:_getHRP()
 	if not hrp or not data then
 		return
 	end
@@ -140,7 +154,8 @@ function VaultHandler:_startVault(data: any?)
 	forwardDir = forwardDir.Unit
 
 	-- Safety check via EnvironmentSensor
-	local isSafe, landingPos = self._envSensor:CheckVaultSafety(hrp.Position, forwardDir, character, coverInstance)
+	local isSafe, landingPos, landingType =
+		self._envSensor:CheckVaultSafety(hrp.Position, forwardDir, self._cachedCharacter, coverInstance)
 	if not isSafe or not landingPos then
 		if Constants.DEBUG_MODE then
 			print("[VaultHandler] Safety check FAILED — aborting vault")
@@ -152,7 +167,21 @@ function VaultHandler:_startVault(data: any?)
 
 	-- Compute Bezier control points
 	local startPos = hrp.Position
-	local endPos = Vector3.new(landingPos.X, landingPos.Y + 3, landingPos.Z) -- hip height offset
+
+	local coverTopY = coverInstance.Position.Y + (coverInstance.Size.Y * 0.5)
+	local hipHeight = Constants.COVER_DEFAULT_HIP_HEIGHT
+
+	-- P2.Y depende de si el vault es "through" (al otro lado) o "top" (encima de la cover)
+	local endY: number
+	if landingType == "top" then
+		-- Queda encima de la cover (cover ancha o sin suelo al otro lado)
+		endY = coverTopY + hipHeight
+	else
+		-- Atraviesa al otro lado: aterriza en el suelo real
+		endY = landingPos.Y + hipHeight
+	end
+	local endPos = Vector3.new(landingPos.X, endY, landingPos.Z)
+
 	local midPoint = (startPos + endPos) / 2
 	local controlPoint = midPoint + Vector3.new(0, Constants.VAULT_ARC_HEIGHT, 0)
 
@@ -162,6 +191,7 @@ function VaultHandler:_startVault(data: any?)
 	self._coverInstance = coverInstance
 	self._elapsed = 0
 	self._collisionRestored = false
+	self._landingType = landingType
 	self._active = true
 
 	-- Lock state machine
@@ -172,6 +202,14 @@ function VaultHandler:_startVault(data: any?)
 
 	-- NoCollisionConstraint: ignore cover part during vault
 	self:_disableCollision(hrp, coverInstance)
+
+	local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+	if remotesFolder then
+		local soundReplicate = remotesFolder:FindFirstChild(REMOTE_SOUND_REPLICATE)
+		if soundReplicate and soundReplicate:IsA("RemoteEvent") then
+			soundReplicate:FireServer(SOUND_VAULT, hrp.Position)
+		end
+	end
 
 	if Constants.DEBUG_MODE then
 		print(
@@ -196,6 +234,7 @@ function VaultHandler:_finishVault()
 	self._p1 = nil
 	self._p2 = nil
 	self._coverInstance = nil
+	self._landingType = nil
 
 	self._stateMachine:Unlock()
 	self._stateMachine:TransitionTo("Idle")
@@ -217,6 +256,21 @@ function VaultHandler:_restoreCollision()
 		self._noCollision:Destroy()
 		self._noCollision = nil
 	end
+end
+
+--- Obtiene el HumanoidRootPart del personaje local con cache (nil si no existe).
+function VaultHandler:_getHRP(): BasePart?
+	local character = self._player.Character
+	if not character then
+		self._cachedCharacter = nil
+		self._cachedHRP = nil
+		return nil
+	end
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	end
+	return self._cachedHRP
 end
 
 return VaultHandler

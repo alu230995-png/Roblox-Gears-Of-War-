@@ -25,7 +25,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local PlayerStateModule = require(Shared:WaitForChild("Enums"):WaitForChild("PlayerState"))
+local PlayerStateUtils = require(Shared:WaitForChild("Utils"):WaitForChild("PlayerStateUtils"))
 local Constants = require(Shared:WaitForChild("Constants"))
 local Signal = require(Shared:WaitForChild("Signal"))
 
@@ -95,7 +95,7 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	if self._stateMachine:IsInGroup("InactiveGroup") then
 		return "NoAction", nil, nil
 	end
-	if self._stateMachine:IsInGroup("ActionGroup") and state ~= "CoverSwap" then
+	if self._stateMachine:IsInGroup("ActionGroup") and state ~= "CoverSwap" and state ~= "CoverEntering" then
 		return "NoAction", nil, nil
 	end
 
@@ -122,7 +122,7 @@ end
 function ActionResolver:_buildContext(state: string)
 	local ctx = self._ctxCache
 	ctx.State = state
-	ctx.StateConfig = PlayerStateModule.GetState(state)
+	ctx.StateConfig = PlayerStateUtils.GetState(state)
 	ctx.Env = self._env:GetContext()
 	ctx.EnvSensor = self._env
 	ctx.CoverHandler = self._coverHandler
@@ -146,6 +146,11 @@ function ActionResolver:_selectRules(state: string)
 	-- CoverSwap es ActionGroup pero tiene su propia tabla de cancelación
 	if state == "CoverSwap" then
 		return CoverRules.Swap
+	end
+
+	-- CoverEntering: permite vault-from-entering y cover chaining
+	if state == "CoverEntering" then
+		return CoverRules.Entering
 	end
 
 	if self._stateMachine:IsInGroup("CoverGroup") then

@@ -67,10 +67,7 @@ function InCover:NotifyEnterFromSnap()
 	self._cornerCooldown = 0 -- BUG-003 fix: resetear cooldown residual de cover anterior
 
 	-- Notificar a la cámara que el settle está activo (desactiva Dynamic Framing)
-	local cam = self._state.cameraController
-	if cam and cam.SetCoverSettleActive then
-		cam:SetCoverSettleActive(true)
-	end
+	self._state.onCoverSettleChanged:Fire(true)
 
 	local hrp = self:_getHRP()
 	if not hrp then
@@ -81,14 +78,11 @@ function InCover:NotifyEnterFromSnap()
 	-- ANTES de que comience el settle y desactivar las colisiones.
 	self:_applyWallGlue(hrp)
 
-	-- Capturar rotación inicial (ahora la posición ya es la correcta)
+	-- Capturar rotación y posición iniciales (ahora la posición ya es la correcta).
+	-- _settleStartPos pin-ea la posición XZ completa durante el settle:
+	-- el personaje solo rota (eje Y), sin desplazamiento visible.
 	self._settleStartRot = hrp.CFrame.Rotation
-
-	-- (Opcional) Si usaste el código del mensaje anterior para anular el "Drift",
-	-- guarda el _settleStartDist aquí mismo:
-	if self._state.coverNormal and self._state.coverPosition then
-		self._settleStartDist = (hrp.Position - self._state.coverPosition):Dot(self._state.coverNormal)
-	end
+	self._settleStartPos = hrp.Position
 
 	-- 1. DESACTIVAR COLISIONES (Para evitar que se atore con la pared)
 	local coverPart = self._state.coverInstance
@@ -104,12 +98,6 @@ function InCover:NotifyEnterFromSnap()
 		noCol.Part0 = hrp
 		noCol.Part1 = coverPart
 		noCol.Parent = hrp
-	end
-
-	-- 2. DESACTIVAR AutoRotate del Humanoid
-	local humanoid = hrp.Parent:FindFirstChild("Humanoid")
-	if humanoid then
-		humanoid.AutoRotate = false
 	end
 end
 
@@ -130,16 +118,17 @@ function InCover:UpdateIdle(dt: number, _envContext: any?)
 	-- Restricción total: velocidad horizontal = 0
 	hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
 
-	if not self._needsSettle then
-		-- Pegamento: corregir posición si la física empujó al personaje
-		self:_applyWallGlue(hrp)
-		-- Smooth rotation: mantener alineación a la normal de cover
-		-- (necesario después de settle y tras transiciones de esquina interna)
-		self:_smoothRotation(hrp, dt)
+	if self._needsSettle then
+		-- Durante settle: solo rotar en el lugar (posición pin-eada)
+		self:_applySettleRotation(hrp, dt)
+		return
 	end
 
-	-- Rotación de asentamiento: solo si viene de entering/swap (breve, ~0.3s)
-	self:_applySettleRotation(hrp, dt)
+	-- Pegamento: corregir posición si la física empujó al personaje
+	self:_applyWallGlue(hrp)
+	-- Smooth rotation: mantener alineación a la normal de cover
+	-- (necesario después de settle y tras transiciones de esquina interna)
+	self:_smoothRotation(hrp, dt)
 end
 
 ------------------------------------------------------------------------
@@ -192,13 +181,10 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	local movementScale = moveDirWorld:Dot(wallRight)
 
 	-- 3b. SHOULDER SWAP: notificar a la cámara el lado del movimiento
-	local cam = self._state.cameraController
-	if cam then
-		if movementScale < -Constants.MOVE_DIRECTION_THRESHOLD then
-			cam:SetShoulderSide("Left")
-		elseif movementScale > Constants.MOVE_DIRECTION_THRESHOLD then
-			cam:SetShoulderSide("Right")
-		end
+	if movementScale < -Constants.MOVE_DIRECTION_THRESHOLD then
+		self._state.onShoulderSideChanged:Fire("Left")
+	elseif movementScale > Constants.MOVE_DIRECTION_THRESHOLD then
+		self._state.onShoulderSideChanged:Fire("Right")
 	end
 
 	-- 4. COOLDOWN de transición de esquina interna (anti ping-pong)
@@ -223,7 +209,12 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 		if sensor then
 			local newCoverNormal, newWallRight, newMovementScale, transitioned =
 				CoverMovementUtils.handleInnerCornerTransition(
-					self._state, hrp, coverNormal, wallRight, movementScale, moveDirWorld
+					self._state,
+					hrp,
+					coverNormal,
+					wallRight,
+					movementScale,
+					moveDirWorld
 				)
 
 			if transitioned then
@@ -258,14 +249,14 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 	end
 
 	-- 8. Settle rotation (si viene de entering/swap)
-	self:_applySettleRotation(hrp, dt)
+	if self._needsSettle then
+		self:_applySettleRotation(hrp, dt)
+	end
 end
 
 ------------------------------------------------------------------------
 -- INTERNAL: Settle Rotation — solo al inicio desde entering/swap
 ------------------------------------------------------------------------
-
-local SETTLE_DURATION = Constants.COVER_SETTLE_DURATION
 
 function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	if not self._needsSettle then
@@ -275,24 +266,18 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	self._settleTimer = self._settleTimer + dt
 
 	-- Si ya se cumplió el tiempo, REACTIVAMOS TODO y terminamos
-	if self._settleTimer >= SETTLE_DURATION then
-		-- Snap final exacto a la normal con drift corregido
-		-- IMPORTANTE: leer _settleStartDist ANTES de limpiarlo
+	if self._settleTimer >= Constants.COVER_SETTLE_DURATION then
+		-- Snap final exacto a la normal en la posición pin-eada
 		local coverNormal = self._state.coverNormal
+		local pinnedPos = self._settleStartPos or hrp.Position
+		local finalPos = Vector3.new(pinnedPos.X, hrp.Position.Y, pinnedPos.Z)
 		if coverNormal then
-			local pos = hrp.Position
-			local coverPos = self._state.coverPosition
-			if coverPos and self._settleStartDist then
-				local currentDist = (pos - coverPos):Dot(coverNormal)
-				local err = currentDist - self._settleStartDist
-				pos = pos - coverNormal * err
-			end
-			hrp.CFrame = CFrame.new(pos) * CFrame.lookAt(Vector3.zero, coverNormal).Rotation
+			hrp.CFrame = CFrame.new(finalPos) * CFrame.lookAt(Vector3.zero, coverNormal).Rotation
 		end
 
 		self._needsSettle = false
 		self._settleStartRot = nil
-		self._settleStartDist = nil
+		self._settleStartPos = nil
 
 		self:_cleanupSettle(hrp)
 		return
@@ -302,7 +287,7 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	if not coverNormal then
 		self._needsSettle = false
 		self._settleStartRot = nil
-		self._settleStartDist = nil
+		self._settleStartPos = nil
 		self:_cleanupSettle(hrp)
 		return
 	end
@@ -310,25 +295,21 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	local startRot = self._settleStartRot
 	if not startRot then
 		self._needsSettle = false
-		self._settleStartDist = nil
+		self._settleStartPos = nil
 		self:_cleanupSettle(hrp)
 		return
 	end
 
 	-- Progreso normalizado 0→1
-	local t = math.clamp(self._settleTimer / SETTLE_DURATION, 0, 1)
+	local t = math.clamp(self._settleTimer / Constants.COVER_SETTLE_DURATION, 0, 1)
 
 	-- EaseInOutSine: arranque suave, desaceleración suave
 	local eased = -(math.cos(math.pi * t) - 1) / 2
 
-	-- Posición con drift corregido en el eje perpendicular a la pared
-	local pos = hrp.Position
-	local coverPos = self._state.coverPosition
-	if coverPos and self._settleStartDist then
-		local currentDist = (pos - coverPos):Dot(coverNormal)
-		local err = currentDist - self._settleStartDist
-		pos = pos - coverNormal * err
-	end
+	-- Posición pin-eada: usar la posición capturada al inicio del settle.
+	-- Solo preservar Y del frame actual (gravedad) y fijar XZ.
+	local pinnedPos = self._settleStartPos or hrp.Position
+	local pos = Vector3.new(pinnedPos.X, hrp.Position.Y, pinnedPos.Z)
 
 	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
 	local blendedRot = startRot:Lerp(targetRot, eased)
@@ -372,10 +353,7 @@ function InCover:_cleanupSettle(hrp: BasePart?)
 	-- durante CoverIdle normal la cámara no debe ser empujada cada frame
 	-- hacia la cover normal. SetCoverNormal solo se llama cuando la cover
 	-- realmente cambia (esquina interna, cover swap).
-	local cam = self._state.cameraController
-	if cam and cam.SetCoverSettleActive then
-		cam:SetCoverSettleActive(false)
-	end
+	self._state.onCoverSettleChanged:Fire(false)
 end
 
 --- Obtiene el HumanoidRootPart del personaje local con cache (nil si no existe).

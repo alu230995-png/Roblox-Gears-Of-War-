@@ -14,7 +14,7 @@ local Constants = require(Shared:WaitForChild("Constants"))
 
 local SpeedMap = {}
 
-local MAP = {
+local MAP = table.freeze({
 	Idle = 0,
 	Walking = Constants.WALK_SPEED,
 	RoadieRun = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en MovementController
@@ -40,7 +40,7 @@ local MAP = {
 	Death = 0,
 	Spectator = 0,
 	Lobby = 0,
-}
+})
 
 --- Retorna la WalkSpeed que corresponde a un estado.
 --- Si el estado no está en la tabla, retorna WALK_SPEED como fallback.

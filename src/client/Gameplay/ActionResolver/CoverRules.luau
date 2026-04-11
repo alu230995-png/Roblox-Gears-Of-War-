@@ -37,7 +37,23 @@ local RollOutOfCover = {
 	execute = function(resolver, ctx)
 		resolver._evadeStartTime = os.clock()
 		ctx.Buffer:Consume("WantsEvade")
-		return "RollOutOfCover", "Evading", { direction = ctx.Env.MoveDirection }
+	return "RollOutOfCover", "Evading", nil
+	end,
+}
+
+--- CornerExit (fallback de CoverSwap): En esquina exterior + WantsCover
+--- y NO se encontró swap válido (CoverSwap de prioridad superior ya falló) →
+--- RollOutOfCover con dirección lateral (input del jugador o coverNormal).
+local CornerExit = {
+	id = "CornerExit",
+	check = function(resolver, ctx)
+		return ctx.Env.IsAtOuterCorner and ctx.Buffer:HasIntent("WantsCover") and Helpers.isEvadeCooldownMet(resolver)
+	end,
+	execute = function(resolver, ctx)
+		resolver._evadeStartTime = os.clock()
+		ctx.Buffer:Consume("WantsCover")
+		local dir = ctx.Env.RawMovementDirection or ctx.Env.CornerExitDirection
+		return "CornerRollOut", "Evading", { direction = dir }
 	end,
 }
 
@@ -146,36 +162,38 @@ CoverRules.Idle = {
 		end,
 	},
 
-	-- Prio 3: Vault (cover bajo + moving into cover + cover/mantle/vault button)
+	-- Prio 3: Vault (cover bajo + moving into cover + cover button)
 	-- Solo si no hay swap válido (ya evaluado arriba).
+	-- Usa CoverHandler como fuente de datos (fiable cuando ya estamos en cover).
 	{
 		id = "Vault",
 		check = function(_resolver, ctx)
-			return (
-				ctx.Buffer:HasIntent("WantsCover")
-				or ctx.Buffer:HasIntent("WantsMantle")
-				or ctx.Buffer:HasIntent("WantsVault")
-			)
-				and ctx.Env.CoverType == "Low"
-				and Helpers.isMovingIntoCover(ctx)
+			local handler = ctx.CoverHandler
+			return handler
+				and ctx.Buffer:HasIntent("WantsCover")
+				and handler:GetCoverType() == "Low"
+				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())
 		end,
 		execute = function(_resolver, ctx)
+			local handler = ctx.CoverHandler
 			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
 			return "Vault",
 				"Vaulting",
 				{
-					coverNormal = ctx.Env.CoverNormal,
-					coverInstance = ctx.Env.CoverInstance,
+					coverNormal = handler:GetNormal(),
+					coverInstance = handler:GetCoverInstance(),
 				}
 		end,
 	},
 
-	RollOutOfCover, -- Prio 4 (fallback si no hay swap ni vault)
-	PopUpAim, -- Prio 5
-	BlindFire, -- Prio 6 (cubre BlindFire explícito + ShootAsBlindFire)
-	ReloadInCover, -- Prio 7
+	CornerExit, -- Prio 4: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
+	RollOutOfCover, -- Prio 5: Evade roll (WantsEvade, cualquier posición)
+	PopUpAim, -- Prio 6
+	BlindFire, -- Prio 7 (cubre BlindFire explícito + ShootAsBlindFire)
+	ReloadInCover, -- Prio 8
+	BlockCoverTap, -- Prio 9: Consumir WantsCover huérfano
 
-	-- Prio 8: Start CoverWalking (cualquier input de movimiento)
+	-- Prio 10: Start CoverWalking (cualquier input de movimiento)
 	{
 		id = "StartCoverWalking",
 		check = function(_resolver, ctx)
@@ -206,35 +224,37 @@ CoverRules.Walking = {
 		end,
 	},
 
-	-- Prio 3: Vault (cover bajo + moving into cover)
+	-- Prio 3: Vault (cover bajo + moving into cover + cover button)
 	-- Solo si no hay swap válido (ya evaluado arriba).
+	-- Usa CoverHandler como fuente de datos (fiable cuando ya estamos en cover).
 	{
 		id = "VaultWalking",
 		check = function(_resolver, ctx)
-			return (
-				ctx.Buffer:HasIntent("WantsCover")
-				or ctx.Buffer:HasIntent("WantsMantle")
-				or ctx.Buffer:HasIntent("WantsVault")
-			)
-				and ctx.Env.CoverType == "Low"
-				and Helpers.isMovingIntoCover(ctx)
+			local handler = ctx.CoverHandler
+			return handler
+				and ctx.Buffer:HasIntent("WantsCover")
+				and handler:GetCoverType() == "Low"
+				and Helpers.isMovingIntoCover(ctx, handler:GetNormal())
 		end,
 		execute = function(_resolver, ctx)
+			local handler = ctx.CoverHandler
 			ctx.Buffer:Consume("WantsCover") -- batch consumption limpia siblings
-			return "Vault", "Vaulting", {
-				coverNormal = ctx.Env.CoverNormal,
-				coverInstance = ctx.Env.CoverInstance,
-			}
+			return "Vault",
+				"Vaulting",
+				{
+					coverNormal = handler:GetNormal(),
+					coverInstance = handler:GetCoverInstance(),
+				}
 		end,
 	},
 
-	RollOutOfCover, -- Prio 4 (fallback si no hay swap ni vault)
+	CornerExit, -- Prio 4: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
 	BlockCoverTap, -- Prio 5
 	PopUpAim, -- Prio 6
 	BlindFire, -- Prio 7
 	ReloadInCover, -- Prio 8
 
-	-- Prio 9: Start CoverRunning (sprint intent mientras camina en cover)
+	-- Prio 10: Start CoverRunning (sprint intent mientras camina en cover)
 	-- Evaluado ANTES de StopCoverWalking: si sprint + soltar movimiento
 	-- ocurren en el mismo frame, sprint tiene prioridad (BUG-001 fix).
 	{
@@ -247,7 +267,7 @@ CoverRules.Walking = {
 		end,
 	},
 
-	-- Prio 10: Stop CoverWalking → CoverIdle (sin movimiento)
+	-- Prio 11: Stop CoverWalking → CoverIdle (sin movimiento)
 	{
 		id = "StopCoverWalking",
 		check = function(_resolver, ctx)
@@ -265,7 +285,7 @@ CoverRules.Walking = {
 
 CoverRules.Running = {
 	ExitCover, -- Prio 1
-	RollOutOfCover, -- Prio 2
+	CornerExit, -- Prio 2: Fallback de CoverSwap en esquina (WantsCover + no swap → roll lateral)
 	BlockCoverTap, -- Prio 3
 	PopUpAim, -- Prio 4
 	BlindFire, -- Prio 5
@@ -290,6 +310,45 @@ CoverRules.Running = {
 		end,
 		execute = function()
 			return "StopCoverRunning", "CoverIdle", nil
+		end,
+	},
+}
+
+------------------------------------------------------------------------
+-- COVER ENTERING RULES (ActionGroup — resolución limitada)
+-- Solo dos acciones: vault pendiente (InteractButton + Low cover)
+-- y cover chaining (WantsCover durante entering → redirigir snap).
+------------------------------------------------------------------------
+
+CoverRules.Entering = {
+	-- Prio 1: Vault desde entering (F key + cover bajo)
+	{
+		id = "VaultFromEntering",
+		check = function(_resolver, ctx)
+			local handler = ctx.CoverHandler
+			return handler and ctx.Buffer:HasIntent("WantsVault") and handler:GetCoverType() == "Low"
+		end,
+		execute = function(_resolver, ctx)
+			local handler = ctx.CoverHandler
+			ctx.Buffer:Consume("WantsVault")
+			return "VaultFromEntering",
+				nil,
+				{
+					coverNormal = handler:GetNormal(),
+					coverInstance = handler:GetCoverInstance(),
+				}
+		end,
+	},
+
+	-- Prio 2: Cover chaining (re-pulsar cover durante entering)
+	{
+		id = "CoverChain",
+		check = function(_resolver, ctx)
+			return ctx.Buffer:HasIntent("WantsCover")
+		end,
+		execute = function(_resolver, ctx)
+			ctx.Buffer:Consume("WantsCover")
+			return "CoverChain", nil, nil
 		end,
 	},
 }

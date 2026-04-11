@@ -31,7 +31,7 @@ RotationHandler.__index = RotationHandler
 
 --- Estados en los que la rotación está controlada por el cover snap / normal.
 --- El input del jugador NO debe rotar al personaje en estos estados.
-local COVER_LOCKED_STATES: { [string]: boolean } = {
+local COVER_LOCKED_STATES: { [string]: boolean } = table.freeze({
 	Mantling = true,
 	Executing = true,
 	Death = true,
@@ -44,7 +44,7 @@ local COVER_LOCKED_STATES: { [string]: boolean } = {
 	CoverBlindFire = true,
 	CoverExiting = true,
 	CoverSwap = true,
-}
+})
 
 function RotationHandler.new(inputDetector)
 	local self = setmetatable({}, RotationHandler)
@@ -59,7 +59,49 @@ function RotationHandler.new(inputDetector)
 	self._cachedHumanoid = nil :: Humanoid?
 	self._cachedHRP = nil :: BasePart?
 
+	-- Conexiones gestionadas (cleanup en Destroy)
+	self._connections = {}
+
 	return self
+end
+
+------------------------------------------------------------------------
+-- LIFECYCLE
+------------------------------------------------------------------------
+
+--- Desactiva AutoRotate del Humanoid (la rotación la maneja este handler).
+--- Conecta CharacterAdded para repetir en respawn.
+function RotationHandler:Start()
+	local function disableAutoRotate(character: Model?)
+		if not character then
+			return
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.AutoRotate = false
+		else
+			task.spawn(function()
+				local h = character:WaitForChild("Humanoid", 5)
+				if h then
+					h.AutoRotate = false
+				end
+			end)
+		end
+	end
+
+	disableAutoRotate(self._player.Character)
+	self._connections.characterAdded = self._player.CharacterAdded:Connect(function(character)
+		disableAutoRotate(character)
+	end)
+end
+
+function RotationHandler:Destroy()
+	for _, conn in self._connections do
+		if typeof(conn) == "RBXScriptConnection" then
+			conn:Disconnect()
+		end
+	end
+	table.clear(self._connections)
 end
 
 --- Actualiza la rotación del personaje cada frame.

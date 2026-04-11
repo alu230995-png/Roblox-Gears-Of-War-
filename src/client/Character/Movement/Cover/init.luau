@@ -25,6 +25,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local Signal = require(Shared:WaitForChild("Signal"))
 
 -- Sub-módulos (hijos del folder Cover/ — init.luau ES el folder)
 local EnteringCover = require(script.EnteringCover)
@@ -33,10 +34,6 @@ local CoverRunning = require(script.CoverRunning)
 local CornerCover = require(script.CornerCover)
 local CoverSwapController = require(script.CoverSwapController)
 
--- Duración del CoverSlide antes de pasar a CoverIdle.
--- TODO: mover a Constants cuando se añada tuning de balance.
-local COVER_SLIDE_DURATION = 0.3
-
 local CoverMain = {}
 CoverMain.__index = CoverMain
 
@@ -44,7 +41,7 @@ CoverMain.__index = CoverMain
 -- Set de acciones que este handler puede manejar
 ------------------------------------------------------------------------
 
-local COVER_ACTIONS: { [string]: boolean } = {
+local COVER_ACTIONS: { [string]: boolean } = table.freeze({
 	EnterCover = true,
 	SlideIntoCover = true,
 	ExitCover = true,
@@ -52,17 +49,22 @@ local COVER_ACTIONS: { [string]: boolean } = {
 	StopCoverRunning = true,
 	CoverSwap = true,
 	CancelSwapToRun = true,
-}
+})
 
 ------------------------------------------------------------------------
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function CoverMain.new(stateMachine, environmentSensor, cameraController)
+function CoverMain.new(stateMachine, environmentSensor)
 	local self = setmetatable({}, CoverMain)
 
 	self._stateMachine = stateMachine
-	self._cameraController = cameraController
+
+	-- Señales para desacoplar la cámara (Capa 5) del cover (Capa 4).
+	-- ClientApp conecta estas señales a CameraController.
+	self.CoverSettleChanged = Signal.new() -- (active: boolean)
+	self.ShoulderSideChanged = Signal.new() -- (side: "Left"|"Right")
+	self.InnerCornerTransition = Signal.new() -- (newNormal: Vector3)
 
 	-- Estado compartido: todos los sub-módulos leen/escriben vía esta tabla
 	self._coverState = {
@@ -74,7 +76,9 @@ function CoverMain.new(stateMachine, environmentSensor, cameraController)
 		stateMachine = stateMachine,
 		player = Players.LocalPlayer,
 		envSensor = environmentSensor, -- referencia al EnvironmentSensor para CheckInnerCorner
-		cameraController = cameraController, -- referencia para shoulder swap en InCover
+		onCoverSettleChanged = self.CoverSettleChanged,
+		onShoulderSideChanged = self.ShoulderSideChanged,
+		onInnerCornerTransition = self.InnerCornerTransition,
 	}
 
 	-- Sub-módulos (orden importa: CornerCover primero, InCover lo usa)
@@ -121,6 +125,23 @@ end
 --- @param envContext table? — EnvironmentContext del EnvironmentSensor
 --- @param wantsCoverRedirect boolean? — true si el jugador pulsó cover de nuevo
 function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: boolean?)
+	-- ★ Validación de cover instance: si la part desapareció/fue destruida,
+	-- cancelar cualquier estado de cover y volver a Idle.
+	local coverInst = self._coverState.coverInstance
+	if coverInst and not coverInst:IsDescendantOf(workspace) then
+		self._enteringCover:Cancel()
+		self._coverSwapController:Cancel()
+		self._cornerCover:Reset()
+		self._coverRunning:Stop()
+		self:_clearCoverState()
+		self:_cancelTimer()
+		self._pendingCoverIdleTransition = false
+		if not self._stateMachine:TransitionTo("Idle") then
+			self._pendingIdleTransition = true
+		end
+		return
+	end
+
 	-- Reintentar transición a CoverIdle si el snap terminó pero STATE_MIN_DURATION la bloqueó
 	-- Reintentar transición a Idle si cancel/ExitCover fue bloqueado.
 	-- ELSEIF: ambos flags nunca deben disparar en el mismo frame — son mutuamente excluyentes.
@@ -159,12 +180,41 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 				self._pendingIdleTransition = true
 			end
 		elseif result == "complete" then
+			-- FIX: cancelar el timer del SlideIntoCover para que no llame
+			-- NotifyEnterFromSnap() por segunda vez cuando el snap termina
+			-- antes de que expire el timer fijo de COVER_SLIDE_DURATION.
+			self:_cancelTimer()
 			self._pendingCoverIdleTransition = true
 		end
 	end
 
 	-- CORNER COVER: actualizar detección de esquinas (siempre, para que InCover y CoverRunning lo consulten)
 	local currentState = self._stateMachine:GetCurrentState()
+
+	-- RE-SONDEO DE PARED: actualizar coverInstance y coverType mientras nos
+	-- desplazamos lateralmente. Covers compuestas por varias parts pueden cambiar
+	-- de Low a High (o vice versa) sin que el jugador salga de cover.
+	if
+		self._coverState.coverNormal
+		and (currentState == "CoverIdle" or currentState == "CoverWalking" or currentState == "CoverRunning")
+	then
+		local character = self._coverState.player.Character
+		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if hrp then
+			local sensor = self._coverState.envSensor
+			local hitInst, hitType = sensor:RecheckCoverWall(hrp.Position, self._coverState.coverNormal)
+			if hitInst then
+				-- Actualizar instancia y tipo si cambiaron
+				if hitInst ~= self._coverState.coverInstance then
+					self._coverState.coverInstance = hitInst
+				end
+				if hitType ~= self._coverState.coverType then
+					self._coverState.coverType = hitType
+				end
+			end
+		end
+	end
+
 	if
 		currentState == "CoverIdle"
 		or currentState == "CoverWalking"
@@ -278,9 +328,7 @@ CoverMain._handlers = {
 	-- y provoca que la cámara gire sin control. La normal se inyecta en
 	-- _cleanupSettle (cuando InCover termina el settle) via _onSettleComplete.
 	-- Bloquear Dynamic Framing preventivamente durante entering + settle:
-	if self._cameraController and self._cameraController.SetCoverSettleActive then
-		self._cameraController:SetCoverSettleActive(true)
-	end
+	self.CoverSettleChanged:Fire(true)
 
 	-- Delegar entering al sub-módulo
 	self._enteringCover:Begin(data)
@@ -299,14 +347,12 @@ CoverMain._handlers = {
 
 	-- NO activar Dynamic Framing aquí — misma razón que EnterCover.
 	-- Se activa al completar el settle en InCover._cleanupSettle.
-	if self._cameraController and self._cameraController.SetCoverSettleActive then
-		self._cameraController:SetCoverSettleActive(true)
-	end
+	self.CoverSettleChanged:Fire(true)
 
 	self._enteringCover:BeginSlide(data)
 
 	-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
-	self:_startTimer(COVER_SLIDE_DURATION, function()
+	self:_startTimer(Constants.COVER_SLIDE_DURATION, function()
 		self._enteringCover:Cancel()
 		self._inCover:NotifyEnterFromSnap()
 		if not self._stateMachine:TransitionTo("CoverIdle") then
@@ -378,6 +424,12 @@ end
 function CoverMain:_cancelTimer()
 	self._timer = 0
 	self._timerCallback = nil
+end
+
+function CoverMain:Destroy()
+	self.CoverSettleChanged:Destroy()
+	self.ShoulderSideChanged:Destroy()
+	self.InnerCornerTransition:Destroy()
 end
 
 return CoverMain

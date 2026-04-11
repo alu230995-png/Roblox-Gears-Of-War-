@@ -166,6 +166,10 @@ export type EnvironmentContext = {
 	IsAtCornerLeft: boolean,
 	IsAtCornerRight: boolean,
 	MoveDirection: Vector2,
+	-- Corner exit system (outer corners)
+	IsAtOuterCorner: boolean,
+	CornerExitDirection: Vector3?, -- perpendicular al muro, hacia el espacio abierto
+	RawMovementDirection: Vector3?, -- input del jugador en world-space
 }
 
 ------------------------------------------------------------------------

@@ -20,6 +20,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local Signal = require(Shared:WaitForChild("Signal"))
 
 -- Sub-handlers (siblings en el mismo folder Movement/)
 local CoverMain = require(script.Parent.Cover)
@@ -35,8 +36,6 @@ function MovementController.new(
 	stateMachine,
 	actionResolver,
 	environmentSensor,
-	inputBuffer,
-	cameraController,
 	inputDetector
 )
 	local self = setmetatable({}, MovementController)
@@ -44,17 +43,32 @@ function MovementController.new(
 	self._stateMachine = stateMachine
 	self._actionResolver = actionResolver
 	self._envSensor = environmentSensor
-	self._inputBuffer = inputBuffer
 	self._player = Players.LocalPlayer
 
 	-- Sub-handlers
-	self._coverHandler = CoverMain.new(stateMachine, environmentSensor, cameraController)
+	self._coverHandler = CoverMain.new(stateMachine, environmentSensor)
 	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
 	self._vaultHandler = VaultHandler.new(stateMachine, self._coverHandler, environmentSensor)
 	self._rotationHandler = RotationHandler.new(inputDetector)
 
+	-- Cache de character refs (evita FindFirstChild cada frame)
+	self._cachedCharacter = nil :: Model?
+	self._cachedHumanoid = nil :: Humanoid?
+	self._cachedHRP = nil :: BasePart?
+
+	-- Vault pendiente desde CoverEntering (F key deferred):
+	-- Se guarda al pulsar F durante entering, se ejecuta al completar el snap.
+	self._pendingVaultFromEntering = nil :: { coverNormal: Vector3, coverInstance: BasePart }?
+
+	-- Cover chain flag: se activa cuando ActionResolver resuelve "CoverChain"
+	self._wantsCoverRedirect = false
+
 	-- Conexiones gestionadas (cleanup en Destroy)
 	self._connections = {}
+
+	-- Signal de salida: Presentation (Animation, Camera) escucha acciones ejecutadas.
+	-- Firma: (action: string, targetState: string?, data: any?)
+	self.ActionExecuted = Signal.new()
 
 	return self
 end
@@ -63,13 +77,12 @@ end
 -- LIFECYCLE
 ------------------------------------------------------------------------
 
-function MovementController:Init()
-	-- Lifecycle hook — toda la configuración se realiza en new()
-end
-
 --- Conecta al Signal ActionResolved del ActionResolver.
 --- MovementController reacciona a acciones resueltas sin acoplamiento directo.
 function MovementController:Start()
+	-- RotationHandler gestiona AutoRotate del Humanoid
+	self._rotationHandler:Start()
+
 	-- Inyectar CoverHandler al resolver (necesario para CoverSwap)
 	self._actionResolver:SetCoverHandler(self._coverHandler)
 
@@ -83,6 +96,10 @@ function MovementController:Destroy()
 		conn:Disconnect()
 	end
 	table.clear(self._connections)
+
+	if self.ActionExecuted then
+		self.ActionExecuted:Destroy()
+	end
 end
 
 ------------------------------------------------------------------------
@@ -95,6 +112,18 @@ end
 --- @param data any? — datos adicionales
 function MovementController:ExecuteAction(action: string, targetState: string?, data: any?)
 	if action == "NoAction" then
+		return
+	end
+
+	-- Acciones diferidas (sin transición de estado): solo guardar para Update()
+	if action == "VaultFromEntering" then
+		if not self._pendingVaultFromEntering and data then
+			self._pendingVaultFromEntering = data
+		end
+		return
+	end
+	if action == "CoverChain" then
+		self._wantsCoverRedirect = true
 		return
 	end
 
@@ -126,17 +155,17 @@ function MovementController:ExecuteAction(action: string, targetState: string?, 
 
 	-- Aplicar velocidad al Humanoid según el nuevo estado
 	self:_applyMovementSpeed()
+
+	-- Notificar a Presentation (Animation, Camera)
+	self.ActionExecuted:Fire(action, targetState, data)
 end
 
 --- Update cada frame. Maneja timers y lógica continua.
 function MovementController:Update(dt: number)
-	-- Cover redirect: solo permitir chain si el jugador pulsa cover de nuevo
-	local wantsCoverRedirect = false
+	-- Cover redirect: activado por ActionResolver via "CoverChain" action
+	local wantsCoverRedirect = self._wantsCoverRedirect
+	self._wantsCoverRedirect = false
 	local stateBefore = self._stateMachine:GetCurrentState()
-	if stateBefore == "CoverEntering" and self._inputBuffer and self._inputBuffer:HasIntent("WantsCover") then
-		self._inputBuffer:Consume("WantsCover")
-		wantsCoverRedirect = true
-	end
 
 	self._coverHandler:Update(dt, self._envSensor:GetContext(), wantsCoverRedirect)
 	self._evadeHandler:Update(dt)
@@ -144,6 +173,26 @@ function MovementController:Update(dt: number)
 
 	-- Re-leer estado: los sub-handlers pueden haber provocado una transición
 	local stateAfter = self._stateMachine:GetCurrentState()
+
+	-- Vault pendiente desde CoverEntering: ejecutar al completar el snap (CoverIdle)
+	-- TransitionTo puede fallar por STATE_MIN_DURATION si CoverIdle acaba de entrar;
+	-- en ese caso mantener el pending y reintentar el siguiente frame.
+	if self._pendingVaultFromEntering then
+		if stateAfter == "CoverIdle" then
+			if self._stateMachine:TransitionTo("Vaulting") then
+				local pendingData = self._pendingVaultFromEntering
+				self._pendingVaultFromEntering = nil
+				self._coverHandler:ResetCover()
+				self._vaultHandler:HandleAction("Vault", pendingData)
+				stateAfter = self._stateMachine:GetCurrentState()
+			end
+			-- Si TransitionTo falla (STATE_MIN_DURATION aún no cumplido),
+			-- _pendingVaultFromEntering se mantiene y se reintenta el siguiente frame.
+		elseif stateAfter ~= "CoverEntering" then
+			-- Cualquier otro estado (ExitCover, Idle, etc.) → cancelar vault pendiente
+			self._pendingVaultFromEntering = nil
+		end
+	end
 
 	if stateAfter == "RoadieRun" then
 		self:_updateRoadieRun()
@@ -167,16 +216,26 @@ function MovementController:GetCoverHandler()
 end
 
 ------------------------------------------------------------------------
+-- INTERNAL: Character Refs Cache
+------------------------------------------------------------------------
+
+--- Refresca la cache de character/humanoid/hrp si el character cambió (respawn).
+function MovementController:_refreshCache()
+	local character = self._player.Character
+	if character ~= self._cachedCharacter then
+		self._cachedCharacter = character
+		self._cachedHumanoid = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+		self._cachedHRP = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	end
+end
+
+------------------------------------------------------------------------
 -- INTERNAL: Movement Speed
 ------------------------------------------------------------------------
 
 function MovementController:_applyMovementSpeed()
-	local character = self._player.Character
-	if not character then
-		return
-	end
-
-	local humanoid = character:FindFirstChild("Humanoid") :: Humanoid?
+	self:_refreshCache()
+	local humanoid = self._cachedHumanoid
 	if not humanoid then
 		return
 	end
@@ -196,10 +255,9 @@ end
 --- El RotationHandler gestiona la rotación (Quick Snap + Steering), y este módulo
 --- simplemente aplica velocidad en la dirección a la que apunta el modelo.
 function MovementController:_updateRoadieRun()
-	local character = self._player.Character
-	local humanoid = character and character:FindFirstChild("Humanoid") :: Humanoid?
-	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not humanoid or not hrp then
+	self:_refreshCache()
+	local hrp = self._cachedHRP
+	if not hrp then
 		return
 	end
 

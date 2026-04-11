@@ -74,6 +74,10 @@ function EnvironmentSensor.new()
 		IsAtCornerLeft = false,
 		IsAtCornerRight = false,
 		MoveDirection = Vector2.zero,
+		-- Corner exit system
+		IsAtOuterCorner = false,
+		CornerExitDirection = nil :: Vector3?,
+		RawMovementDirection = nil :: Vector3?,
 	}
 
 	-- Cache de character refs (evita FindFirstChild cada frame)
@@ -159,6 +163,27 @@ function EnvironmentSensor:Update(
 	-- Detectar esquinas siempre que estés en cover
 	if inCoverState and coverNormal then
 		self:_detectCorners(hrp, coverNormal)
+
+		-- Calcular RawMovementDirection (world-space) desde input Vector2 + cámara
+		-- Solo en cover states donde las reglas de esquina lo necesitan
+		if moveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
+			local camera = workspace.CurrentCamera
+			if camera then
+				local camCF = camera.CFrame
+				local camRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+				local camForward = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+				if camRight.Magnitude > Constants.ZERO_MAGNITUDE then
+					camRight = camRight.Unit
+				end
+				if camForward.Magnitude > Constants.ZERO_MAGNITUDE then
+					camForward = camForward.Unit
+				end
+				local worldDir = camRight * moveDirection.X + camForward * moveDirection.Y
+				if worldDir.Magnitude > Constants.ZERO_MAGNITUDE then
+					self._context.RawMovementDirection = worldDir.Unit
+				end
+			end
+		end
 	end
 end
 
@@ -189,7 +214,8 @@ function EnvironmentSensor:CheckInnerCorner(
 	end
 
 	-- Verificar ángulo significativo
-	local newNormal, newPosition = RaycastUtils.snapNormalToFace(rayResult.Instance, rayResult.Position, rayResult.Normal)
+	local newNormal, newPosition =
+		RaycastUtils.snapNormalToFace(rayResult.Instance, rayResult.Position, rayResult.Normal)
 	if not newNormal then
 		return nil, nil, nil
 	end
@@ -226,8 +252,29 @@ function EnvironmentSensor:CheckVaultSafety(
 	forwardDir: Vector3,
 	character: Model,
 	coverInstance: BasePart
-): (boolean, Vector3?)
+): (boolean, Vector3?, string?)
 	return self._vaultSafety:CheckSafety(startPos, forwardDir, character, coverInstance)
+end
+
+--- Re-sondea la pared de cover en la posición actual del jugador.
+--- Lanza un rayo corto desde el HRP hacia la pared (-coverNormal).
+--- Retorna la part impactada y su clasificación ("Low" / "High"),
+--- o nil si no hay cover válida enfrente.
+--- @param hrpPos Vector3 — posición del HumanoidRootPart
+--- @param coverNormal Vector3 — normal actual de la cover
+--- @return BasePart? hitInstance
+--- @return string? coverType — "Low" | "High"
+function EnvironmentSensor:RecheckCoverWall(hrpPos: Vector3, coverNormal: Vector3): (BasePart?, string?)
+	local origin = hrpPos + Constants.COVER_RAY_ORIGIN_OFFSET
+	local direction = -coverNormal
+	local distance = Constants.COVER_OFFSET + 1
+
+	local result = self:_castRay(origin, direction, distance)
+	if not result or not RaycastUtils.isCoverObject(result.Instance) then
+		return nil, nil
+	end
+
+	return result.Instance, RaycastUtils.classifyCover(result.Instance)
 end
 
 ------------------------------------------------------------------------
@@ -311,6 +358,12 @@ function EnvironmentSensor:_detectCorners(hrp: BasePart, coverNormal: Vector3)
 	local rightOrigin = playerOrigin + (wallParallel * cornerRange)
 	local rightResult = self:_castRay(rightOrigin, -coverNormal, rayDistanceToWall)
 	ctx.IsAtCornerRight = not rightResult or not RaycastUtils.isCoverObject(rightResult.Instance)
+
+	-- Corner exit system: publicar tangente y dirección de salida cuando hay esquina exterior
+	ctx.IsAtOuterCorner = ctx.IsAtCornerLeft or ctx.IsAtCornerRight
+	if ctx.IsAtOuterCorner then
+		ctx.CornerExitDirection = coverNormal -- la normal ya apunta al espacio abierto
+	end
 end
 
 ------------------------------------------------------------------------
@@ -346,6 +399,10 @@ function EnvironmentSensor:_resetContext(moveDirection: Vector2)
 	ctx.IsAtCornerLeft = false
 	ctx.IsAtCornerRight = false
 	ctx.MoveDirection = moveDirection
+	-- Corner exit system
+	ctx.IsAtOuterCorner = false
+	ctx.CornerExitDirection = nil
+	ctx.RawMovementDirection = nil
 end
 
 ------------------------------------------------------------------------
@@ -367,9 +424,6 @@ function EnvironmentSensor:_castSphere(origin: Vector3, direction: Vector3, dist
 	return workspace:Spherecast(origin, Constants.COVER_SPHERECAST_RADIUS, dir2D, self._rayParams)
 end
 
-------------------------------------------------------------------------
--- INTERNAL: Filter Management (BUG-006 fix: eliminado GetDescendants)
-------------------------------------------------------------------------
 
 --- Reconstruye el filtro de Include para los RaycastParams.
 --- Solo usa CollectionService:GetTagged() — O(n) en vez de O(n²).

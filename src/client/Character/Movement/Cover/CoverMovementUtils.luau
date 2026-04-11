@@ -74,7 +74,18 @@ function CoverMovementUtils.handleInnerCornerTransition(
 	state.coverNormal = newNormal
 	state.coverPosition = newPosition
 	state.coverInstance = newInstance
-	state.wallRight = Vector3.yAxis:Cross(newNormal).Unit
+
+	-- FIX: verificar magnitud antes de .Unit — si newNormal es cercana al eje Y
+	-- (normal vertical), el cross product es casi cero y .Unit produce NaN.
+	local rawRight = Vector3.yAxis:Cross(newNormal)
+	if rawRight.Magnitude < Constants.ZERO_MAGNITUDE then
+		-- Normal degenerate (vertical): abortar transición sin corromper estado.
+		state.coverNormal = coverNormal
+		state.coverPosition = nil
+		state.coverInstance = nil
+		return coverNormal, wallRight, movementScale, false
+	end
+	state.wallRight = rawRight.Unit
 
 	-- B) Crossover push: empujar al personaje pasada la juntura
 	local newWallRight = state.wallRight
@@ -82,10 +93,7 @@ function CoverMovementUtils.handleInnerCornerTransition(
 	hrp.CFrame = hrp.CFrame + pushDir * Constants.CORNER_CROSSOVER_PUSH
 
 	-- C) Notificar a la cámara para nudge de yaw hacia la nueva normal
-	local camCtrl = state.cameraController
-	if camCtrl and camCtrl.NotifyInnerCornerTransition then
-		camCtrl:NotifyInnerCornerTransition(newNormal)
-	end
+	state.onInnerCornerTransition:Fire(newNormal)
 
 	-- D) Recalcular el riel y la proyección con la nueva normal
 	coverNormal = newNormal

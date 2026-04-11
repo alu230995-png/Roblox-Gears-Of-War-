@@ -57,18 +57,6 @@ WeaponType.Types = {
 	},
 }
 
-function WeaponType.GetWeapon(weaponName: string)
-	return WeaponType.Types[weaponName]
-end
+table.freeze(WeaponType.Types)
 
-function WeaponType.GetDefaultWeapons(): { string }
-	local defaults = {}
-	for name, config in WeaponType.Types do
-		if config.IsDefault then
-			table.insert(defaults, name)
-		end
-	end
-	return defaults
-end
-
-return WeaponType
+return table.freeze(WeaponType)

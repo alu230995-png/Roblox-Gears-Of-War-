@@ -35,7 +35,10 @@ function Signal:Once(fn: (...any) -> ())
 end
 
 function Signal:Fire(...)
-	for _, listener in self._listeners do
+	-- Iterar sobre una copia: si algún listener llama Disconnect() durante Fire,
+	-- table.remove modifica _listeners pero no el snapshot, evitando saltar listeners.
+	local snapshot = table.clone(self._listeners)
+	for _, listener in snapshot do
 		listener(...)
 	end
 end

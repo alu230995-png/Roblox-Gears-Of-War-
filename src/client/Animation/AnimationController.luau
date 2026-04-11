@@ -6,12 +6,12 @@
 	
 	Responsabilidades:
 	  - Escuchar StateChanged del StateMachine → crossfade animaciones
-	  - Escuchar ActionResolved del ActionResolver → one-shot animations
+	  - Escuchar ActionExecuted del MovementController → one-shot animations
 	  - Gestionar AnimationTracks por estado (carga, play, stop, crossfade)
-	
+
 	Comunicación event-driven:
 	  - Escucha StateMachine.StateChanged(newState, oldState)
-	  - Escucha ActionResolver.ActionResolved(action, targetState, data)
+	  - Escucha MovementController.ActionExecuted(action, targetState, data)
 	  - No conoce la existencia de otros listeners de estos signals.
 	
 	FASE 4 — Skeleton funcional. Las AnimationTracks se implementarán
@@ -25,11 +25,11 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local AnimationController = {}
 AnimationController.__index = AnimationController
 
-function AnimationController.new(stateMachine, actionResolver)
+function AnimationController.new(stateMachine, actionExecutedSignal)
 	local self = setmetatable({}, AnimationController)
 
 	self._stateMachine = stateMachine
-	self._actionResolver = actionResolver
+	self._actionExecutedSignal = actionExecutedSignal
 
 	-- Mapa de estado → AnimationTrack (se poblará con assets reales)
 	self._stateAnimations = {}
@@ -60,8 +60,8 @@ function AnimationController:Start()
 		end
 	)
 
-	-- Escuchar acciones resueltas para one-shot animations (recoil, melee, etc.)
-	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(
+	-- Escuchar acciones ejecutadas para one-shot animations (recoil, melee, etc.)
+	self._connections.actionExecuted = self._actionExecutedSignal:Connect(
 		function(action: string, _targetState: string?, _data: any?)
 			self:_onActionResolved(action, _data)
 		end

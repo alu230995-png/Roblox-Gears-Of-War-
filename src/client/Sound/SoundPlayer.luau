@@ -96,10 +96,11 @@ function SoundPlayer:SetGroupVolume(group: string, volume: number)
 	self._groupVolumes[group] = math.clamp(volume, 0, 1)
 
 	-- Actualizar sonidos looped activos de este grupo
-	for soundName, sound in self._loopedSounds do
+	-- FIX: _loopedSounds ahora almacena { sound, assetId } en lugar de Sound directa
+	for soundName, entry in self._loopedSounds do
 		local config = SoundConfig[soundName]
 		if config and config.Group == group then
-			sound.Volume = config.Volume * self._groupVolumes[group]
+			entry.sound.Volume = config.Volume * self._groupVolumes[group]
 		end
 	end
 end
@@ -162,13 +163,27 @@ function SoundPlayer:Play(soundName: string, position: Vector3?)
 	if config.Looped then
 		-- Detener loop previo del mismo sonido si existe
 		self:StopLooped(soundName)
-		self._loopedSounds[soundName] = sound
+		-- FIX: guardar { sound, assetId } para que StopLooped devuelva el sonido
+		-- al pool correcto (assetId real, no siempre Ids[1]).
+		self._loopedSounds[soundName] = { sound = sound, assetId = assetId }
 		sound:Play()
 	else
 		sound:Play()
-		-- Retornar al pool cuando termine
+		-- Retornar al pool cuando termine (single listener handles both pool + emitter cleanup)
 		sound.Ended:Once(function()
+			-- Capture emitter before reparenting (if 3D positional)
+			local parent = sound.Parent
+			local emitter: Part? = nil
+			if parent and parent:IsA("Part") and parent.Name == "SoundEmitter" then
+				emitter = parent
+			end
+
 			self:_releaseSound(assetId, sound)
+
+			-- Destroy emitter after sound was reparented away
+			if emitter then
+				emitter:Destroy()
+			end
 		end)
 	end
 end
@@ -179,15 +194,27 @@ end
 
 --- Detiene un sonido looped activo.
 function SoundPlayer:StopLooped(soundName: string)
-	local sound = self._loopedSounds[soundName]
-	if sound then
+	local entry = self._loopedSounds[soundName]
+	if entry then
+		local sound = entry.sound
+		local assetId = entry.assetId
 		sound:Stop()
 		self._loopedSounds[soundName] = nil
 
-		local config = SoundConfig[soundName]
-		if config then
-			local assetId = config.Ids[1]
+		-- Clean up emitter Part if sound was 3D positional
+		local parent = sound.Parent
+		local emitter: Part? = nil
+		if parent and parent:IsA("Part") and parent.Name == "SoundEmitter" then
+			emitter = parent
+		end
+
+		-- FIX: usar el assetId real capturado en Play(), no Ids[1] hardcodeado.
+		if SoundConfig[soundName] then
 			self:_releaseSound(assetId, sound)
+		end
+
+		if emitter then
+			emitter:Destroy()
 		end
 	end
 end
@@ -279,18 +306,10 @@ end
 function SoundPlayer:_releaseSound(assetId: string, sound: Sound)
 	sound:Stop()
 
-	-- Reparentar al contenedor del grupo (funciona para 3D emitters, rootPart, etc.)
-	local parent = sound.Parent
+	-- Reparentar al contenedor del grupo
 	local config = SoundConfig[sound.Name]
 	local container = self._containers[config and config.Group or "VFX"] or SoundService
 	sound.Parent = container
-
-	-- Limpiar emitter Part si quedó vacío
-	if parent and parent:IsA("Part") and parent.Name == "SoundEmitter" then
-		if not parent:FindFirstChildOfClass("Sound") then
-			parent:Destroy()
-		end
-	end
 
 	if not self._pool[assetId] then
 		self._pool[assetId] = {}
@@ -325,13 +344,7 @@ function SoundPlayer:_setupPositional(sound: Sound, position: Vector3, maxDistan
 	sound.RollOffMode = Enum.RollOffMode.Linear
 	sound.RollOffMinDistance = 5
 	sound.RollOffMaxDistance = maxDistance
-
-	-- Auto-limpiar emitter cuando el sonido termine
-	if not sound.Looped then
-		sound.Ended:Once(function()
-			emitter:Destroy()
-		end)
-	end
+	-- Emitter cleanup is handled by the caller (Play/StopLooped)
 end
 
 --- Configura sonido 2D (Player scope) — directo en SoundService.
