@@ -34,11 +34,12 @@ CoverRunning.__index = CoverRunning
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function CoverRunning.new(coverState, cornerCover)
+function CoverRunning.new(coverState, cornerCover, inCover)
 	local self = setmetatable({}, CoverRunning)
 
 	self._state = coverState -- referencia al estado compartido de CoverMain
 	self._cornerCover = cornerCover -- para bloqueo en esquinas
+	self._inCover = inCover -- referencia a InCover para cancelar settle al iniciar run
 	self._isActive = false
 	self._cornerCooldown = 0 -- cooldown tras transición de esquina interna (anti ping-pong)
 
@@ -57,6 +58,12 @@ end
 function CoverRunning:Begin()
 	self._isActive = true
 	self._cornerCooldown = 0 -- BUG-002 fix: resetear cooldown residual de sesión anterior
+
+	-- Cancelar settle activo: si el jugador entra a CoverRunning mientras
+	-- _needsSettle es true, la posición pin-eada causaría un TP al volver a Idle.
+	if self._inCover then
+		self._inCover:_cancelSettle(nil)
+	end
 end
 
 --- Detiene CoverRunning.

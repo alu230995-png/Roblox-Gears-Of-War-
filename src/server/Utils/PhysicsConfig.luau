@@ -17,6 +17,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local CharacterModifier = require(Shared:WaitForChild("CharacterModifier"))
 
 local PhysicsConfig = {}
 
@@ -25,6 +26,9 @@ local PhysicsConfig = {}
 function PhysicsConfig.Initialize()
 	-- Gravedad más alta que default (196.2) para sensación de peso
 	workspace.Gravity = Constants.GRAVITY
+
+	-- Crear el CollisionGroup de hitboxes una sola vez al inicio
+	CharacterModifier.EnsureCollisionGroup()
 
 	-- Escuchar nuevos jugadores para configurar su Humanoid
 	Players.PlayerAdded:Connect(function(player)
@@ -65,6 +69,9 @@ function PhysicsConfig.ConfigureCharacter(character: Model)
 
 	-- Auto-rotate off — lo controlaremos manualmente para cover y aim
 	humanoid.AutoRotate = false
+
+	-- Proporciones GoW + hitboxes competitivas
+	CharacterModifier.SetupCharacter(character)
 end
 
 --- Ajusta la WalkSpeed del Humanoid según el estado actual.

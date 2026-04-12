@@ -181,7 +181,7 @@ export type EnvironmentContext = {
 
 export type WeaponType = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
 
-export type WeaponState = "WeaponIdle" | "Reloading" | "ActiveReloading" | "WeaponDrawing"
+export type WeaponState = "Equipped" | "Unequipped" | "Shooting" | "Reloading"
 
 export type WeaponConfig = {
 	Name: string,
@@ -193,6 +193,23 @@ export type WeaponConfig = {
 	Range: number,
 	HeadshotMultiplier: number,
 	ActiveReloadBonus: number,
+}
+
+--- Stats de arma tal como se definen en WeaponConstants.STATS[weaponName].
+export type WeaponStats = {
+	Damage: number,
+	FireRate: number,
+	MagazineSize: number,
+	ReloadTime: number,
+	Range: number,
+	Spread: number,
+	FireMode: "Auto" | "Semi" | "Burst",
+}
+
+--- Datos de un arma dropeada en el mundo (atributos del Model).
+export type WeaponDropInfo = {
+	WeaponName: string,
+	DroppedBy: string,
 }
 
 ------------------------------------------------------------------------

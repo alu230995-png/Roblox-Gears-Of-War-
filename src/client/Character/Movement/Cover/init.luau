@@ -88,7 +88,7 @@ function CoverMain.new(stateMachine, environmentSensor)
 	self._cornerCover = CornerCover.new(self._coverState)
 	self._enteringCover = EnteringCover.new(self._coverState)
 	self._inCover = InCover.new(self._coverState, self._cornerCover)
-	self._coverRunning = CoverRunning.new(self._coverState, self._cornerCover)
+	self._coverRunning = CoverRunning.new(self._coverState, self._cornerCover, self._inCover)
 	self._coverSwapController = CoverSwapController.new(self._coverState)
 	self._peekHandler = PeekHandler.new(self._coverState)
 

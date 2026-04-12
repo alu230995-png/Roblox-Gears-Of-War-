@@ -58,6 +58,9 @@ local AimingController = require(script.Parent.Gameplay.Aiming.AimingController)
 -- Sound System
 local SoundController = require(script.Parent.Sound.SoundController)
 
+-- Health (observa LifeState del server → transiciones de StateMachine)
+local HealthObserver = require(script.Parent.Character.HealthObserver)
+
 ------------------------------------------------------------------------
 -- BOOTSTRAP
 ------------------------------------------------------------------------
@@ -109,6 +112,7 @@ movementController:SetAimingController(aimingController)
 
 -- Nota: SetCoverHandler se llama dentro de MovementController:Start() — no duplicar aquí.
 local soundController = SoundController.new(stateMachine)
+local healthObserver = HealthObserver.new(stateMachine)
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
@@ -123,6 +127,7 @@ locator:Register("AnimationController", animationController)
 locator:Register("CameraController", cameraController)
 locator:Register("AimingController", aimingController)
 locator:Register("SoundController", soundController)
+locator:Register("HealthObserver", healthObserver)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()

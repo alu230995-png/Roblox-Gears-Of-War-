@@ -21,6 +21,8 @@ local Constants = require(Shared:WaitForChild("Constants"))
 -- SERVER MODULES
 ------------------------------------------------------------------------
 local CharacterService = require(script.Parent.Character.CharacterService)
+local CombatService = require(script.Parent.Combat.CombatService)
+local WeaponServer = require(script.Parent.Weapons.WeaponServer)
 local SoundService = require(script.Parent.Sound.SoundService)
 
 ------------------------------------------------------------------------
@@ -29,10 +31,14 @@ local SoundService = require(script.Parent.Sound.SoundService)
 
 -- Fase Init
 CharacterService:Init()
+CombatService:Init()
+WeaponServer:Init()
 SoundService:Init()
 
 -- Fase Start
 CharacterService:Start()
+CombatService:Start()
+WeaponServer:Start()
 SoundService:Start()
 
 ------------------------------------------------------------------------
@@ -44,7 +50,7 @@ if Constants.DEBUG_MODE then
 	)
 	print("[GoW Server] Gears of War — Server iniciado")
 	print(`[GoW Server] Gravity: {workspace.Gravity}`)
-	print("[GoW Server] Servicios: Character, Sound")
+	print("[GoW Server] Servicios: Character, Combat, Weapons, Sound")
 	print(
 		"[GoW Server] ═══════════════════════════════════════"
 	)

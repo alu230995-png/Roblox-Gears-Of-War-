@@ -154,6 +154,13 @@ function InCover:UpdateWalking(dt: number, _envContext: any?, speedOverride: num
 		return
 	end
 
+	-- Si el settle está activo y el jugador empieza a moverse, cancelar settle:
+	-- el movimiento lateral tiene prioridad sobre la rotación de asentamiento.
+	-- Sin este guard, _applySettleRotation pin-ea XZ a _settleStartPos causando un TP.
+	if self._needsSettle then
+		self:_cancelSettle(hrp)
+	end
+
 	local coverNormal = self._state.coverNormal
 	if not coverNormal then
 		hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
@@ -241,24 +248,15 @@ function InCover:UpdateWalking(dt: number, _envContext: any?, speedOverride: num
 	end
 
 	-- 7. WALL-GLUE: corregir posición cada frame
-	if not self._needsSettle then
-		self:_applyWallGlue(hrp)
-		-- Smooth rotation: mantener alineación a la normal de cover
-		-- (corrige orientación tras transición de esquina interna)
-		-- NO aplicar en estados de aim: RotationHandler gestiona la rotación allí
-		-- para evitar que _smoothRotation (→ pared) luche con _alignToDirection (→ afuera).
-		local currentState = self._state.stateMachine and self._state.stateMachine:GetCurrentState()
-		local isAimState = currentState == "CoverAimHigh"
-			or currentState == "CoverAimLow"
-			or currentState == "CoverFiring"
-		if not isAimState then
-			self:_smoothRotation(hrp, dt)
-		end
-	end
-
-	-- 8. Settle rotation (si viene de entering/swap)
-	if self._needsSettle then
-		self:_applySettleRotation(hrp, dt)
+	self:_applyWallGlue(hrp)
+	-- Smooth rotation: mantener alineación a la normal de cover
+	-- (corrige orientación tras transición de esquina interna)
+	-- NO aplicar en estados de aim: RotationHandler gestiona la rotación allí
+	-- para evitar que _smoothRotation (→ pared) luche con _alignToDirection (→ afuera).
+	local currentState = self._state.stateMachine and self._state.stateMachine:GetCurrentState()
+	local isAimState = currentState == "CoverAimHigh" or currentState == "CoverAimLow" or currentState == "CoverFiring"
+	if not isAimState then
+		self:_smoothRotation(hrp, dt)
 	end
 end
 
@@ -322,8 +320,6 @@ function InCover:_applySettleRotation(hrp: BasePart, dt: number)
 	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
 	local blendedRot = startRot:Lerp(targetRot, eased)
 	hrp.CFrame = CFrame.new(pos) * blendedRot
-
-	
 end
 
 ------------------------------------------------------------------------
@@ -345,6 +341,18 @@ end
 ------------------------------------------------------------------------
 -- INTERNAL: Helpers
 ------------------------------------------------------------------------
+
+--- Cancela el settle inmediatamente cuando el movimiento lateral toma prioridad.
+--- Limpia el pin de posición para evitar TPs y restaura colisiones.
+function InCover:_cancelSettle(hrp: BasePart?)
+	if not self._needsSettle then
+		return
+	end
+	self._needsSettle = false
+	self._settleStartRot = nil
+	self._settleStartPos = nil
+	self:_cleanupSettle(hrp)
+end
 
 --- Limpia NoCollisionConstraint y restaura estado al terminar/abortar settle.
 function InCover:_cleanupSettle(hrp: BasePart?)

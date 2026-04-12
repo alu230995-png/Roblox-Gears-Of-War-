@@ -40,6 +40,9 @@ function EnteringCover.new(coverState)
 	-- Es la referencia fija para decidir si el jugador se está alejando (cancelación).
 	self._cancelNormal = nil :: Vector3?
 
+	-- NoCollisionConstraints activos durante el entering
+	self._noCollisionConstraints = {} :: { NoCollisionConstraint }
+
 	-- RaycastParams reutilizable (evita allocation en cada _buildEnteringData)
 	self._groundParams = RaycastParams.new()
 	self._groundParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -81,6 +84,9 @@ function EnteringCover:_beginInternal(data)
 	self._entering = self:_buildEnteringData(data.coverInstance, data.coverPos, data.coverNormal, hrp)
 	self._state.wallRight = self._entering.wallRight
 
+	-- Desactivar colisión character ↔ cover part para evitar atascamiento
+	self:_disableCoverCollision(character, data.coverInstance)
+
 	-- Guardar la normal de detección original. Solo se fija aquí, nunca en chaining.
 	self._cancelNormal = data.coverNormal
 end
@@ -92,6 +98,7 @@ end
 
 --- Cancela el entering sin transición de estado.
 function EnteringCover:Cancel()
+	self:_restoreCoverCollision()
 	self._entering = nil
 	self._cancelNormal = nil
 end
@@ -152,6 +159,7 @@ function EnteringCover:Update(dt: number, envContext: any?, wantsCoverRedirect: 
 	local result = self:_updateEntering(self._entering, hrp, humanoid, dt)
 
 	if result == "cancel" or result == "complete" then
+		self:_restoreCoverCollision()
 		self._entering = nil
 		self._cancelNormal = nil
 	end
@@ -335,6 +343,33 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 	end
 
 	return "continue"
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Collision toggle — NoCollisionConstraint
+------------------------------------------------------------------------
+
+--- Crea NoCollisionConstraints entre cada BasePart del character y la cover part.
+function EnteringCover:_disableCoverCollision(character: Model, coverPart: BasePart)
+	self:_restoreCoverCollision() -- limpiar constraints previos (chaining)
+
+	for _, child in character:GetChildren() do
+		if child:IsA("BasePart") then
+			local ncc = Instance.new("NoCollisionConstraint")
+			ncc.Part0 = child
+			ncc.Part1 = coverPart
+			ncc.Parent = child
+			table.insert(self._noCollisionConstraints, ncc)
+		end
+	end
+end
+
+--- Destruye todos los NoCollisionConstraints activos.
+function EnteringCover:_restoreCoverCollision()
+	for _, ncc in self._noCollisionConstraints do
+		ncc:Destroy()
+	end
+	table.clear(self._noCollisionConstraints)
 end
 
 ------------------------------------------------------------------------

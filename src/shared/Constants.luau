@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
