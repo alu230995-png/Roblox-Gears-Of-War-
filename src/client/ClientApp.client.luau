@@ -52,6 +52,9 @@ local AnimationController = require(script.Parent.Animation.AnimationController)
 -- Camera (Fase 5 — skeleton funcional)
 local CameraController = require(script.Parent.Camera.CameraController)
 
+-- Aiming (Fase 1B/1C — shoulder, FOV zoom, deadzone)
+local AimingController = require(script.Parent.Gameplay.Aiming.AimingController)
+
 -- Sound System
 local SoundController = require(script.Parent.Sound.SoundController)
 
@@ -95,6 +98,12 @@ coverHandler.InnerCornerTransition:Connect(function(newNormal)
 	cameraController:NotifyInnerCornerTransition(newNormal)
 end)
 
+-- AimingController: cerebro del sistema de apuntado (Fase 1B/1C)
+local aimingController = AimingController.new(stateMachine, coverHandler, cameraController)
+movementController.ActionExecuted:Connect(function(action, targetState, data)
+	aimingController:HandleAction(action, targetState, data)
+end)
+
 -- Nota: SetCoverHandler se llama dentro de MovementController:Start() — no duplicar aquí.
 local soundController = SoundController.new(stateMachine)
 
@@ -109,6 +118,7 @@ locator:Register("ActionResolver", actionResolver)
 locator:Register("MovementController", movementController)
 locator:Register("AnimationController", animationController)
 locator:Register("CameraController", cameraController)
+locator:Register("AimingController", aimingController)
 locator:Register("SoundController", soundController)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
@@ -152,6 +162,9 @@ RunService.Heartbeat:Connect(function(dt: number)
 
 	-- Paso 5: Update continuo (timers, cover snap, rotación, evade decay)
 	movementController:Update(dt)
+
+	-- Paso 5a: AimingController — lee cover state fresco, aplica shoulder/FOV antes de cámara
+	aimingController:Update(dt)
 
 	-- Paso 5b: MouseInput lee delta ANTES de la cámara
 	mouseInput:Update()

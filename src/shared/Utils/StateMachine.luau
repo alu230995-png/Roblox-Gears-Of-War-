@@ -179,13 +179,14 @@ function StateMachine:BuildGroupHierarchy()
 				end
 			end
 		end
-
-		-- Ahora escalar la jerarquía desde el grupo más específico
-		if #chain > 0 then
-			local current = chain[1]
-			-- chain ya tiene el grupo más específico, ahora añadir padres
-			local parent = self._groups[current] and self._groups[current].Parent
-			while parent do
+		local visited = {}
+		for _, g in chain do
+			visited[g] = true
+		end
+		for _, g in chain do
+			local parent = self._groups[g] and self._groups[g].Parent
+			while parent and not visited[parent] do
+				visited[parent] = true
 				table.insert(chain, parent)
 				parent = self._groups[parent] and self._groups[parent].Parent
 			end

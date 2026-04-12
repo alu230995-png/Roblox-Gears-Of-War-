@@ -10,7 +10,7 @@
 	  │   ├── FreeMovementGroup (estados libres fuera de cover)
 	  │   │   └── Idle, Walking, RoadieRun, Aiming, Firing, Reloading, ActiveReloading
 	  │   ├── CoverGroup (activamente en cover — tomando decisiones)
-	  │   │   └── CoverIdle, CoverAim, CoverBlindFire, CoverWalking, CoverRunning, CoverCorners
+	  │   │   └── CoverIdle, CoverAim, CoverAimHigh, CoverAimLow, CoverPeek, CoverBlindFire, CoverWalking, CoverRunning, CoverCorners
 	  │   └── ActionGroup (animaciones comprometidas — bloqueadas)
 	  │       └── Evading, Mantling, CoverSlide, CoverEntering, CoverExiting, CoverSwap, ExitCorner, Executing
 	  ├── DBNOGroup (down but not out)
@@ -47,6 +47,8 @@ PlayerState.Transitions = {
 	-- Transiciones específicas — Cover Group
 	CoverIdle = {
 		"CoverAim",
+		"CoverAimHigh",
+		"CoverAimLow",
 		"CoverBlindFire",
 		"CoverWalking",
 		"CoverCorners",
@@ -56,10 +58,24 @@ PlayerState.Transitions = {
 		"Vaulting",
 	},
 	CoverAim = { "CoverIdle", "Firing" },
+	CoverAimHigh = { "CoverIdle", "CoverPeek", "CoverFiring" },
+	CoverAimLow = { "CoverIdle", "CoverPeek", "CoverFiring" },
+	CoverPeek = { "CoverAimHigh", "CoverAimLow", "CoverIdle" },
+	CoverFiring = { "CoverAimHigh", "CoverAimLow", "CoverIdle" },
 	CoverBlindFire = { "CoverIdle" },
-	CoverWalking = { "CoverIdle", "CoverRunning", "CoverAim", "CoverBlindFire", "CoverSwap", "Vaulting" },
+	CoverWalking = {
+		"CoverIdle",
+		"CoverRunning",
+		"CoverAim",
+		"CoverAimHigh",
+		"CoverAimLow",
+		"CoverPeek",
+		"CoverBlindFire",
+		"CoverSwap",
+		"Vaulting",
+	},
 	CoverRunning = { "CoverWalking", "CoverIdle" },
-	CoverCorners = { "CoverIdle", "CoverAim", "CoverBlindFire", "Idle", "CoverSwap" },
+	CoverCorners = { "CoverIdle", "CoverAim", "CoverAimHigh", "CoverAimLow", "CoverBlindFire", "Idle", "CoverSwap" },
 
 	-- Transiciones específicas — Action Group
 	CoverSlide = { "CoverIdle" },
@@ -101,6 +117,10 @@ PlayerState.Groups = {
 			"ActiveReloading",
 			"CoverIdle",
 			"CoverAim",
+			"CoverAimHigh",
+			"CoverAimLow",
+			"CoverPeek",
+			"CoverFiring",
 			"CoverBlindFire",
 			"CoverWalking",
 			"CoverRunning",
@@ -122,7 +142,18 @@ PlayerState.Groups = {
 	},
 	CoverGroup = {
 		Parent = "AliveGroup",
-		States = { "CoverIdle", "CoverAim", "CoverBlindFire", "CoverWalking", "CoverRunning", "CoverCorners" },
+		States = {
+			"CoverIdle",
+			"CoverAim",
+			"CoverAimHigh",
+			"CoverAimLow",
+			"CoverPeek",
+			"CoverFiring",
+			"CoverBlindFire",
+			"CoverWalking",
+			"CoverRunning",
+			"CoverCorners",
+		},
 	},
 	ActionGroup = {
 		Parent = "AliveGroup",
@@ -135,6 +166,16 @@ PlayerState.Groups = {
 	InactiveGroup = {
 		Parent = nil,
 		States = { "Death", "Spectator", "Lobby" },
+	},
+
+	-- Grupos de query: permiten preguntar "¿está en algún estado de apuntado?"
+	AimingGroup = {
+		Parent = "AliveGroup",
+		States = { "Aiming", "CoverAimHigh", "CoverAimLow", "CoverPeek" },
+	},
+	CoverAimGroup = {
+		Parent = "CoverGroup",
+		States = { "CoverAimHigh", "CoverAimLow", "CoverPeek", "CoverFiring" },
 	},
 }
 

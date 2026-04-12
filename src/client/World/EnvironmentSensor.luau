@@ -152,7 +152,18 @@ function EnvironmentSensor:Update(
 	end
 
 	-- Rama por estado: solo lanzar raycasts cuando es necesario
-	local inCoverState = (state == "CoverIdle" or state == "CoverWalking" or state == "CoverRunning")
+	local inCoverState = (
+		state == "CoverIdle"
+		or state == "CoverWalking"
+		or state == "CoverRunning"
+		or state == "CoverCorners"
+		or state == "CoverAimHigh"
+		or state == "CoverAimLow"
+		or state == "CoverFiring"
+		or state == "CoverAim"
+		or state == "CoverPeek"
+		or state == "CoverBlindFire"
+	)
 
 	if wantsCoverSearch then
 		self:_searchCover(hrp)

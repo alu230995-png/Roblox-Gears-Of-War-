@@ -225,6 +225,14 @@ function IntentMapper:_processContinuousState()
 		end
 	end
 
+	-- DEBUG: Log WantsAim final state after continuous re-evaluation
+	local aimEntry = self._activeIntents["WantsAim"]
+	local aimHeld = detector:IsRawHeld("AimButton")
+	local aimActive = aimEntry and aimEntry.Active or false
+	if aimActive or aimHeld then
+		print(`[AimDebug] ContinuousState: IsRawHeld(AimButton)={aimHeld} | WantsAim.Active={aimActive}`)
+	end
+
 	-- Exit cover: moveDirection "hacia atrás" = quiere salir de cover.
 	if moveDir.Y < -Constants.EXIT_COVER_BACK_THRESHOLD then
 		self:_setIntent("WantsExitCover", true)
@@ -236,6 +244,13 @@ end
 ------------------------------------------------------------------------
 
 function IntentMapper:_setIntent(intentName: string, active: boolean, data: any?, batchId: number?)
+	if intentName == "WantsAim" then
+		local prev = self._activeIntents[intentName]
+		local prevActive = prev and prev.Active or false
+		if prevActive ~= active then
+			print(`[AimDebug] IntentMapper: WantsAim {prevActive} → {active}`)
+		end
+	end
 	if active then
 		self._activeIntents[intentName] = { Active = true, Data = data, BatchId = batchId }
 	else

@@ -38,11 +38,12 @@ local EVADE_ACTIONS: { [string]: boolean } = table.freeze({
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function EvadeHandler.new(stateMachine, coverHandler)
+function EvadeHandler.new(stateMachine, coverHandler, intentMapper)
 	local self = setmetatable({}, EvadeHandler)
 
 	self._stateMachine = stateMachine
 	self._coverHandler = coverHandler
+	self._intentMapper = intentMapper
 	self._player = Players.LocalPlayer
 
 	-- Evade state
@@ -272,7 +273,20 @@ EvadeHandler._handlers = {
 		self._evadeSpeed = 0
 		self._evadeDirection = nil
 		self._stateMachine:Unlock()
-		self._stateMachine:TransitionTo("Idle")
+		local im = self._intentMapper
+		if im and im:HasIntent("WantsRoadieRun") then
+			self._stateMachine:TransitionTo("RoadieRun")
+		elseif
+			im
+			and (im:HasIntent("WantsMoveForward")
+				or im:HasIntent("WantsMoveBackward")
+				or im:HasIntent("WantsMoveLeft")
+				or im:HasIntent("WantsMoveRight"))
+		then
+			self._stateMachine:TransitionTo("Walking")
+		else
+			self._stateMachine:TransitionTo("Idle")
+		end
 	end)
 	end,
 }

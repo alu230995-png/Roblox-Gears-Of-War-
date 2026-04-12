@@ -96,11 +96,29 @@ function ActionResolver:Resolve(): (string, string?, any?)
 		return "NoAction", nil, nil
 	end
 	if self._stateMachine:IsInGroup("ActionGroup") and state ~= "CoverSwap" and state ~= "CoverEntering" then
+		if Constants.DEBUG_MODE and (state == "CoverAimHigh" or state == "CoverAimLow" or state == "CoverFiring") then
+			print(`[AimDebug] ActionResolver: state={state} BLOCKED by ActionGroup guard!`)
+		end
 		return "NoAction", nil, nil
 	end
 
 	local ctx = self:_buildContext(state)
 	local rules = self:_selectRules(state)
+
+	-- DEBUG: Log cuando estamos en aim states
+	if Constants.DEBUG_MODE and (state == "CoverAimHigh" or state == "CoverAimLow" or state == "CoverFiring") then
+		local rulesName = "unknown"
+		if rules == CoverRules.Aim then
+			rulesName = "CoverRules.Aim"
+		elseif rules == CoverRules.CoverFiring then
+			rulesName = "CoverRules.CoverFiring"
+		elseif rules == CoverRules.Idle then
+			rulesName = "CoverRules.Idle (FALLBACK!)"
+		end
+		local inCoverGroup = self._stateMachine:IsInGroup("CoverGroup")
+		print(`[AimDebug] ActionResolver: state={state} | rules={rulesName} | inCoverGroup={inCoverGroup}`)
+	end
+
 	local action, targetState, data = self:_evaluateRules(rules, ctx)
 
 	if action ~= "NoAction" then

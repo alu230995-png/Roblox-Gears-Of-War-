@@ -144,12 +144,13 @@ end
 ---   3. Proyectar MoveDirection sobre wallRight con Dot → movementScale (-1..1)
 ---   4. Detectar esquina interna → cambiar normal + rotar CFrame al vuelo
 ---   5. Bloquear en esquinas externas via CornerCover
----   6. V = wallRight × movementScale × COVER_WALK_SPEED (preservar Y)
+---   6. V = wallRight × movementScale × speed (preservar Y)
 ---   7. Wall-glue
 ---
 --- @param _dt number — delta time
 --- @param _envContext table? — EnvironmentContext del EnvironmentSensor
-function InCover:UpdateWalking(dt: number, _envContext: any?)
+--- @param speedOverride number? — velocidad alternativa (ej: reducida al apuntar); usa COVER_WALK_SPEED si nil
+function InCover:UpdateWalking(dt: number, _envContext: any?, speedOverride: number?)
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
@@ -234,7 +235,8 @@ function InCover:UpdateWalking(dt: number, _envContext: any?)
 
 	-- 6. APLICAR VELOCIDAD sobre el riel
 	if math.abs(movementScale) > Constants.MOVE_DIRECTION_THRESHOLD_LOW then
-		local velocity = wallRight * movementScale * Constants.COVER_WALK_SPEED
+		local targetSpeed = speedOverride or Constants.COVER_WALK_SPEED
+		local velocity = wallRight * movementScale * targetSpeed
 		hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, hrp.AssemblyLinearVelocity.Y, velocity.Z)
 	else
 		hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)

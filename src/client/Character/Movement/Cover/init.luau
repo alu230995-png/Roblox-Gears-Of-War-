@@ -196,7 +196,13 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	-- de Low a High (o vice versa) sin que el jugador salga de cover.
 	if
 		self._coverState.coverNormal
-		and (currentState == "CoverIdle" or currentState == "CoverWalking" or currentState == "CoverRunning")
+		and (currentState == "CoverIdle"
+			or currentState == "CoverWalking"
+			or currentState == "CoverRunning"
+			or currentState == "CoverAimHigh"
+			or currentState == "CoverAimLow"
+			or currentState == "CoverFiring"
+			or currentState == "CoverPeek")
 	then
 		local character = self._coverState.player.Character
 		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -221,14 +227,28 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 		or currentState == "CoverRunning"
 		or currentState == "CoverCorners"
 		or currentState == "CoverAim"
+		or currentState == "CoverAimHigh"
+		or currentState == "CoverAimLow"
+		or currentState == "CoverFiring"
+		or currentState == "CoverPeek"
 		or currentState == "CoverBlindFire"
 	then
 		self._cornerCover:Update(envContext)
 	end
 
-	-- IN COVER (CoverIdle): reposo total — velocidad=0, wall-glue
-	if currentState == "CoverIdle" and self._coverState.coverNormal then
+	-- COVER IDLE (CoverIdle, CoverPeek): reposo total — velocidad=0, wall-glue
+	if (currentState == "CoverIdle" or currentState == "CoverPeek") and self._coverState.coverNormal then
 		self._inCover:UpdateIdle(dt, envContext)
+	end
+
+	-- COVER AIM (CoverAimHigh, CoverAimLow, CoverFiring): movimiento lateral a velocidad reducida.
+	-- El aim NO bloquea el movimiento — solo reduce la velocidad con AIM_WALK_SPEED_MULTIPLIER.
+	-- Sin movimiento: UpdateWalking ya zeroes la velocidad, comportamiento idéntico a UpdateIdle.
+	if
+		(currentState == "CoverAimHigh" or currentState == "CoverAimLow" or currentState == "CoverFiring")
+		and self._coverState.coverNormal
+	then
+		self._inCover:UpdateWalking(dt, envContext, Constants.COVER_WALK_SPEED * Constants.AIM_WALK_SPEED_MULTIPLIER)
 	end
 
 	-- IN COVER (CoverWalking): movimiento lateral sobre el Tangente T = Up × N

@@ -29,6 +29,10 @@ local MAP = table.freeze({
 	ExitCorner = 0, -- Controlado por impulso decreciente (duración más corta que Evading)
 	CoverIdle = 0, -- WalkSpeed=0: wall-glue + velocidad=0 (reposo total)
 	CoverAim = 0,
+	CoverAimHigh = 0, -- WalkSpeed=0: velocidad controlada por InCover:UpdateWalking con speedOverride
+	CoverAimLow = 0, -- WalkSpeed=0: idem
+	CoverFiring = 0, -- WalkSpeed=0: idem — disparo desde cover, física idéntica a CoverAimHigh/Low
+	CoverPeek = 0, -- Sin movimiento: el personaje está asomado en esquina
 	CoverBlindFire = 0,
 	Mantling = 0,
 	Vaulting = 0, -- WalkSpeed=0: posición controlada 100% por VaultHandler (Bezier)

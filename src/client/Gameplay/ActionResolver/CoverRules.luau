@@ -15,7 +15,41 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
+local AimAngleUtils = require(script.Parent.Parent:WaitForChild("Aiming"):WaitForChild("AimAngleUtil"))
 local CoverRules = {}
+
+------------------------------------------------------------------------
+-- DEADZONE HELPER
+------------------------------------------------------------------------
+
+--- Devuelve true si la cámara está en la zona muerta de apuntado.
+--- Para Low cover, la zona frontal (abs(angle) <= LOW_COVER_FRONT_HALF_ANGLE)
+--- nunca se considera deadzone (el personaje apunta sobre la cobertura).
+local function _isAimDeadzone(ctx): boolean
+	local coverHandler = ctx.CoverHandler
+	if not coverHandler then
+		return false
+	end
+	local coverNormal = coverHandler:GetNormal()
+	if not coverNormal then
+		return false
+	end
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return false
+	end
+	local look = camera.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < Constants.ZERO_MAGNITUDE then
+		return false
+	end
+	local angle = AimAngleUtils.AngleFromCoverNormal(flat.Unit, coverNormal)
+	-- Low cover: la zona frontal es válida (no es deadzone)
+	if coverHandler:GetCoverType() == "Low" and math.abs(angle) <= Constants.LOW_COVER_FRONT_HALF_ANGLE then
+		return false
+	end
+	return AimAngleUtils.GetShoulderSide(angle, Constants.COVER_AIM_DEADZONE_ANGLE) == nil
+end
 
 ------------------------------------------------------------------------
 -- SHARED COVER RULES (reutilizadas en múltiples sub-estados)
@@ -86,9 +120,17 @@ local ExitCorner = {
 local PopUpAim = {
 	id = "PopUpAim",
 	check = function(_resolver, ctx)
-		return ctx.Intents:HasIntent("WantsAim")
+		return ctx.Intents:HasIntent("WantsAim") and not _isAimDeadzone(ctx)
 	end,
-	execute = function()
+	execute = function(_resolver, ctx)
+		local coverHandler = ctx.CoverHandler
+		local coverType = coverHandler and coverHandler:GetCoverType()
+		if coverType == "High" then
+			return "PopUpAim", "CoverAimHigh", nil
+		elseif coverType == "Low" then
+			return "PopUpAim", "CoverAimLow", nil
+		end
+		-- Legacy fallback cuando el tipo de cover es desconocido
 		return "PopUpAim", "CoverAim", nil
 	end,
 }
@@ -131,22 +173,104 @@ local BlockCoverTap = {
 ------------------------------------------------------------------------
 
 CoverRules.Aim = {
+	ExitCover, -- Prio 1: Salir de cover (mismo comportamiento que Idle/Walking)
+
+	-- Prio 2: Cámara en la deadzone → salir de aim inmediatamente
+	-- La deadzone es la zona detrás de la cover donde apuntar no es físicamente posible.
+	-- AimingController._updateHighCover detecta la deadzone pero delega la transición aquí.
 	{
-		id = "ReturnToCover",
+		id = "ReturnToCoverDeadzone",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsStopAim")
+			local wantsAim = ctx.Intents:HasIntent("WantsAim")
+			local inDeadzone = _isAimDeadzone(ctx)
+			if Constants.DEBUG_MODE and (wantsAim and inDeadzone) then
+				print("[AimDebug] ReturnToCoverDeadzone CHECK PASSED — WantsAim=true + deadzone=true")
+			end
+			return wantsAim and inDeadzone
 		end,
 		execute = function()
+			if Constants.DEBUG_MODE then
+				print("[AimDebug] ReturnToCoverDeadzone EXECUTE → CoverIdle")
+			end
 			return "ReturnToCover", "CoverIdle", nil
 		end,
 	},
+
+	-- Prio 3: Soltó el hold de aim
+	{
+		id = "ReturnToCover",
+		check = function(_resolver, ctx)
+			local wantsAim = ctx.Intents:HasIntent("WantsAim")
+			if Constants.DEBUG_MODE then
+				print(`[AimDebug] ReturnToCover CHECK — WantsAim={wantsAim} → pass={not wantsAim}`)
+			end
+			return not wantsAim
+		end,
+		execute = function()
+			if Constants.DEBUG_MODE then
+				print("[AimDebug] ReturnToCover EXECUTE → CoverIdle")
+			end
+			return "ReturnToCover", "CoverIdle", nil
+		end,
+	},
+
+	-- Prio 4: Disparo desde cover aim
 	{
 		id = "ShootFromCover",
 		check = function(_resolver, ctx)
 			return ctx.Intents:HasIntent("WantsShoot")
 		end,
 		execute = function()
-			return "Shoot", "Firing", nil
+			return "Shoot", "CoverFiring", nil
+		end,
+	},
+}
+
+------------------------------------------------------------------------
+-- COVER FIRING RULES
+-- Disparo activo desde cover aim. El personaje mantiene la física de aim
+-- (UpdateWalking con velocidad reducida). Solo dos salidas posibles:
+--   1. Soltó aimhold → CoverIdle (ReturnToCover completo)
+--   2. Soltó el gatillo pero sigue apuntando → volver al aim state correcto
+------------------------------------------------------------------------
+
+CoverRules.CoverFiring = {
+	ExitCover, -- Prio 1: Salir de cover (mismo comportamiento que Idle/Walking)
+	-- Prio 2: Deadzone → salir de aim y disparo completamente
+	{
+		id = "CancelCoverFiringDeadzone",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsAim") and _isAimDeadzone(ctx)
+		end,
+		execute = function()
+			return "ReturnToCover", "CoverIdle", nil
+		end,
+	},
+	-- Prio 3: Soltó el hold de aim → salir de todo el contexto de aim
+	{
+		id = "CancelCoverFiring",
+		check = function(_resolver, ctx)
+			return not ctx.Intents:HasIntent("WantsAim")
+		end,
+		execute = function()
+			return "ReturnToCover", "CoverIdle", nil
+		end,
+	},
+	-- Prio 4: Soltó el gatillo pero sigue apuntando → volver al aim state correcto
+	{
+		id = "StopCoverFiring",
+		check = function(_resolver, ctx)
+			return not ctx.Intents:HasIntent("WantsShoot")
+		end,
+		execute = function(_resolver, ctx)
+			local coverHandler = ctx.CoverHandler
+			local coverType = coverHandler and coverHandler:GetCoverType()
+			if coverType == "High" then
+				return "ReturnToAim", "CoverAimHigh", nil
+			elseif coverType == "Low" then
+				return "ReturnToAim", "CoverAimLow", nil
+			end
+			return "ReturnToCover", "CoverIdle", nil
 		end,
 	},
 }
@@ -438,6 +562,10 @@ CoverRules.Swap = {
 
 CoverRules.SubRules = {
 	CoverAim = CoverRules.Aim,
+	CoverAimHigh = CoverRules.Aim,
+	CoverAimLow = CoverRules.Aim,
+	CoverPeek = CoverRules.Aim,
+	CoverFiring = CoverRules.CoverFiring,
 	CoverBlindFire = CoverRules.BlindFire,
 	CoverIdle = CoverRules.Idle,
 	CoverWalking = CoverRules.Walking,

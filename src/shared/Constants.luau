@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -84,8 +84,9 @@ Constants.JUMP_POWER = 0
 ------------------------------------------------------------------------
 
 -- FOV
-Constants.DEFAULT_FOV = 70
-Constants.ROADIE_RUN_FOV = 80
+Constants.DEFAULT_FOV = 65
+Constants.ROADIE_RUN_FOV = 90
+Constants.COVERS_FOV = 80
 Constants.CAMERA_FOV_LERP_SPEED = 5
 
 -- Offsets de FOV por estado (sumados a DEFAULT_FOV)
@@ -181,6 +182,23 @@ Constants.CAM_PITCH_MIN = -80
 Constants.CAM_PITCH_MAX = 80
 
 ------------------------------------------------------------------------
+-- 5b. AIMING SYSTEM — zoom, velocidad, deadzone, peek
+------------------------------------------------------------------------
+
+-- Reducción de FOV al apuntar (sumado a DEFAULT_FOV). El arma lo sobreescribirá en Fase 2.
+Constants.AIM_ZOOM_FOV_DELTA = -15
+-- Fracción de velocidad base conservada al caminar apuntando (0.45 = 45%)
+Constants.AIM_WALK_SPEED_MULTIPLIER = 0.45
+-- Ángulo (grados) desde la normal de la pared donde el apuntado está bloqueado (deadzone)
+Constants.COVER_AIM_DEADZONE_ANGLE = 20
+-- Duración del lerp (segundos) al cambiar de hombro en cover aim
+Constants.COVER_AIM_SHOULDER_BLEND = 0.12
+-- Medio-cono frontal (grados) en low cover donde el personaje rota hacia afuera
+Constants.LOW_COVER_FRONT_HALF_ANGLE = 20
+-- Mínimo input direccional (0-1) para activar peek en esquina
+Constants.PEEK_INPUT_THRESHOLD = 0.30
+
+------------------------------------------------------------------------
 -- 6. COVER SYSTEM — snap, walking, running, wall-glue, entering
 ------------------------------------------------------------------------
 
@@ -243,14 +261,14 @@ Constants.CAM_CORNER_YAW_SPEED = 8
 -- 8. COVER SCANNING — detección y raycast
 ------------------------------------------------------------------------
 
-Constants.COVER_SCAN_RANGE = 32
+Constants.COVER_SCAN_RANGE = 15
 Constants.COVER_FALLBACK_ENABLED = true -- false en producción para desactivar fallback permisivo
 Constants.COVER_FALLBACK_MIN_SIZE = 2 -- _isCoverObject: tamaño mínimo para fallback dev
 Constants.COVER_HEIGHT_LOW_MAX = 6
 Constants.COVER_RAY_ORIGIN_OFFSET = Vector3.new(0, 0.5, 0)
 Constants.COVER_CORNER_DETECTION_RANGE = 2.0
 Constants.COVER_CORNER_PUSH_IN = 2.0
-Constants.COVER_SWAP_SPHERE_RADIUS = 0.5
+Constants.COVER_SWAP_SPHERE_RADIUS = 1.5
 
 -- EnvironmentSensor internals
 Constants.ENV_FILTER_REFRESH_FRAMES = 45
@@ -262,7 +280,7 @@ Constants.ENV_CORNER_EPSILON = 0.01
 ------------------------------------------------------------------------
 
 -- Distancia máxima del rayo tangente (vector café) en studs
-Constants.COVER_SWAP_MAX_DISTANCE = 14
+Constants.COVER_SWAP_MAX_DISTANCE = 20
 -- Mínimo dot product entre tangentes geométricas para considerar coberturas alineadas
 Constants.COVER_SWAP_ALIGNMENT_THRESHOLD = 0.95
 -- Margen de seguridad: studs empujados hacia adentro desde el borde de la nueva cover

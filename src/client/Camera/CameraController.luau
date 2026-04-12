@@ -37,16 +37,19 @@ local STATE_FOV = table.freeze({
 	Idle = Constants.DEFAULT_FOV,
 	Walking = Constants.DEFAULT_FOV,
 	RoadieRun = Constants.ROADIE_RUN_FOV,
-	CoverIdle = Constants.ROADIE_RUN_FOV,
-	CoverAim = Constants.DEFAULT_FOV + Constants.CAMERA_FOV_COVER_AIM_OFFSET,
-	CoverBlindFire = Constants.DEFAULT_FOV,
-	CoverSlide = Constants.ROADIE_RUN_FOV,
-	CoverEntering = Constants.ROADIE_RUN_FOV,
-	CoverWalking = Constants.ROADIE_RUN_FOV,
-	CoverRunning = Constants.ROADIE_RUN_FOV,
-	CoverExiting = Constants.ROADIE_RUN_FOV,
-	CoverCorners = Constants.ROADIE_RUN_FOV,
-	CoverSwap = Constants.ROADIE_RUN_FOV,
+	CoverIdle = Constants.COVERS_FOV,
+	CoverAim = Constants.COVERS_FOV + Constants.CAMERA_FOV_COVER_AIM_OFFSET,
+	CoverAimHigh = Constants.COVERS_FOV,
+	CoverAimLow = Constants.COVERS_FOV,
+	CoverPeek = Constants.COVERS_FOV,
+	CoverBlindFire = Constants.COVERS_FOV,
+	CoverSlide = Constants.COVERS_FOV,
+	CoverEntering = Constants.DEFAULT_FOV,
+	CoverWalking = Constants.COVERS_FOV,
+	CoverRunning = Constants.COVERS_FOV,
+	CoverExiting = Constants.COVERS_FOV,
+	CoverCorners = Constants.COVERS_FOV,
+	CoverSwap = Constants.DEFAULT_FOV,
 	Evading = Constants.DEFAULT_FOV,
 	Mantling = Constants.DEFAULT_FOV,
 	Vaulting = Constants.DEFAULT_FOV,
@@ -73,6 +76,9 @@ local STATE_BOB_MULTIPLIER = table.freeze({
 	RoadieRun = Constants.CAMERA_BOB_ROADIE_MULTIPLIER,
 	CoverIdle = 0,
 	CoverAim = 0,
+	CoverAimHigh = 0,
+	CoverAimLow = 0,
+	CoverPeek = 0,
 	CoverBlindFire = 0,
 	CoverSlide = 0.5,
 	CoverEntering = 0.3,
@@ -104,6 +110,9 @@ local STATE_SENSITIVITY = table.freeze({
 	RoadieRun = Constants.CAM_SENSITIVITY_ROADIE,
 	CoverIdle = Constants.CAM_SENSITIVITY_COVER,
 	CoverAim = Constants.CAM_SENSITIVITY_AIM,
+	CoverAimHigh = Constants.CAM_SENSITIVITY_AIM,
+	CoverAimLow = Constants.CAM_SENSITIVITY_AIM,
+	CoverPeek = Constants.CAM_SENSITIVITY_AIM,
 	CoverBlindFire = Constants.CAM_SENSITIVITY_COVER,
 	CoverSlide = Constants.CAM_SENSITIVITY_ROADIE,
 	CoverEntering = Constants.CAM_SENSITIVITY_DEFAULT,
@@ -135,6 +144,9 @@ local STATE_FOLLOW_YAW = table.freeze({
 	RoadieRun = Constants.CAM_FOLLOW_YAW_RUN,
 	CoverIdle = 0,
 	CoverAim = 0,
+	CoverAimHigh = 0,
+	CoverAimLow = 0,
+	CoverPeek = 0,
 	CoverBlindFire = 0,
 	CoverSlide = 0,
 	CoverEntering = 0,
@@ -173,6 +185,7 @@ function CameraController.new(stateMachine, actionExecutedSignal, mouseInput)
 	-- FOV
 	self._targetFOV = Constants.DEFAULT_FOV
 	self._currentFOV = Constants.DEFAULT_FOV
+	self._fovDelta = 0 -- Aditivo: aplicado por AimingController para zoom de apuntado
 
 	-- Camera bob
 	self._bobTime = 0
@@ -334,6 +347,12 @@ end
 --- Mientras es true, Dynamic Framing se desactiva para evitar spinning.
 function CameraController:SetCoverSettleActive(active: boolean)
 	self._coverSettleActive = active
+end
+
+--- Delta aditivo de FOV usado por AimingController para zoom de apuntado.
+--- Se suma al _targetFOV (state-driven) en _interpolateFOV.
+function CameraController:SetFOVDelta(delta: number)
+	self._fovDelta = delta
 end
 
 ------------------------------------------------------------------------
@@ -550,8 +569,9 @@ end
 ------------------------------------------------------------------------
 
 function CameraController:_interpolateFOV(dt: number, camera: Camera)
+	local effectiveFOV = self._targetFOV + self._fovDelta
 	self._currentFOV = self._currentFOV
-		+ (self._targetFOV - self._currentFOV) * math.min(1, Constants.CAMERA_FOV_LERP_SPEED * dt)
+		+ (effectiveFOV - self._currentFOV) * math.min(1, Constants.CAMERA_FOV_LERP_SPEED * dt)
 	camera.FieldOfView = self._currentFOV
 end
 

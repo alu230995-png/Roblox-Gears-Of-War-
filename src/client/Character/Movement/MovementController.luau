@@ -47,7 +47,7 @@ function MovementController.new(
 
 	-- Sub-handlers
 	self._coverHandler = CoverMain.new(stateMachine, environmentSensor)
-	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
+	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler, actionResolver._intents)
 	self._vaultHandler = VaultHandler.new(stateMachine, self._coverHandler, environmentSensor)
 	self._rotationHandler = RotationHandler.new(inputDetector)
 
@@ -129,13 +129,21 @@ function MovementController:ExecuteAction(action: string, targetState: string?, 
 
 	-- Transicionar si hay target state
 	if targetState then
+		local currentState = self._stateMachine:GetCurrentState()
 		local success = self._stateMachine:TransitionTo(targetState)
 		if not success then
 			-- ForceState para estados críticos (server-authoritative)
 			if targetState == "DBNO" then
 				self._stateMachine:ForceState(targetState)
 			else
+				if Constants.DEBUG_MODE and (action == "ReturnToCover" or action == "PopUpAim" or action == "ReturnToAim") then
+					print(`[AimDebug] MovementController: TransitionTo({targetState}) FAILED from {currentState} — aborting {action}`)
+				end
 				return -- No se pudo transicionar, abortar acción
+			end
+		else
+			if Constants.DEBUG_MODE and (action == "ReturnToCover" or action == "PopUpAim" or action == "ReturnToAim") then
+				print(`[AimDebug] MovementController: TransitionTo({targetState}) SUCCESS from {currentState} — executing {action}`)
 			end
 		end
 	end

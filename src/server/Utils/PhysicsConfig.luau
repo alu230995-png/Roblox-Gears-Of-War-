@@ -84,6 +84,8 @@ function PhysicsConfig.SetMovementForState(humanoid: Humanoid, stateName: string
 		humanoid.WalkSpeed = Constants.WALK_SPEED * 0.5 -- Movimiento lateral reducido en cover
 	elseif stateName == "CoverAim" or stateName == "CoverBlindFire" then
 		humanoid.WalkSpeed = 0
+	elseif stateName == "CoverAimHigh" or stateName == "CoverAimLow" or stateName == "CoverPeek" then
+		humanoid.WalkSpeed = 0
 	elseif stateName == "Mantling" then
 		humanoid.WalkSpeed = 0
 	elseif stateName == "DBNO" then

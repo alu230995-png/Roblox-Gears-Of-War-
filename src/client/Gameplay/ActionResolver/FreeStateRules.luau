@@ -102,9 +102,12 @@ local FreeStateRules = {
 	{
 		id = "StopAim",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsStopAim") and ctx.State == "Aiming"
+			return not ctx.Intents:HasIntent("WantsAim") and ctx.State == "Aiming"
 		end,
-		execute = function()
+		execute = function(_resolver, ctx)
+			if ctx.HasMovement then
+				return "StopAim", "Walking", nil
+			end
 			return "StopAim", "Idle", nil
 		end,
 	},
@@ -124,7 +127,7 @@ local FreeStateRules = {
 	{
 		id = "StopShoot",
 		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsStopShoot") and ctx.State == "Firing"
+			return not ctx.Intents:HasIntent("WantsShoot") and ctx.State == "Firing"
 		end,
 		execute = function()
 			return "StopShoot", "Aiming", nil

@@ -224,7 +224,6 @@ function Helpers.computeLateralScale(ctx): number
 	if not moveDirWorld then
 		return 0
 	end
-	print(math.abs(moveDirWorld:Dot(wallRight)))
 	return math.abs(moveDirWorld:Dot(wallRight))
 end
 

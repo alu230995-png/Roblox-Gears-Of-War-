@@ -88,6 +88,27 @@ local CAPABILITY_EXCEPTIONS = {
 		canSprint = false,
 	},
 
+	CoverAimHigh = {
+		canMove = false, -- Pop-up desde high cover: estático, expuesto
+		canTakeCover = false,
+		canEvade = false,
+		canSprint = false,
+	},
+
+	CoverAimLow = {
+		canMove = false, -- Apuntando sobre low cover: estático, expuesto
+		canTakeCover = false,
+		canEvade = false,
+		canSprint = false,
+	},
+
+	CoverPeek = {
+		canMove = false, -- Asomado en esquina: sin movimiento
+		canTakeCover = false,
+		canEvade = false,
+		canSprint = false,
+	},
+
 	CoverBlindFire = {
 		canMove = false,
 		canTakeCover = false,
