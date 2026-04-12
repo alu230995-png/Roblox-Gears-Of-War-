@@ -44,12 +44,16 @@ local COVER_LOCKED_STATES: { [string]: boolean } = table.freeze({
 	CoverBlindFire = true,
 	CoverExiting = true,
 	CoverSwap = true,
+	CoverAimHigh = true,
+	CoverAim = true,
+	CoverFiring = true,
 })
 
 function RotationHandler.new(inputDetector)
 	local self = setmetatable({}, RotationHandler)
 	self._player = Players.LocalPlayer
 	self._inputDetector = inputDetector -- referencia al InputDetector para leer raw input Vector2
+	self._aimingController = nil -- inyectado via SetAimingController (para Low Cover rotation override)
 	self._roadieRunTimer = 0 -- tiempo en RoadieRun (para Quick Snap → Heavy Steering)
 	self._lastState = ""
 	self._lockedRunDirection = nil :: Vector3? -- Direction Caching: dirección fija durante Fase 1
@@ -104,11 +108,16 @@ function RotationHandler:Destroy()
 	table.clear(self._connections)
 end
 
+--- Inyecta referencia al AimingController (para GetRotationOverride en Low Cover).
+function RotationHandler:SetAimingController(aimingController)
+	self._aimingController = aimingController
+end
+
 --- Actualiza la rotación del personaje cada frame.
 --- @param dt number — delta time
 --- @param state string — estado actual del jugador
 --- @param coverNormal Vector3? — normal de la pared de cover (nil si no está en cover)
-function RotationHandler:Update(dt: number, state: string, _coverNormal: Vector3?)
+function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?)
 	local character = self._player.Character
 	if not character then
 		return
@@ -135,6 +144,53 @@ function RotationHandler:Update(dt: number, state: string, _coverNormal: Vector3
 		self._lockedRunDirection = self:_captureWorldDirection(humanoid)
 	end
 	self._lastState = state
+
+	-- COVER PEEK: rotar 90° según el lado del corner (mirando a lo largo de la pared)
+	-- Right corner → personaje mira wallRight (+90° de coverNormal)
+	-- Left corner  → personaje mira -wallRight (-90° de coverNormal)
+	if state == "CoverPeek" then
+		if coverNormal then
+			-- Usar la dirección cacheada al inicio del peek (relativa a la cámara en ese momento).
+			-- peekSide se determina con input relativo a la cámara, así que faceDir debe
+			-- derivarse del right de la cámara en ese instante — no de wallRight recalculado,
+			-- que puede ser opuesto al right visual dependiendo de si la cámara mira hacia
+			-- adentro o hacia afuera de la cobertura.
+			local faceDir: Vector3? = nil
+			if self._aimingController then
+				faceDir = self._aimingController:GetPeekFaceDir()
+			end
+
+			if not faceDir then
+				-- Fallback: recalcular desde wallRight (comportamiento original)
+				local peekSide = self._aimingController and self._aimingController:GetPeekSide()
+				local wallRight = Vector3.yAxis:Cross(coverNormal)
+				if wallRight.Magnitude >= 0.01 then
+					wallRight = wallRight.Unit
+					faceDir = if peekSide == "Right" then wallRight else -wallRight
+				end
+			end
+
+			if faceDir then
+				print(`[RotationHandler] CoverPeek detected — applying peek rotation`)
+				self:_alignToDirection(dt, hrp, faceDir)
+			end
+		end
+		return
+	end
+
+	-- COVER AIM LOW: rotación condicional según override de AimingController
+	-- Cono frontal → personaje rota hacia afuera (-coverNormal)
+	-- Zona lateral → personaje vuelve a la rotación normal de cover (+coverNormal, hacia la pared)
+	if state == "CoverAimLow" then
+		if coverNormal then
+			if self._aimingController and self._aimingController:GetRotationOverride() == "CoverAimFront" then
+				self:_alignToDirection(dt, hrp, -coverNormal)
+			else
+				self:_alignToDirection(dt, hrp, coverNormal)
+			end
+		end
+		return
+	end
 
 	-- LOCKED: Cover y estados especiales — no tocar rotación
 	if COVER_LOCKED_STATES[state] then
@@ -171,6 +227,20 @@ function RotationHandler:_alignToCamera(dt: number, hrp: BasePart)
 	flatLook = flatLook.Unit
 	local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + flatLook)
 	hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 1 - math.exp(-12 * dt))
+end
+
+--- Alinea la rotación del personaje hacia una dirección XZ explícita.
+--- Usado para Low Cover aim: apunta hacia afuera de la pared (-coverNormal).
+function RotationHandler:_alignToDirection(dt: number, hrp: BasePart, dir: Vector3)
+	local flatDir = Vector3.new(dir.X, 0, dir.Z)
+	if flatDir.Magnitude < 0.01 then
+		return
+	end
+	flatDir = flatDir.Unit
+	local targetCFrame = CFrame.lookAt(hrp.Position, hrp.Position + flatDir)
+	hrp.CFrame = hrp.CFrame:Lerp(targetCFrame, 1 - math.exp(-12 * dt))
+
+	print(hrp.CFrame.LookVector)
 end
 
 ------------------------------------------------------------------------

@@ -123,12 +123,10 @@ function InCover:UpdateIdle(dt: number, _envContext: any?)
 	end
 
 	-- Pegamento: corregir posición si la física empujó al personaje
-	if not self._needsSettle then
-		self:_applyWallGlue(hrp)
-		-- Smooth rotation: mantener alineación a la normal de cover
-		-- (necesario después de settle y tras transiciones de esquina interna)
-		self:_smoothRotation(hrp, dt)
-	end
+	self:_applyWallGlue(hrp)
+	-- Smooth rotation: mantener alineación a la normal de cover
+	-- (necesario después de settle y tras transiciones de esquina interna)
+	self:_smoothRotation(hrp, dt)
 end
 
 ------------------------------------------------------------------------
@@ -247,7 +245,15 @@ function InCover:UpdateWalking(dt: number, _envContext: any?, speedOverride: num
 		self:_applyWallGlue(hrp)
 		-- Smooth rotation: mantener alineación a la normal de cover
 		-- (corrige orientación tras transición de esquina interna)
-		self:_smoothRotation(hrp, dt)
+		-- NO aplicar en estados de aim: RotationHandler gestiona la rotación allí
+		-- para evitar que _smoothRotation (→ pared) luche con _alignToDirection (→ afuera).
+		local currentState = self._state.stateMachine and self._state.stateMachine:GetCurrentState()
+		local isAimState = currentState == "CoverAimHigh"
+			or currentState == "CoverAimLow"
+			or currentState == "CoverFiring"
+		if not isAimState then
+			self:_smoothRotation(hrp, dt)
+		end
 	end
 
 	-- 8. Settle rotation (si viene de entering/swap)

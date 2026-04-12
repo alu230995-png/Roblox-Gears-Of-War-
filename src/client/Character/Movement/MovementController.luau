@@ -223,6 +223,11 @@ function MovementController:GetCoverHandler()
 	return self._coverHandler
 end
 
+--- Inyecta referencia al AimingController en RotationHandler (para Low Cover rotation override).
+function MovementController:SetAimingController(aimingController)
+	self._rotationHandler:SetAimingController(aimingController)
+end
+
 ------------------------------------------------------------------------
 -- INTERNAL: Character Refs Cache
 ------------------------------------------------------------------------

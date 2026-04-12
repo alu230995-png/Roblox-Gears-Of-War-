@@ -36,6 +36,9 @@ function AimingController.new(stateMachine, coverHandler, cameraController)
 	self._cameraController = cameraController
 
 	self._isAiming = false
+	self._rotationOverride = nil :: string?
+	self._peekSide = nil :: string?
+	self._peekFaceDir = nil :: Vector3?
 
 	return self
 end
@@ -75,7 +78,48 @@ function AimingController:HandleAction(action: string, _targetState: string?, _d
 			print(`[AimDebug] AimingController:HandleAction({action}) → _isAiming=false`)
 		end
 		self._isAiming = false
+		self._rotationOverride = nil
+		self._peekSide = nil
+		self._peekFaceDir = nil
 		self._cameraController:SetFOVDelta(0)
+	elseif action == "ReturnToAim" then
+		-- Soltó el gatillo pero sigue apuntando → re-aplicar FOV de aim
+		if Constants.DEBUG_MODE then
+			print(`[AimDebug] AimingController:HandleAction(ReturnToAim) → _isAiming stays true, FOV restored`)
+		end
+		self._isAiming = true
+		self._cameraController:SetFOVDelta(Constants.AIM_ZOOM_FOV_DELTA)
+	elseif action == "EnterPeek" then
+		if Constants.DEBUG_MODE then
+			print(`[AimDebug] AimingController:HandleAction(EnterPeek) → side={_data and _data.side}`)
+		end
+		self._isAiming = true
+		self._peekSide = _data and _data.side or nil
+		-- Cachear la dirección de cámara en el momento del peek.
+		-- peekSide se determina a partir del input relativo a la cámara, por lo que
+		-- faceDir debe derivarse del right de la cámara, no de wallRight.
+		self._peekFaceDir = nil
+		if self._peekSide then
+			local camera = workspace.CurrentCamera
+			if camera then
+				local camRight = camera.CFrame.RightVector
+				local flatRight = Vector3.new(camRight.X, 0, camRight.Z)
+				if flatRight.Magnitude > 0.01 then
+					self._peekFaceDir = (if self._peekSide == "Right" then flatRight else -flatRight).Unit
+				end
+			end
+		end
+		self._cameraController:SetFOVDelta(Constants.AIM_ZOOM_FOV_DELTA)
+		if self._peekSide then
+			self._cameraController:SetShoulderSide(self._peekSide)
+		end
+	elseif action == "ExitPeek" then
+		if Constants.DEBUG_MODE then
+			print("[AimDebug] AimingController:HandleAction(ExitPeek) → _peekSide=nil")
+		end
+		self._peekSide = nil
+		self._peekFaceDir = nil
+		-- No resetear _isAiming: el jugador sigue apuntando, vuelve a CoverAimHigh/Low
 	end
 end
 
@@ -104,7 +148,10 @@ function AimingController:Update(_dt: number)
 		-- No actualizar shoulder durante el disparo para evitar jitter.
 		return
 	elseif state == "CoverPeek" then
-		-- Asomado en esquina: shoulder determinado por el ángulo de peek, mantener FOV.
+		-- Shoulder fijo al lado del peek, sin deadzone
+		if self._peekSide then
+			self._cameraController:SetShoulderSide(self._peekSide)
+		end
 		return
 	elseif state == "Aiming" then
 		-- Free aim: sin shoulder logic, FOV ya gestionado por STATE_FOV
@@ -115,14 +162,42 @@ function AimingController:Update(_dt: number)
 			print(`[AimDebug] AimingController:Update SAFETY NET — state={state}, resetting _isAiming`)
 		end
 		self._isAiming = false
+		self._rotationOverride = nil
 		self._cameraController:SetFOVDelta(0)
 	end
+end
+
+--- Retorna true si el sistema de apuntado está activo.
+function AimingController:IsAiming(): boolean
+	return self._isAiming
+end
+
+--- Establece el lado del peek (para uso externo si necesario).
+function AimingController:SetPeekSide(side: string?)
+	self._peekSide = side
+end
+
+--- Retorna el lado actual del peek ("Left" | "Right" | nil).
+function AimingController:GetPeekSide(): string?
+	return self._peekSide
+end
+
+--- Retorna la dirección de rostro cacheada para el peek (relativa a la cámara al inicio del peek).
+--- Nil si no hay peek activo o si la cámara no estaba disponible al inicio.
+function AimingController:GetPeekFaceDir(): Vector3?
+	return self._peekFaceDir
 end
 
 --- Stub para Fase 2: penalización de precisión por movimiento.
 --- Se invocará cuando el jugador camina mientras apunta.
 function AimingController.OnMovementAccuracyPenalty(_isAiming: boolean)
 	-- Fase 2: conectar a WeaponController
+end
+
+--- Retorna el override de rotación activo para RotationHandler.
+--- "CoverAimFront" cuando Low Cover aim está en el cono frontal, nil en caso contrario.
+function AimingController:GetRotationOverride(): string?
+	return self._rotationOverride
 end
 
 ------------------------------------------------------------------------
@@ -154,6 +229,8 @@ end
 --- Apuntado desde high cover: deadzone 20° + detección de hombro.
 --- Si la cámara entra en la deadzone, el resolver (ReturnToCoverDeadzone) maneja la salida.
 function AimingController:_updateHighCover()
+	self._rotationOverride = nil -- High cover: personaje nunca rota
+
 	local coverNormal = self._coverHandler:GetNormal()
 	if not coverNormal then
 		return
@@ -179,8 +256,11 @@ end
 -- PRIVATE: Low Cover (Fase 1C)
 ------------------------------------------------------------------------
 
---- Apuntado desde low cover: zona frontal (apunta sobre el cover)
---- + zona lateral (misma lógica que high cover con shoulder + deadzone).
+--- Apuntado desde low cover:
+--- Cono frontal (±LOW_COVER_FRONT_HALF_ANGLE del outward): el personaje rota
+--- para encarar la cámara. Shoulder según signo del ángulo. Sin deadzone.
+--- Zona lateral (fuera del cono): misma lógica que high cover pero SIN deadzone
+--- (deadzoneAngle = 0). El personaje queda locked (cover snap maneja rotación).
 function AimingController:_updateLowCover()
 	local coverNormal = self._coverHandler:GetNormal()
 	if not coverNormal then
@@ -192,23 +272,21 @@ function AimingController:_updateLowCover()
 		return
 	end
 
-	local angle = AimAngleUtils.AngleFromCoverNormal(lookFlat, coverNormal)
-
-	-- Zona frontal: ángulo dentro del cono LOW_COVER_FRONT_HALF_ANGLE.
-	-- El personaje apunta SOBRE el low cover. Sin shoulder swap, sin deadzone.
-	if math.abs(angle) <= Constants.LOW_COVER_FRONT_HALF_ANGLE then
-		return
+	if AimAngleUtils.IsInsideFrontCone(lookFlat, coverNormal, Constants.LOW_COVER_FRONT_HALF_ANGLE) then
+		-- Cono frontal: personaje rota para encarar cámara, shoulder según ángulo
+		self._rotationOverride = "CoverAimFront"
+		local angle = AimAngleUtils.AngleFromCoverNormal(lookFlat, coverNormal)
+		local side = if angle >= 0 then "Right" else "Left"
+		self._cameraController:SetShoulderSide(side)
+	else
+		-- Zona lateral: shoulder según lado, sin deadzone (deadzoneAngle = 0)
+		self._rotationOverride = nil
+		local angle = AimAngleUtils.AngleFromCoverNormal(lookFlat, coverNormal)
+		local side = AimAngleUtils.GetShoulderSide(angle, 0)
+		if side then
+			self._cameraController:SetShoulderSide(side)
+		end
 	end
-
-	-- Zona lateral: misma lógica que high cover
-	local side = AimAngleUtils.GetShoulderSide(angle, Constants.COVER_AIM_DEADZONE_ANGLE)
-
-	if side == nil then
-		-- Deadzone lateral: el resolver maneja la salida vía ReturnToCoverDeadzone
-		return
-	end
-
-	self._cameraController:SetShoulderSide(side)
 end
 
 return AimingController

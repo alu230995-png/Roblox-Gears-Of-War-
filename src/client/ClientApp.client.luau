@@ -104,6 +104,9 @@ movementController.ActionExecuted:Connect(function(action, targetState, data)
 	aimingController:HandleAction(action, targetState, data)
 end)
 
+-- DI: RotationHandler necesita leer GetRotationOverride() para Low Cover aim
+movementController:SetAimingController(aimingController)
+
 -- Nota: SetCoverHandler se llama dentro de MovementController:Start() — no duplicar aquí.
 local soundController = SoundController.new(stateMachine)
 

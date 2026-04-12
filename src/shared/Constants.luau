@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = true
+Constants.DEBUG_MODE = false
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -197,6 +197,8 @@ Constants.COVER_AIM_SHOULDER_BLEND = 0.12
 Constants.LOW_COVER_FRONT_HALF_ANGLE = 20
 -- Mínimo input direccional (0-1) para activar peek en esquina
 Constants.PEEK_INPUT_THRESHOLD = 0.30
+-- Desplazamiento lateral (studs) del personaje al asomarse en esquina
+Constants.PEEK_OFFSET_STUDS = 2.0
 
 ------------------------------------------------------------------------
 -- 6. COVER SYSTEM — snap, walking, running, wall-glue, entering

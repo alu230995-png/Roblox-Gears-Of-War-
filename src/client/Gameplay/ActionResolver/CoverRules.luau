@@ -44,8 +44,8 @@ local function _isAimDeadzone(ctx): boolean
 		return false
 	end
 	local angle = AimAngleUtils.AngleFromCoverNormal(flat.Unit, coverNormal)
-	-- Low cover: la zona frontal es válida (no es deadzone)
-	if coverHandler:GetCoverType() == "Low" and math.abs(angle) <= Constants.LOW_COVER_FRONT_HALF_ANGLE then
+	-- Low cover: NO deadzone (cono frontal siempre válido, lateral usa deadzoneAngle=0)
+	if coverHandler:GetCoverType() == "Low" then
 		return false
 	end
 	return AimAngleUtils.GetShoulderSide(angle, Constants.COVER_AIM_DEADZONE_ANGLE) == nil
@@ -146,6 +146,38 @@ local BlindFire = {
 	end,
 }
 
+local EnterPeek = {
+	id = "EnterPeek",
+	check = function(_resolver, ctx)
+		-- Solo desde aim states (apuntando desde cover)
+		if ctx.State ~= "CoverAimHigh" and ctx.State ~= "CoverAimLow" and ctx.State ~= "CoverAim" then
+			return false
+		end
+		if not ctx.Intents:HasIntent("WantsAim") then
+			return false
+		end
+		local coverHandler = ctx.CoverHandler
+		if not coverHandler then
+			return false
+		end
+		local lateralScale = Helpers.computeSignedLateralScale(ctx)
+		local atRight = coverHandler:IsAtCornerRight()
+		local atLeft = coverHandler:IsAtCornerLeft()
+		if atRight and lateralScale >= Constants.PEEK_INPUT_THRESHOLD then
+			return true
+		end
+		if atLeft and lateralScale <= -Constants.PEEK_INPUT_THRESHOLD then
+			return true
+		end
+		return false
+	end,
+	execute = function(_resolver, ctx)
+		local lateralScale = Helpers.computeSignedLateralScale(ctx)
+		local side = if lateralScale > 0 then "Right" else "Left"
+		return "EnterPeek", "CoverPeek", { side = side }
+	end,
+}
+
 local ReloadInCover = {
 	id = "ReloadInCover",
 	check = function(_resolver, ctx)
@@ -214,7 +246,10 @@ CoverRules.Aim = {
 		end,
 	},
 
-	-- Prio 4: Disparo desde cover aim
+	-- Prio 4: Peek en esquina (aim + lateral input > threshold)
+	EnterPeek,
+
+	-- Prio 5: Disparo desde cover aim
 	{
 		id = "ShootFromCover",
 		check = function(_resolver, ctx)
@@ -287,6 +322,68 @@ CoverRules.BlindFire = {
 		end,
 		execute = function()
 			return "StopBlindFire", "CoverIdle", nil
+		end,
+	},
+}
+
+------------------------------------------------------------------------
+-- COVER PEEK RULES
+-- Asomado en esquina: peek displacement activo.
+-- Salidas: soltar aim, input lateral bajo umbral, disparo.
+------------------------------------------------------------------------
+
+CoverRules.Peek = {
+	ExitCover, -- Prio 1: Salir de cover
+
+	-- Prio 2: Soltó aim → volver a CoverIdle
+	{
+		id = "ReturnToCoverFromPeek",
+		check = function(_resolver, ctx)
+			return not ctx.Intents:HasIntent("WantsAim")
+		end,
+		execute = function()
+			return "ExitPeek", "CoverIdle", nil
+		end,
+	},
+
+	-- Prio 3: Input lateral bajo el umbral o ya no en esquina → volver al aim state previo
+	{
+		id = "ExitPeek",
+		check = function(_resolver, ctx)
+			local coverHandler = ctx.CoverHandler
+			if not coverHandler then
+				return true
+			end
+			local lateralScale = Helpers.computeSignedLateralScale(ctx)
+			local atRight = coverHandler:IsAtCornerRight()
+			local atLeft = coverHandler:IsAtCornerLeft()
+			if atRight and lateralScale >= Constants.PEEK_INPUT_THRESHOLD then
+				return false -- mantener peek
+			end
+			if atLeft and lateralScale <= -Constants.PEEK_INPUT_THRESHOLD then
+				return false -- mantener peek
+			end
+			return true -- salir de peek
+		end,
+		execute = function(_resolver, ctx)
+			local coverHandler = ctx.CoverHandler
+			local coverType = coverHandler and coverHandler:GetCoverType()
+			if coverType == "High" then
+				return "ExitPeek", "CoverAimHigh", nil
+			else
+				return "ExitPeek", "CoverAimLow", nil
+			end
+		end,
+	},
+
+	-- Prio 4: Disparo desde peek
+	{
+		id = "ShootFromPeek",
+		check = function(_resolver, ctx)
+			return ctx.Intents:HasIntent("WantsShoot")
+		end,
+		execute = function()
+			return "Shoot", "CoverFiring", nil
 		end,
 	},
 }
@@ -451,12 +548,13 @@ CoverRules.Running = {
 	ExitCover, -- Prio 1
 	CornerRollOut, -- Prio 2: Fallback de CoverSwap en esquina (lateral → roll completo)
 	ExitCorner, -- Prio 3: Fallback de CoverSwap en esquina (diagonal → salida rápida)
-	BlockCoverTap, -- Prio 4
-	PopUpAim, -- Prio 5
-	BlindFire, -- Prio 6
-	ReloadInCover, -- Prio 7
+	RollOutOfCover, -- Prio 4: Evade roll (WantsEvade, cualquier posición)
+	BlockCoverTap, -- Prio 5
+	PopUpAim, -- Prio 6
+	BlindFire, -- Prio 7
+	ReloadInCover, -- Prio 8
 
-	-- Prio 8: Soltar sprint + aún moviéndose → CoverWalking
+	-- Prio 9: Soltar sprint + aún moviéndose → CoverWalking
 	{
 		id = "SlowDownToWalking",
 		check = function(_resolver, ctx)
@@ -467,7 +565,7 @@ CoverRules.Running = {
 		end,
 	},
 
-	-- Prio 9: Sin movimiento → CoverIdle
+	-- Prio 10: Sin movimiento → CoverIdle
 	{
 		id = "StopCoverRunning",
 		check = function(_resolver, ctx)
@@ -564,7 +662,7 @@ CoverRules.SubRules = {
 	CoverAim = CoverRules.Aim,
 	CoverAimHigh = CoverRules.Aim,
 	CoverAimLow = CoverRules.Aim,
-	CoverPeek = CoverRules.Aim,
+	CoverPeek = CoverRules.Peek,
 	CoverFiring = CoverRules.CoverFiring,
 	CoverBlindFire = CoverRules.BlindFire,
 	CoverIdle = CoverRules.Idle,

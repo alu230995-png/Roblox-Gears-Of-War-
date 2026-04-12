@@ -33,6 +33,7 @@ local InCover = require(script.InCover)
 local CoverRunning = require(script.CoverRunning)
 local CornerCover = require(script.CornerCover)
 local CoverSwapController = require(script.CoverSwapController)
+local PeekHandler = require(script.PeekHandler)
 
 local CoverMain = {}
 CoverMain.__index = CoverMain
@@ -49,6 +50,8 @@ local COVER_ACTIONS: { [string]: boolean } = table.freeze({
 	StopCoverRunning = true,
 	CoverSwap = true,
 	CancelSwapToRun = true,
+	EnterPeek = true,
+	ExitPeek = true,
 })
 
 ------------------------------------------------------------------------
@@ -87,6 +90,7 @@ function CoverMain.new(stateMachine, environmentSensor)
 	self._inCover = InCover.new(self._coverState, self._cornerCover)
 	self._coverRunning = CoverRunning.new(self._coverState, self._cornerCover)
 	self._coverSwapController = CoverSwapController.new(self._coverState)
+	self._peekHandler = PeekHandler.new(self._coverState)
 
 	-- Flags de transición pendiente
 	self._pendingCoverIdleTransition = false
@@ -131,6 +135,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	if coverInst and not coverInst:IsDescendantOf(workspace) then
 		self._enteringCover:Cancel()
 		self._coverSwapController:Cancel()
+		self._peekHandler:Cancel()
 		self._cornerCover:Reset()
 		self._coverRunning:Stop()
 		self:_clearCoverState()
@@ -272,6 +277,11 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 			end
 		end
 	end
+
+	-- PEEK: desplazamiento lateral en esquina durante aim
+	if self._peekHandler:IsActive() then
+		self._peekHandler:Update(dt)
+	end
 end
 
 --- Retorna la normal de la pared de cover actual (nil si no está en cover).
@@ -314,10 +324,16 @@ function CoverMain:IsAtCornerLeft(): boolean
 	return self._cornerCover:IsAtLeft()
 end
 
+--- Retorna el PeekHandler (para wiring externo si necesario).
+function CoverMain:GetPeekHandler()
+	return self._peekHandler
+end
+
 --- Limpia todo el estado de cover (usado por EvadeHandler al hacer RollOutOfCover).
 function CoverMain:ResetCover()
 	self._enteringCover:Cancel()
 	self._coverSwapController:Cancel()
+	self._peekHandler:Cancel()
 	self._pendingCoverIdleTransition = false
 	self._pendingIdleTransition = false
 	self._cornerCover:Reset()
@@ -385,6 +401,7 @@ CoverMain._handlers = {
 	ExitCover = function(self, _data)
 	self._enteringCover:Cancel()
 	self._coverSwapController:Cancel()
+	self._peekHandler:Cancel()
 	self._cornerCover:Reset()
 	self._coverRunning:Stop()
 	self:_clearCoverState()
@@ -420,6 +437,18 @@ CoverMain._handlers = {
 	CancelSwapToRun = function(self, _data)
 	self._coverSwapController:Cancel()
 	self:_clearCoverState()
+	end,
+
+	--- Inicia peek: desplazamiento lateral hacia esquina.
+	EnterPeek = function(self, data)
+	if data and data.side then
+		self._peekHandler:Begin(data.side)
+	end
+	end,
+
+	--- Finaliza peek: retorno a posición original.
+	ExitPeek = function(self, _data)
+	self._peekHandler:End()
 	end,
 }
 

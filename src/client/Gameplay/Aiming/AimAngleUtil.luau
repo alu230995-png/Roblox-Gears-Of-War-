@@ -48,4 +48,19 @@ function AimAngleUtils.GetShoulderSide(signedAngle: number, deadzoneAngle: numbe
 	return nil
 end
 
+--- Verifica si la cámara está dentro del cono frontal del cover (mirando "hacia afuera").
+---
+--- Usa el producto punto entre cameraLook y la dirección outward (-coverNormal).
+--- Convención directa: 0° = mirando hacia afuera = centro del cono frontal.
+---
+--- @param cameraLookFlat Vector3 — LookVector aplanado a XZ y normalizado
+--- @param coverNormal    Vector3 — Normal de la pared (apunta hacia dentro de la pared)
+--- @param halfAngle      number  — medio-ángulo del cono frontal (grados, positivo)
+--- @return boolean — true si la cámara está dentro del cono frontal
+function AimAngleUtils.IsInsideFrontCone(cameraLookFlat: Vector3, coverNormal: Vector3, halfAngle: number): boolean
+	local outward = -coverNormal
+	local dot = cameraLookFlat.X * outward.X + cameraLookFlat.Z * outward.Z
+	return dot >= math.cos(math.rad(halfAngle))
+end
+
 return table.freeze(AimAngleUtils)

@@ -205,13 +205,12 @@ end
 -- CORNER EXIT HELPERS
 ------------------------------------------------------------------------
 
---- Retorna el valor absoluto del producto escalar entre la dirección de input
---- del jugador (world-space) y el vector lateral de la cover (wallRight).
---- 1.0 = movimiento puramente lateral; 0.0 = movimiento perpendicular a la pared.
---- Retorna 0 si no hay input válido o cover data.
+--- Producto escalar con signo entre la dirección de input del jugador
+--- (world-space) y el vector lateral de la cover (wallRight).
+--- Positivo = derecha, negativo = izquierda. 0 si no hay data válida.
 --- @param ctx table — ResolverContext
---- @return number — [0, 1]
-function Helpers.computeLateralScale(ctx): number
+--- @return number — [-1, 1]
+function Helpers.computeSignedLateralScale(ctx): number
 	local coverHandler = ctx.CoverHandler
 	if not coverHandler then
 		return 0
@@ -224,7 +223,15 @@ function Helpers.computeLateralScale(ctx): number
 	if not moveDirWorld then
 		return 0
 	end
-	return math.abs(moveDirWorld:Dot(wallRight))
+	return moveDirWorld:Dot(wallRight)
+end
+
+--- Valor absoluto de computeSignedLateralScale.
+--- 1.0 = puramente lateral; 0.0 = perpendicular a la pared.
+--- @param ctx table — ResolverContext
+--- @return number — [0, 1]
+function Helpers.computeLateralScale(ctx): number
+	return math.abs(Helpers.computeSignedLateralScale(ctx))
 end
 
 ------------------------------------------------------------------------

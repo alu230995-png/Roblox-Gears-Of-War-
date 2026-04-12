@@ -152,6 +152,13 @@ function CoverMovementUtils.smoothRotation(state: any, hrp: BasePart, dt: number
 		return
 	end
 
+	-- Durante CoverPeek, RotationHandler gestiona la rotación del personaje.
+	-- No interferir aquí para evitar que ambos sistemas luchen entre sí.
+	local currentState = state.stateMachine and state.stateMachine:GetCurrentState()
+	if currentState == "CoverPeek" then
+		return
+	end
+
 	local targetRot = CFrame.lookAt(Vector3.zero, coverNormal).Rotation
 	local alpha = 1 - math.exp(-Constants.CORNER_TURN_SPEED * dt)
 	hrp.CFrame = CFrame.new(hrp.Position) * hrp.CFrame.Rotation:Lerp(targetRot, alpha)
