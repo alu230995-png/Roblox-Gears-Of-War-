@@ -93,6 +93,14 @@ function MovementController:Destroy()
 	end
 	table.clear(self._connections)
 
+	-- Propagar Destroy a sub-handlers
+	if self._coverHandler and self._coverHandler.Destroy then
+		self._coverHandler:Destroy()
+	end
+	if self._rotationHandler and self._rotationHandler.Destroy then
+		self._rotationHandler:Destroy()
+	end
+
 	if self.ActionExecuted then
 		self.ActionExecuted:Destroy()
 	end

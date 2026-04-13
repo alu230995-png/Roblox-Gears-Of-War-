@@ -489,4 +489,25 @@ Constants.SERVER_FIRE_RATE_TOLERANCE = 0.05
 --- Distancia máxima de re-raycast del servidor al validar hits (studs).
 Constants.SERVER_HIT_TOLERANCE = 5
 
+------------------------------------------------------------------------
+-- HITMARKER
+------------------------------------------------------------------------
+
+--- Máximo de hitmarkers activos simultáneamente.
+Constants.HITMARKER_MAX_ACTIVE = 3
+--- Duración de display del hitmarker antes del fade (segundos).
+Constants.HITMARKER_DISPLAY_DURATION = 0.4
+--- Duración del fade-out del hitmarker (segundos).
+Constants.HITMARKER_FADE_DURATION = 0.15
+--- Grosor máximo del UIStroke en hitmarker de Gnasher (pixeles).
+Constants.HITMARKER_GNASHER_STROKE_MAX = 1.0
+--- Multiplicador de escala del dot en kill (Gnasher).
+Constants.HITMARKER_KILL_SCALE = 1.5
+--- Tamaño base del hitmarker "X" estándar (pixeles).
+Constants.HITMARKER_STANDARD_BASE_SIZE = 12
+--- Tamaño base del hitmarker "X" en headshot (pixeles).
+Constants.HITMARKER_HEADSHOT_BASE_SIZE = 16
+--- Color del hitmarker en headshot.
+Constants.HITMARKER_HEADSHOT_COLOR = Color3.fromRGB(255, 50, 50)
+
 return Constants

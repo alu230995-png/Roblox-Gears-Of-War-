@@ -41,6 +41,8 @@ local _reloadThreads: { [Player]: thread? } = {}
 local _reloadStartTime: { [Player]: number } = {}
 local _reloadWeaponName: { [Player]: string } = {}
 local _activeBuffPlayers: { [Player]: true? } = {}
+--- Threads de expiración del buff de active reload
+local _activeBuffTimers: { [Player]: thread? } = {}
 
 ------------------------------------------------------------------------
 -- State accessors
@@ -125,8 +127,8 @@ function ReloadHandler.ProcessReload(player: Player, weaponName: any): boolean
 		return false
 	end
 
-	-- Solo bloquear si cargador lleno Y sin reserva (no hay nada que ganar)
-	if ammo.current >= ammoConfig.ClipSize and ammo.reserve <= 0 then
+	-- Bloquear si cargador lleno o sin reserva
+	if ammo.current >= ammoConfig.ClipSize or ammo.reserve <= 0 then
 		return false
 	end
 
@@ -209,6 +211,15 @@ function ReloadHandler.ProcessActiveReload(player: Player, weaponName: any, _cli
 		local newDelay = remainingTime / 2
 		_activeBuffPlayers[player] = true
 
+		-- Expirar buff después de ACTIVE_RELOAD_BONUS_DURATION
+		if _activeBuffTimers[player] then
+			task.cancel(_activeBuffTimers[player])
+		end
+		_activeBuffTimers[player] = task.delay(Constants.ACTIVE_RELOAD_BONUS_DURATION, function()
+			_activeBuffTimers[player] = nil
+			ReloadHandler.ClearActiveBuff(player)
+		end)
+
 		if Constants.DEBUG_MODE then
 			print(
 				`[ReloadHandler] ¡RECARGA ACTIVA EXITOSA! — {weaponName} | Progreso: {string.format("%.3f", progress)} | Completa en {string.format(
@@ -274,6 +285,10 @@ end
 function ReloadHandler.ClearActiveBuff(player: Player)
 	if _activeBuffPlayers[player] then
 		_activeBuffPlayers[player] = nil
+		if _activeBuffTimers[player] then
+			task.cancel(_activeBuffTimers[player])
+			_activeBuffTimers[player] = nil
+		end
 		if Constants.DEBUG_MODE then
 			print(`[ReloadHandler] Buff de recarga activa consumido — {player.Name}`)
 		end
@@ -283,7 +298,7 @@ end
 --- Limpia todo el estado de un jugador (para PlayerRemoving).
 function ReloadHandler.CleanupPlayer(player: Player)
 	ReloadHandler.CancelReload(player)
-	_activeBuffPlayers[player] = nil
+	ReloadHandler.ClearActiveBuff(player)
 end
 
 return table.freeze(ReloadHandler)

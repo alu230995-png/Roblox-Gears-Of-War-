@@ -2,15 +2,15 @@
 	RoadieRunRules.luau
 	═══════════════════════════════════════════════════════════════
 	Reglas para el estado RoadieRun.
-	
+
 	En GoW, durante RoadieRun el jugador auto-entra en cover al
-	detectar una pared frontal, y auto-mantlea si es cover bajo.
+	detectar una pared frontal.
 ]]
 
 local Helpers = require(script.Parent:WaitForChild("Helpers"))
 
 local RoadieRunRules = {
-	-- Prio 1: Auto-entry cover (cover alto detectado al frente → CoverSlide sin botón)
+	-- Prio 1: Auto-entry cover (cover detectado al frente → CoverSlide sin botón)
 	{
 		id = "SlideIntoCover",
 		check = function(_resolver, ctx)

@@ -22,6 +22,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local BallisticsUtils = require(Shared:WaitForChild("BallisticsUtils"))
@@ -48,6 +49,16 @@ export type VictimDamage = {
 export type DamageReport = {
 	Victims: { VictimDamage },
 	EnvironmentHits: number,
+	PelletDetails: { PelletDetail },
+}
+
+--- Detalle de daño por pellet individual (para ShotConfirmed al cliente).
+export type PelletDetail = {
+	PelletName: string,
+	HitPosition: Vector3,
+	HitPartName: string,
+	Damage: number,
+	IsFlesh: boolean,
 }
 
 ------------------------------------------------------------------------
@@ -95,6 +106,7 @@ function DamageHandler.CalculateDamage(hits: any, shooterChar: Model, origin: Ve
 	-- Acumulador: Humanoid → VictimDamage
 	local victimMap: { [Humanoid]: VictimDamage } = {}
 	local environmentHits = 0
+	local pelletDetails: { PelletDetail } = {}
 
 	local stats = config.Stats
 	local falloff = config.Ballistics.Falloff
@@ -107,11 +119,78 @@ function DamageHandler.CalculateDamage(hits: any, shooterChar: Model, origin: Ve
 		if not hitHumanoid or not hitCharacter then
 			-- Impacto en entorno (pared, suelo, etc.)
 			-- Para explosivos: daño AoE a jugadores cercanos al impacto
-			if explosive.Enabled then
-				-- TODO: buscar humanoids en radio de explosión y aplicar AoE
-				-- Por ahora se acumula como environment hit
+			if explosive.Enabled and explosive.Radius > 0 then
+				local hitPosition = hit.HitPosition
+				local overlapParams = OverlapParams.new()
+				overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+				overlapParams.FilterDescendantsInstances = { shooterChar }
+
+				local parts = Workspace:GetPartBoundsInRadius(hitPosition, explosive.Radius, overlapParams)
+				local processedCharacters: { [Model]: true } = {}
+
+				for _, part in parts do
+					local parentModel = part.Parent
+					if not parentModel or not parentModel:IsA("Model") then
+						continue
+					end
+
+					if processedCharacters[parentModel] then
+						continue
+					end
+
+					local aoeHumanoid = parentModel:FindFirstChildWhichIsA("Humanoid")
+					if not aoeHumanoid or aoeHumanoid.Health <= 0 then
+						continue
+					end
+
+					if _isFriendlyFire(shooterChar, parentModel) then
+						continue
+					end
+
+					processedCharacters[parentModel] = true
+
+					-- Calcular distancia desde epicentro
+					local targetHRP = parentModel:FindFirstChild("HumanoidRootPart")
+					local targetPos = if targetHRP then targetHRP.Position else part.Position
+					local distance = (targetPos - hitPosition).Magnitude
+
+					local aoeDamage = BallisticsUtils.CalculateExplosionDamage(
+						stats.BaseDamage,
+						distance,
+						explosive.Radius
+					)
+
+					if aoeDamage <= 0 then
+						continue
+					end
+
+					local existing = victimMap[aoeHumanoid]
+					if existing then
+						existing.TotalDamage += aoeDamage
+						existing.PelletCount += 1
+					else
+						victimMap[aoeHumanoid] = {
+							Humanoid = aoeHumanoid,
+							Character = parentModel,
+							TotalDamage = aoeDamage,
+							LastHitZone = "Torso",
+							LastHitPartName = "UpperTorso",
+							PelletCount = 1,
+							IsHeadshot = false,
+							HitDirection = (targetPos - hitPosition).Unit,
+						}
+					end
+				end
 			end
 			environmentHits += 1
+			-- Registrar pellet de entorno (sin daño a jugador directo)
+			table.insert(pelletDetails, {
+				PelletName = hit.PelletName or "",
+				HitPosition = hit.HitPosition,
+				HitPartName = hit.HitPartName,
+				Damage = 0,
+				IsFlesh = false,
+			})
 			continue
 		end
 
@@ -140,6 +219,15 @@ function DamageHandler.CalculateDamage(hits: any, shooterChar: Model, origin: Ve
 
 		local hitZone = BallisticsUtils.GetHitZone(hit.HitPartName)
 		local isHeadshot = hitZone == "Head"
+
+		-- Registrar detalle por pellet (para ShotConfirmed)
+		table.insert(pelletDetails, {
+			PelletName = hit.PelletName or "",
+			HitPosition = hit.HitPosition,
+			HitPartName = hit.HitPartName,
+			Damage = pelletDamage,
+			IsFlesh = true,
+		})
 
 		-- Acumular daño por víctima
 		local existing = victimMap[hitHumanoid]
@@ -178,6 +266,7 @@ function DamageHandler.CalculateDamage(hits: any, shooterChar: Model, origin: Ve
 	return {
 		Victims = victims,
 		EnvironmentHits = environmentHits,
+		PelletDetails = pelletDetails,
 	}
 end
 

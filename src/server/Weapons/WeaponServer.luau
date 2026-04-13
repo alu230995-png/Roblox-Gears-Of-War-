@@ -65,6 +65,15 @@ local _playerConnections: { [Player]: { RBXScriptConnection } } = {}
 --- RemoteEvent compartido para todas las acciones de arma
 local _weaponRemote: RemoteEvent = nil :: any
 
+--- RemoteEvent para replicar efectos visuales de disparo a otros clientes
+local _weaponEffectsRemote: RemoteEvent = nil :: any
+
+--- RemoteEvent para confirmar disparo al tirador (posiciones validadas + daño por pellet)
+local _shotConfirmedRemote: RemoteEvent = nil :: any
+
+--- Rate limiting por acción (anti-spam)
+local _lastActionTime: { [Player]: { [string]: number } } = {}
+
 ------------------------------------------------------------------------
 -- PRIVATE: Inyectar estado en sub-módulos
 ------------------------------------------------------------------------
@@ -72,6 +81,79 @@ local _weaponRemote: RemoteEvent = nil :: any
 local function _injectState()
 	ShotValidator.SetState(_equippedWeapons, _ammoState, _lastFireTime, _reloadingPlayers)
 	ReloadHandler.SetState(_equippedWeapons, _ammoState, _reloadingPlayers)
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Replicate shot effects to other clients
+------------------------------------------------------------------------
+
+--- Envía datos de efectos visuales a todos los clientes EXCEPTO el tirador.
+--- El tirador ya renderiza sus propios efectos localmente.
+local function _replicateShotEffects(shooter: Player, shotData: any, validation: any)
+	if not _weaponEffectsRemote then
+		return
+	end
+
+	local effectsData = {
+		WeaponName = validation.Config.Name or shotData.WeaponName,
+		Origin = validation.MuzzlePosition,
+		HitPositions = shotData.HitPositions,
+		HitParts = shotData.HitParts,
+		ShooterCharacter = validation.Character,
+	}
+
+	for _, otherPlayer in Players:GetPlayers() do
+		if otherPlayer ~= shooter then
+			_weaponEffectsRemote:FireClient(otherPlayer, effectsData)
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Send shot confirmation to the shooter
+------------------------------------------------------------------------
+
+--- Envía datos validados del disparo al tirador para efectos
+--- diferidos (trails, blood scalado, hitmarkers).
+local function _sendShotConfirmed(shooter: Player, damageReport: any, validation: any)
+	if not _shotConfirmedRemote then
+		return
+	end
+
+	-- Construir ValidatedHits desde PelletDetails
+	local validatedHits = {}
+	for _, detail in damageReport.PelletDetails do
+		local pelletIndex = tonumber(string.match(detail.PelletName, "(%d+)")) or 0
+		table.insert(validatedHits, {
+			PelletIndex = pelletIndex,
+			HitPosition = detail.HitPosition,
+			HitPartName = detail.HitPartName,
+			Damage = detail.Damage,
+			IsFlesh = detail.IsFlesh,
+		})
+	end
+
+	-- Detectar kills/DBNOs leyendo LifeState de cada víctima
+	local kills = {}
+	for _, victim in damageReport.Victims do
+		local character = victim.Character
+		if character then
+			local lifeState = character:GetAttribute("LifeState")
+			if lifeState == "Dead" or lifeState == "DBNO" then
+				table.insert(kills, {
+					CharacterName = character.Name,
+					IsDBNO = lifeState == "DBNO",
+				})
+			end
+		end
+	end
+
+	_shotConfirmedRemote:FireClient(shooter, {
+		WeaponName = validation.Config.Name or validation.WeaponName,
+		MuzzlePosition = validation.MuzzlePosition,
+		ValidatedHits = validatedHits,
+		Kills = kills,
+	})
 end
 
 ------------------------------------------------------------------------
@@ -120,11 +202,31 @@ local function _processShot(player: Player, shotData: any)
 
 	-- 4. Aplicar daño (salud, DBNO, muerte)
 	HealthStateManager.ApplyDamage(damageReport)
+
+	-- 5. Replicar efectos visuales a otros clientes
+	_replicateShotEffects(player, shotData, validation)
+
+	-- 6. Confirmar disparo al tirador (posiciones validadas + daño por pellet)
+	_sendShotConfirmed(player, damageReport, validation)
 end
 
 ------------------------------------------------------------------------
 -- PRIVATE: Remote handler
 ------------------------------------------------------------------------
+
+--- Verifica rate limiting por acción. Retorna true si la acción está permitida.
+local function _isActionAllowed(player: Player, action: string, cooldown: number): boolean
+	local now = os.clock()
+	if not _lastActionTime[player] then
+		_lastActionTime[player] = {}
+	end
+	local last = _lastActionTime[player][action] or 0
+	if (now - last) < cooldown then
+		return false
+	end
+	_lastActionTime[player][action] = now
+	return true
+end
 
 local function _onWeaponRemote(player: Player, action: string, data: any?)
 	if typeof(action) ~= "string" then
@@ -132,6 +234,10 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 	end
 
 	if action == "Equip" then
+		-- Rate limit: máximo 1 equip cada 0.4s (EQUIP_TIME)
+		if not _isActionAllowed(player, "Equip", WeaponConstants.EQUIP_TIME) then
+			return
+		end
 		local weaponName = data
 		if typeof(weaponName) == "string" and #weaponName <= 50 then
 			local config = WeaponConstants.WEAPONS[weaponName]
@@ -139,22 +245,34 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 				warn("[WeaponServer] Arma desconocida reportada por " .. player.Name .. ": " .. weaponName)
 				return
 			end
-			_equippedWeapons[player] = weaponName
 
-			local ammo = config.Ammo
-			_ammoState[player] = {
-				current = ammo.ClipSize,
-				reserve = ammo.CurrentAmmo - ammo.ClipSize,
-			}
-			_lastFireTime[player] = 0
-			ReloadHandler.CancelReload(player)
+			-- Solo resetear munición si cambia de arma (no re-equip de la misma)
+			if _equippedWeapons[player] ~= weaponName then
+				_equippedWeapons[player] = weaponName
+				-- Solo inicializar ammo si no hay estado previo para esta arma
+				if not _ammoState[player] then
+					local ammo = config.Ammo
+					_ammoState[player] = {
+						current = ammo.ClipSize,
+						reserve = ammo.CurrentAmmo - ammo.ClipSize,
+					}
+				end
+				_lastFireTime[player] = 0
+				ReloadHandler.CancelReload(player)
+			end
 		end
 	elseif action == "Unequip" then
+		if not _isActionAllowed(player, "Unequip", 0.2) then
+			return
+		end
 		_equippedWeapons[player] = nil
 		ReloadHandler.CancelReload(player)
 	elseif action == "ProcessShot" then
 		_processShot(player, data)
 	elseif action == "Reload" then
+		if not _isActionAllowed(player, "Reload", 0.3) then
+			return
+		end
 		ReloadHandler.ProcessReload(player, data)
 	elseif action == "ActiveReload" then
 		if typeof(data) == "table" then
@@ -220,11 +338,8 @@ local function _dropEquippedWeapon(player: Player, character: Model)
 		-- Aplicar una pequeña fuerza hacia arriba y lateral
 		local randomDir = Vector3.new(math.random() - 0.5, 0.5, math.random() - 0.5).Unit
 		handle.AssemblyLinearVelocity = randomDir * 15 + Vector3.new(0, 10, 0)
-		handle.AssemblyAngularVelocity = Vector3.new(
-			(math.random() - 0.5) * 10,
-			(math.random() - 0.5) * 10,
-			(math.random() - 0.5) * 10
-		)
+		handle.AssemblyAngularVelocity =
+			Vector3.new((math.random() - 0.5) * 10, (math.random() - 0.5) * 10, (math.random() - 0.5) * 10)
 	end
 
 	-- Colocar en Workspace
@@ -291,6 +406,7 @@ local function _onPlayerRemoving(player: Player)
 	_ammoState[player] = nil
 	_lastFireTime[player] = nil
 	_reloadingPlayers[player] = nil
+	_lastActionTime[player] = nil
 	ReloadHandler.CleanupPlayer(player)
 end
 
@@ -313,6 +429,24 @@ function WeaponServer:Init()
 	_weaponRemote = Instance.new("RemoteEvent")
 	_weaponRemote.Name = "WeaponRemote"
 	_weaponRemote.Parent = remotes
+
+	-- RemoteEvent para replicar efectos de disparo a otros clientes
+	local existingEffects = remotes:FindFirstChild("WeaponEffects")
+	if existingEffects then
+		existingEffects:Destroy()
+	end
+	_weaponEffectsRemote = Instance.new("RemoteEvent")
+	_weaponEffectsRemote.Name = "WeaponEffects"
+	_weaponEffectsRemote.Parent = remotes
+
+	-- RemoteEvent para confirmar disparo al tirador
+	local existingConfirmed = remotes:FindFirstChild("ShotConfirmed")
+	if existingConfirmed then
+		existingConfirmed:Destroy()
+	end
+	_shotConfirmedRemote = Instance.new("RemoteEvent")
+	_shotConfirmedRemote.Name = "ShotConfirmed"
+	_shotConfirmedRemote.Parent = remotes
 
 	-- Inyectar estado compartido en sub-módulos
 	_injectState()
@@ -343,6 +477,12 @@ function WeaponServer:Destroy()
 
 	if _weaponRemote then
 		_weaponRemote:Destroy()
+	end
+	if _weaponEffectsRemote then
+		_weaponEffectsRemote:Destroy()
+	end
+	if _shotConfirmedRemote then
+		_shotConfirmedRemote:Destroy()
 	end
 end
 

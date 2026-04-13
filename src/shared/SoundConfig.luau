@@ -234,6 +234,130 @@ SoundConfig.VFX_Weapon_Gnasher_Fire = {
 	PitchVariation = 0.04,
 }
 
+SoundConfig.VFX_Weapon_Longshot_Fire = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.9,
+	MaxDistance = 150,
+	PitchVariation = 0.03,
+}
+
+SoundConfig.VFX_Weapon_TorqueBow_Fire = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.8,
+	MaxDistance = 120,
+	PitchVariation = 0.04,
+}
+
+SoundConfig.VFX_Weapon_HammerOfDawn_Fire = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 1.0,
+	MaxDistance = 200,
+}
+
+SoundConfig.VFX_Weapon_Boomshot_Fire = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 1.0,
+	MaxDistance = 150,
+	PitchVariation = 0.03,
+}
+
+SoundConfig.VFX_Weapon_Snub_Fire = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.6,
+	MaxDistance = 80,
+	PitchVariation = 0.06,
+}
+
+SoundConfig.VFX_Weapon_Lancer_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_Gnasher_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_Longshot_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_TorqueBow_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_HammerOfDawn_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_Boomshot_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_Snub_Reload = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 25,
+}
+
 SoundConfig.VFX_Weapon_Reload = {
 	Ids = { "rbxassetid://0" },
 	Random = false,
@@ -242,6 +366,16 @@ SoundConfig.VFX_Weapon_Reload = {
 	Group = "VFX",
 	Volume = 0.5,
 	MaxDistance = 25,
+}
+
+SoundConfig.VFX_Weapon_Equip = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.4,
+	MaxDistance = 20,
 }
 
 SoundConfig.VFX_Weapon_ActiveReload_Success = {
@@ -488,6 +622,50 @@ SoundConfig.Server_Announcement_Generic = {
 	Group = "Server",
 	Volume = 0.9,
 	MaxDistance = 200,
+}
+
+------------------------------------------------------------------------
+-- VFX — Sonidos de estado adicionales
+------------------------------------------------------------------------
+
+SoundConfig.VFX_Death_Standard = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.7,
+	MaxDistance = 40,
+}
+
+SoundConfig.VFX_Death_Headshot = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.8,
+	MaxDistance = 50,
+}
+
+SoundConfig.VFX_Death_Dismember = {
+	Ids = { "rbxassetid://0" },
+	Random = false,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.8,
+	MaxDistance = 50,
+}
+
+SoundConfig.VFX_Explosion = {
+	Ids = { "rbxassetid://0", "rbxassetid://0" },
+	Random = true,
+	Looped = false,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 1.0,
+	MaxDistance = 150,
 }
 
 ------------------------------------------------------------------------

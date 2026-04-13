@@ -30,9 +30,10 @@ DeathEffectsHandler.__index = DeathEffectsHandler
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function DeathEffectsHandler.new()
+function DeathEffectsHandler.new(effectsController: any?)
 	local self = setmetatable({}, DeathEffectsHandler)
 
+	self._effectsController = effectsController
 	self._characterConnections = {} :: { [Model]: { RBXScriptConnection } }
 	self._globalConnections = {} :: { RBXScriptConnection }
 
@@ -40,14 +41,19 @@ function DeathEffectsHandler.new()
 end
 
 ------------------------------------------------------------------------
--- PRIVATE: Client-only VFX on death (particles, sounds, etc.)
+-- PRIVATE: Client-only VFX on death (particles, sounds, screen shake)
 ------------------------------------------------------------------------
 
-local function _onDeath(_character: Model)
-	-- TODO: agregar efectos client-only aquí:
-	--   - Partículas de sangre según DeathType
-	--   - Sonido de muerte
-	--   - Screen shake si el local player es el killer
+function DeathEffectsHandler:_onDeath(character: Model)
+	if not self._effectsController then
+		return
+	end
+
+	local deathType = character:GetAttribute("DeathType") or "Standard"
+	local hitDirection = character:GetAttribute("DeathHitDirection")
+	local overkillDamage = character:GetAttribute("DeathOverkillDamage") or 0
+
+	self._effectsController:OnDeath(character, deathType, hitDirection, overkillDamage)
 end
 
 ------------------------------------------------------------------------
@@ -61,16 +67,38 @@ function DeathEffectsHandler:_observeCharacter(character: Model)
 
 	local connections = {} :: { RBXScriptConnection }
 	self._characterConnections[character] = connections
+	local deathFired = false
 
+	local function triggerDeath()
+		if deathFired then
+			return
+		end
+		deathFired = true
+		self:_onDeath(character)
+	end
+
+	-- Primary path: LifeState attribute set by HealthStateManager
 	table.insert(
 		connections,
 		character:GetAttributeChangedSignal("LifeState"):Connect(function()
 			local lifeState = character:GetAttribute("LifeState")
 			if lifeState == "Dead" then
-				_onDeath(character)
+				triggerDeath()
 			end
 		end)
 	)
+
+	-- Fallback: Humanoid.Died covers deaths that bypass HealthStateManager
+	-- (fall damage, reset, void, etc.)
+	local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+	if humanoid then
+		table.insert(
+			connections,
+			humanoid.Died:Connect(function()
+				triggerDeath()
+			end)
+		)
+	end
 
 	table.insert(
 		connections,
@@ -81,8 +109,9 @@ function DeathEffectsHandler:_observeCharacter(character: Model)
 		end)
 	)
 
+	-- Check if already dead at subscription time
 	if character:GetAttribute("LifeState") == "Dead" then
-		_onDeath(character)
+		triggerDeath()
 	end
 end
 

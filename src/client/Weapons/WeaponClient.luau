@@ -112,6 +112,8 @@ function WeaponClient.new(player: Player, tool: Tool)
 	self.WeaponUnequipped = Signal.new()
 	self.AmmoChanged = Signal.new()
 	self.AimingChanged = Signal.new()
+	self.ShotFired = Signal.new()
+	self.ReloadStarted = Signal.new()
 
 	-- Deps (inyectadas en Init)
 	self._stateMachine = nil
@@ -221,6 +223,8 @@ function WeaponClient:Destroy()
 	self.WeaponUnequipped:Destroy()
 	self.AmmoChanged:Destroy()
 	self.AimingChanged:Destroy()
+	self.ShotFired:Destroy()
+	self.ReloadStarted:Destroy()
 
 	self._stateMachine = nil
 	self._tool = nil :: any
@@ -271,6 +275,10 @@ function WeaponClient:GetSpreadPattern()
 	return self._config and self._config.Ballistics and self._config.Ballistics.SpreadPattern
 end
 
+function WeaponClient:GetScope()
+	return self._scope
+end
+
 ------------------------------------------------------------------------
 -- PUBLIC API — Action dispatch
 ------------------------------------------------------------------------
@@ -308,6 +316,7 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 				self._holdBreathHandler:ForceCancel()
 			end
 			self._reloadHandler:StartReload()
+			self.ReloadStarted:Fire(self._weaponName)
 		end
 
 	-- Active Reload (delegado a ReloadHandler)
@@ -331,9 +340,16 @@ function WeaponClient:_startFiring()
 	end
 	if self._ammoState.current <= 0 then
 		if self._ammoState.reserve > 0 and self._config and self._reloadHandler then
-			print(`[WeaponClient] Sin munición — recarga automática — {self._weaponName}`)
+			if Constants.DEBUG_MODE then
+				print(`[WeaponClient] Sin munición — recarga automática — {self._weaponName}`)
+			end
+			-- Transicionar a Reloading. Si falla (estado actual no lo permite),
+			-- primero ir a Idle y luego a Reloading.
 			if self._stateMachine then
-				self._stateMachine:TransitionTo("Reloading")
+				if not self._stateMachine:TransitionTo("Reloading") then
+					self._stateMachine:TransitionTo("Idle")
+					self._stateMachine:TransitionTo("Reloading")
+				end
 			end
 			self._reloadHandler:StartReload()
 		end
@@ -385,8 +401,6 @@ function WeaponClient:_startFiring()
 				self._isShooting = false
 				break
 			end
-
-			task.wait(stats.FireRate)
 		end
 	end)
 end
@@ -438,6 +452,11 @@ function WeaponClient:_fireOneShot()
 		print(
 			`[WeaponClient] Shot fired — {self._weaponName} | Ammo: {self._ammoState.current}/{self._ammoState.reserve} | Hits: {hitCount}`
 		)
+	end
+
+	-- Effects hook: notificar EffectsController del disparo
+	if shotResult then
+		self.ShotFired:Fire(self._weaponName, shotResult, self._player.Character)
 	end
 end
 

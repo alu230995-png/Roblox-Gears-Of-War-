@@ -40,6 +40,12 @@ function AimingController.new(stateMachine, coverHandler, cameraController)
 	self._peekSide = nil :: string?
 	self._peekFaceDir = nil :: Vector3?
 
+	-- Movement accuracy penalty
+	self._accuracyPenalty = 0 -- 0 = máxima precisión, 1 = máxima penalización
+	self._penaltyRecoveryRate = 3.0 -- velocidad de recuperación (unidades/segundo)
+	self._penaltyBuildupRate = 5.0 -- velocidad de acumulación cuando se mueve
+	self._moveSpeedThreshold = 1.0 -- velocidad horizontal mínima para penalizar
+
 	return self
 end
 
@@ -126,6 +132,9 @@ end
 --- Update por frame. Solo activo si _isAiming == true.
 --- Lee cover state y ajusta shoulder/deadzone.
 function AimingController:Update(_dt: number)
+	-- Siempre actualizar accuracy penalty (se resetea si no apunta)
+	self:_updateAccuracyPenalty(_dt)
+
 	if not self._isAiming then
 		return
 	end
@@ -188,10 +197,41 @@ function AimingController:GetPeekFaceDir(): Vector3?
 	return self._peekFaceDir
 end
 
---- Stub para Fase 2: penalización de precisión por movimiento.
---- Se invocará cuando el jugador camina mientras apunta.
-function AimingController.OnMovementAccuracyPenalty(_isAiming: boolean)
-	-- Fase 2: conectar a WeaponController
+--- Penalización de precisión por movimiento mientras se apunta.
+--- Retorna valor entre 0 (máxima precisión) y 1 (máxima penalización).
+function AimingController:GetAccuracyPenalty(): number
+	return self._accuracyPenalty
+end
+
+--- Actualiza la penalización de precisión basada en velocidad horizontal.
+--- Llamado internamente desde Update().
+function AimingController:_updateAccuracyPenalty(dt: number)
+	if not self._isAiming then
+		self._accuracyPenalty = 0
+		return
+	end
+
+	local Players = game:GetService("Players")
+	local localPlayer = Players.LocalPlayer
+	if not localPlayer or not localPlayer.Character then
+		return
+	end
+
+	local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
+
+	local vel = hrp.AssemblyLinearVelocity
+	local horizontalSpeed = math.sqrt(vel.X * vel.X + vel.Z * vel.Z)
+
+	if horizontalSpeed > self._moveSpeedThreshold then
+		-- Acumular penalización
+		self._accuracyPenalty = math.min(self._accuracyPenalty + self._penaltyBuildupRate * dt, 1)
+	else
+		-- Recuperar precisión
+		self._accuracyPenalty = math.max(self._accuracyPenalty - self._penaltyRecoveryRate * dt, 0)
+	end
 end
 
 --- Retorna el override de rotación activo para RotationHandler.

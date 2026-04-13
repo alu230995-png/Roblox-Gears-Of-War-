@@ -21,7 +21,7 @@ local MAP = table.freeze({
 	CoverSlide = Constants.COVER_SLIDE_SPEED,
 	CoverEntering = 0, -- WalkSpeed=0: posición controlada 100% por EnteringCover._updateEntering
 	CoverExiting = Constants.WALK_SPEED * 0.6,
-	CoverSwap = Constants.COVER_SLIDE_SPEED,
+	CoverSwap = 0, -- WalkSpeed=0: velocidad controlada 100% por CoverSwapController (Bezier)
 	CoverWalking = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en InCover
 	CoverRunning = 0, -- WalkSpeed=0: velocidad controlada 100% por AssemblyLinearVelocity en CoverRunning
 	CoverCorners = Constants.WALK_SPEED * 0.3,

@@ -26,6 +26,7 @@ local ServerRaycast = {}
 ------------------------------------------------------------------------
 
 export type PelletHit = {
+	PelletName: string,
 	HitInstance: Instance,
 	HitPosition: Vector3,
 	HitNormal: Vector3,
@@ -191,7 +192,7 @@ function ServerRaycast.CastPellets(
 	local maxPellets = #config.Ballistics.SpreadPattern
 	local processedCount = 0
 
-	for _pelletName, clientHitPos in hitPositions do
+	for pelletName, clientHitPos in hitPositions do
 		processedCount += 1
 		-- Segunda capa de defensa: limitar iteraciones
 		if processedCount > maxPellets then
@@ -267,6 +268,7 @@ function ServerRaycast.CastPellets(
 			local resolvedPartName = _resolveBodyPartName(finalResult.Instance)
 
 			table.insert(hits, {
+				PelletName = pelletName,
 				HitInstance = finalResult.Instance,
 				HitPosition = finalResult.Position,
 				HitNormal = finalResult.Normal,

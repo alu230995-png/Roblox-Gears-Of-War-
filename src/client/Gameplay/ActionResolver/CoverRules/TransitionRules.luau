@@ -17,14 +17,24 @@ local TransitionRules = {}
 ------------------------------------------------------------------------
 
 TransitionRules.Entering = {
-	-- Prio 1: Vault desde entering (F key + cover bajo)
+	-- Prio 1: Vault desde entering (F key + cover bajo + landing seguro)
 	{
 		id = "VaultFromEntering",
 		check = function(_resolver, ctx)
-			return ctx.Env.IsInActiveCover and ctx.Buffer:HasIntent("WantsVault") and ctx.Env.ActiveCoverType == "Low"
+	if not (ctx.Env.IsInActiveCover and ctx.Buffer:HasIntent("WantsVault") and ctx.Env.ActiveCoverType == "Low") then
+		return false
+	end
+	-- Validar seguridad de landing
+	local vaultData = Helpers.preCheckVault(ctx)
+	return vaultData ~= nil
 		end,
 		execute = function(_resolver, ctx)
-			ctx.Buffer:Consume("WantsVault")
+	ctx.Buffer:Consume("WantsVault")
+	local vaultData = Helpers.preCheckVault(ctx)
+	if vaultData then
+		return "VaultFromEntering", "Vaulting", vaultData
+	end
+			-- Fallback si preCheck falla entre check y execute
 			return "VaultFromEntering",
 				nil,
 				{

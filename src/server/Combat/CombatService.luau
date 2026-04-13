@@ -82,7 +82,7 @@ local function _startBleedout(player: Player, character: Model, humanoid: Humano
 
 			-- Guard: character may have been destroyed (disconnect, etc.)
 			if not character.Parent or not humanoid.Parent then
-				_cancelBleedout(player)
+				_bleedoutTimers[player] = nil
 				return
 			end
 

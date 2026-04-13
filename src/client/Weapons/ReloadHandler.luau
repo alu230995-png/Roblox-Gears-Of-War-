@@ -62,7 +62,7 @@ function ReloadHandler:StartReload()
 	end
 
 	local ammoConfig = self._config.Ammo
-	if self._ammoState.current >= ammoConfig.ClipSize and self._ammoState.reserve <= 0 then
+	if self._ammoState.current >= ammoConfig.ClipSize or self._ammoState.reserve <= 0 then
 		return
 	end
 
@@ -200,10 +200,13 @@ function ReloadHandler:_completeReload()
 
 	self._ammoChangedSignal:Fire(self._ammoState.current, self._ammoState.reserve)
 
-	-- Devolver al jugador a Idle para que pueda disparar/apuntar
+	-- Devolver al jugador a un estado que permita actuar
 	if self._stateMachine then
 		local current = self._stateMachine:GetCurrentState()
 		if current == "Reloading" or current == "ActiveReloading" then
+			self._stateMachine:TransitionTo("Idle")
+		elseif current == "Firing" then
+			-- Auto-reload desde Firing: Firing → Idle (o Walking si se mueve)
 			self._stateMachine:TransitionTo("Idle")
 		end
 	end

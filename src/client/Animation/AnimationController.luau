@@ -34,9 +34,25 @@ function AnimationController.new(stateMachine, actionExecutedSignal)
 	-- Mapa de estado → AnimationTrack (se poblará con assets reales)
 	self._stateAnimations = {}
 
+	-- Mapa de acción → AnimationId para one-shots
+	self._oneShotAnimationIds = {
+		Shoot = "rbxassetid://0",
+		Melee = "rbxassetid://0",
+		Reload = "rbxassetid://0",
+		Evade = "rbxassetid://0",
+		Mantle = "rbxassetid://0",
+		Vault = "rbxassetid://0",
+	}
+
+	-- Cache de AnimationTracks cargados para one-shots
+	self._oneShotTracks = {} :: { [string]: AnimationTrack }
+
 	-- Track actualmente en reproducción
 	self._currentTrack = nil
 	self._currentState = nil
+
+	-- Animator reference (set when character spawns)
+	self._animator = nil :: Animator?
 
 	-- Conexiones gestionadas (cleanup en Destroy)
 	self._connections = {}
@@ -53,6 +69,9 @@ function AnimationController:Init()
 end
 
 function AnimationController:Start()
+	-- Cache Animator del personaje local
+	self:_setupAnimator()
+
 	-- Escuchar cambios de estado para crossfade
 	self._connections.stateChanged = self._stateMachine.StateChanged:Connect(
 		function(newState: string, oldState: string)
@@ -74,7 +93,11 @@ end
 
 function AnimationController:Destroy()
 	for _, conn in self._connections do
-		conn.Disconnect()
+		if typeof(conn) == "RBXScriptConnection" then
+			conn:Disconnect()
+		elseif conn.Disconnect then
+			conn:Disconnect()
+		end
 	end
 	table.clear(self._connections)
 
@@ -128,15 +151,15 @@ end
 --- Maneja animaciones one-shot (disparar, melee, reload, etc.)
 --- Estas se superponen al estado base, no lo reemplazan.
 function AnimationController:_onActionResolved(action: string, _data: any?)
-	-- Placeholder: cuando haya assets, aquí se reproducirán one-shots
-	-- Ejemplo futuro:
-	-- if action == "Shoot" then self:_playOneShot("ShootRecoil") end
-	-- if action == "Melee" then self:_playOneShot("MeleeSwing") end
-	-- if action == "Reload" then self:_playOneShot("ReloadAnim") end
-
-	if Constants.DEBUG_MODE and action ~= "StartWalking" and action ~= "StopWalking" then
-		print(`[GoW Animation] Action: {action}`)
+	local animId = self._oneShotAnimationIds[action]
+	if not animId or animId == "rbxassetid://0" then
+		if Constants.DEBUG_MODE and action ~= "StartWalking" and action ~= "StopWalking" then
+			print(`[GoW Animation] Action: {action} (no animation asset)`)
+		end
+		return
 	end
+
+	self:_playOneShot(action, animId)
 end
 
 ------------------------------------------------------------------------
@@ -147,6 +170,64 @@ function AnimationController:_stopCurrentTrack()
 	if self._currentTrack then
 		self._currentTrack:Stop(Constants.STATE_TRANSITION_TIME)
 		self._currentTrack = nil
+	end
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Animator Setup & One-Shot Playback
+------------------------------------------------------------------------
+
+function AnimationController:_setupAnimator()
+	local Players = game:GetService("Players")
+	local localPlayer = Players.LocalPlayer
+	if not localPlayer then
+		return
+	end
+
+	local function cacheAnimator(character: Model?)
+		if not character then
+			self._animator = nil
+			table.clear(self._oneShotTracks)
+			return
+		end
+		local humanoid = character:WaitForChild("Humanoid", 5) :: Humanoid?
+		if humanoid then
+			self._animator = humanoid:FindFirstChildWhichIsA("Animator")
+				or humanoid:WaitForChild("Animator", 3) :: Animator?
+		end
+		table.clear(self._oneShotTracks)
+	end
+
+	cacheAnimator(localPlayer.Character)
+	self._connections.charAdded = localPlayer.CharacterAdded:Connect(function(character)
+		cacheAnimator(character)
+	end)
+	self._connections.charRemoving = localPlayer.CharacterRemoving:Connect(function()
+		self._animator = nil
+		table.clear(self._oneShotTracks)
+	end)
+end
+
+function AnimationController:_playOneShot(actionName: string, animId: string)
+	if not self._animator then
+		return
+	end
+
+	-- Cache: reutilizar tracks ya cargados
+	local track = self._oneShotTracks[actionName]
+	if not track then
+		local anim = Instance.new("Animation")
+		anim.AnimationId = animId
+		track = self._animator:LoadAnimation(anim)
+		track.Priority = Enum.AnimationPriority.Action
+		track.Looped = false
+		self._oneShotTracks[actionName] = track
+	end
+
+	track:Play(0.1)
+
+	if Constants.DEBUG_MODE then
+		print(`[GoW Animation] One-shot: {actionName}`)
 	end
 end
 

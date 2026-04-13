@@ -64,6 +64,9 @@ local HealthObserver = require(script.Parent.Character.HealthObserver)
 -- Death Effects (ragdoll, dismember, headshot — client-side visuals)
 local DeathEffectsHandler = require(script.Parent.Character.DeathEffectsHandler)
 
+-- Effects System (VFX: muzzle flash, trails, impacts, blood, explosions)
+local EffectsController = require(script.Parent.Effects.EffectsController)
+
 -- Weapons (shooting, reload, scope)
 local WeaponClient = require(script.Parent.Weapons.WeaponClient)
 
@@ -120,7 +123,8 @@ movementController:SetAimingController(aimingController)
 
 local soundController = SoundController.new(stateMachine)
 local healthObserver = HealthObserver.new(stateMachine)
-local deathEffectsHandler = DeathEffectsHandler.new()
+local effectsController = EffectsController.new(stateMachine)
+local deathEffectsHandler = DeathEffectsHandler.new(effectsController)
 
 ------------------------------------------------------------------------
 -- WEAPON SYSTEM — Per-Tool management (scan directo, sin WeaponToolManager)
@@ -137,12 +141,16 @@ local function setupWeaponTool(tool: Tool)
 	wc:Start()
 	weaponClients[tool] = wc
 
+	-- Bind effects system to this weapon
+	effectsController:BindWeaponClient(wc)
+
 	tool.AncestryChanged:Connect(function(_, newParent)
 		if newParent == nil then
 			task.defer(function()
 				local entry = weaponClients[tool]
 				if entry then
 					weaponClients[tool] = nil
+					effectsController:UnbindWeaponClient(entry)
 					entry:Destroy()
 				end
 			end)
@@ -186,6 +194,7 @@ locator:Register("CameraController", cameraController)
 locator:Register("AimingController", aimingController)
 locator:Register("SoundController", soundController)
 locator:Register("HealthObserver", healthObserver)
+locator:Register("EffectsController", effectsController)
 locator:Register("DeathEffectsHandler", deathEffectsHandler)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
@@ -198,6 +207,10 @@ locator:InitAll()
 --   AnimationController escucha StateChanged + ActionExecuted
 --   CameraController escucha StateChanged + ActionExecuted
 locator:StartAll()
+
+-- Post-Start DI: EffectsController necesita referencias a Camera y Sound
+effectsController:SetCameraController(cameraController)
+effectsController:SetSoundController(soundController)
 
 ------------------------------------------------------------------------
 -- HEARTBEAT — Game Loop central
