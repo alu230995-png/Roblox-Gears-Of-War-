@@ -1,37 +1,63 @@
 --[[
 	WeaponServer.luau
 	═══════════════════════════════════════════════════════════════
-	Servicio AUTORITATIVO de armas en el servidor.
+	Servicio AUTORITATIVO de armas — ORQUESTADOR DELGADO.
 	═══════════════════════════════════════════════════════════════
 
-	Responsabilidades:
-	  - Crear el RemoteEvent "WeaponRemote" para comunicación C↔S
-	  - Escuchar Humanoid.Died → ejecutar weapon drop
-	  - Drop: clonar el modelo del arma en el mundo y destruir el Tool original
-	  - Validar acciones de arma reportadas por el cliente (Equip/Unequip)
-	  - Registrar el arma equipada por jugador (inventario server-side)
+	Responsabilidades (solo delegación + lifecycle):
+	  - Crear el RemoteEvent "WeaponRemote"
+	  - Gestionar estado compartido (equip, ammo, fire rate, reloading)
+	  - Inyectar estado en sub-módulos
+	  - Delegar cada acción al sub-módulo correspondiente:
+	      ProcessShot → ShotValidator → ServerRaycast → DamageHandler → HealthStateManager
+	      Reload      → ReloadHandler
+	  - Escuchar Humanoid.Died → weapon drop
+	  - Player lifecycle (connect/disconnect/respawn)
 
-	NO hace (aún):
-	  - Validación de disparo (Fase siguiente)
-	  - Aplicar daño (vive en CombatService)
-	  - Sistema de munición autoritativo
-	  - Pick-up de armas del suelo (futuro)
+	Sub-módulos:
+	  ShotValidator      — valida que el disparo es legítimo
+	  ServerRaycast      — re-raycast server-side + debug visuals
+	  DamageHandler      — calcula daño acumulado por víctima (team check, zones, falloff)
+	  HealthStateManager — aplica daño → DBNO / muerte estándar / desmembramiento / headshot
+	  ReloadHandler      — recarga de armas y actualización de munición
 
 	REGLA 05: El servidor es AUTORITATIVO.
 	El cliente informa intenciones, el servidor decide.
 ]]
 
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Debris = game:GetService("Debris")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local WeaponConstants = require(Shared:WaitForChild("WeaponConstants"))
+local Constants = require(Shared:WaitForChild("Constants"))
+
+-- Sub-módulos
+local ServerWeapons = script.Parent
+local ShotValidator = require(ServerWeapons:WaitForChild("ShotValidator"))
+local ServerRaycast = require(ServerWeapons:WaitForChild("ServerRaycast"))
+local DamageHandler = require(ServerWeapons:WaitForChild("DamageHandler"))
+local HealthStateManager = require(ServerWeapons:WaitForChild("HealthStateManager"))
+local ReloadHandler = require(ServerWeapons:WaitForChild("ReloadHandler"))
 
 local WeaponServer = {}
 
+------------------------------------------------------------------------
+-- SHARED STATE — inyectado en sub-módulos via SetState()
+------------------------------------------------------------------------
+
 --- Arma equipada por cada jugador: Player → weaponName
 local _equippedWeapons: { [Player]: string } = {}
+
+--- Munición server-side por jugador: Player → { current: number, reserve: number }
+local _ammoState: { [Player]: { current: number, reserve: number } } = {}
+
+--- Último tiempo de disparo por jugador (anti rapid-fire)
+local _lastFireTime: { [Player]: number } = {}
+
+--- Set de jugadores recargando actualmente
+local _reloadingPlayers: { [Player]: true? } = {}
 
 --- Conexiones por jugador para cleanup al salir
 local _playerConnections: { [Player]: { RBXScriptConnection } } = {}
@@ -40,112 +66,172 @@ local _playerConnections: { [Player]: { RBXScriptConnection } } = {}
 local _weaponRemote: RemoteEvent = nil :: any
 
 ------------------------------------------------------------------------
--- PRIVATE: Weapon Drop (al morir)
+-- PRIVATE: Inyectar estado en sub-módulos
 ------------------------------------------------------------------------
 
---- Crea una copia física del arma en el mundo cuando el jugador muere.
---- El modelo se dropea con un impulso leve y se destruye tras WEAPON_DROP_LIFETIME.
-local function _dropWeapon(player: Player, character: Model)
-	-- Iterar sobre la backpack para eliminar todas las tools
-	local backpack = player:FindFirstChildOfClass("Backpack")
-	if backpack then
-		for _, item in backpack:GetChildren() do
-			if item:IsA("Tool") then
-				item:Destroy()
-			end
-		end
-	end
+local function _injectState()
+	ShotValidator.SetState(_equippedWeapons, _ammoState, _lastFireTime, _reloadingPlayers)
+	ReloadHandler.SetState(_equippedWeapons, _ammoState, _reloadingPlayers)
+end
 
-	-- Buscar el Tool equipado en el Character
-	local tool: Tool? = nil
-	for _, child in character:GetChildren() do
-		if child:IsA("Tool") then
-			tool = child :: Tool
-			break
-		end
-	end
+------------------------------------------------------------------------
+-- PRIVATE: Shot pipeline (orquestación)
+------------------------------------------------------------------------
 
-	if not tool then
+--- Pipeline completo de un disparo:
+---   1. ShotValidator.Validate  → ¿el disparo es legítimo?
+---   2. ServerRaycast.CastPellets → re-raycast desde Muzzle
+---   3. DamageHandler.CalculateDamage → daño acumulado por víctima
+---   4. HealthStateManager.ApplyDamage → aplicar al Humanoid
+local function _processShot(player: Player, shotData: any)
+	-- 1. Validación
+	local validation = ShotValidator.Validate(player, shotData)
+	if not validation then
 		return
 	end
 
-	-- Buscar Handle (Part principal del Tool)
-	local handle = tool:FindFirstChild("Handle") :: BasePart?
-	if not handle then
-		return
+	-- 2. Raycasting
+	local rayResult = ServerRaycast.CastPellets(
+		validation.MuzzlePosition,
+		validation.HitPositions,
+		validation.Character,
+		validation.Config
+	)
+
+	-- 3. Cálculo de daño
+	local damageReport = DamageHandler.CalculateDamage(
+		rayResult.Hits,
+		validation.Character,
+		validation.MuzzlePosition,
+		validation.Config
+	)
+
+	-- 3b. Aplicar buff de recarga activa (x1.5 daño)
+	if ReloadHandler.HasActiveBuff(player) then
+		for _, victim in damageReport.Victims do
+			victim.TotalDamage = victim.TotalDamage * Constants.ACTIVE_RELOAD_BONUS_DAMAGE
+		end
+		if Constants.DEBUG_MODE then
+			print(
+				`[WeaponServer] BUFF ACTIVO: Daño multiplicado x{Constants.ACTIVE_RELOAD_BONUS_DAMAGE} para {player.Name}`
+			)
+		end
 	end
 
-	-- Obtener posición de drop desde el HRP (más fiable que Handle.Position)
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local dropPosition = if hrp then hrp.Position else handle.Position
-	local dropCFrame = if hrp then hrp.CFrame else handle.CFrame
-
-	-- Clonar el Tool completo para el drop (mantiene modelo interno + scripts)
-	local dropTool = tool:Clone()
-	dropTool.Name = tool.Name
-
-	-- Asegurar que el Handle del drop tenga física correcta
-	local dropHandle = dropTool:FindFirstChild("Handle") :: BasePart?
-	if dropHandle then
-		dropHandle.Anchored = false
-		dropHandle.CanCollide = true
-	end
-
-	-- Posicionar el drop ligeramente elevado
-	local upOffset = Vector3.new(0, WeaponConstants.DROP_HEIGHT_OFFSET, 0)
-	dropTool:PivotTo(CFrame.new(dropPosition + upOffset))
-
-	-- Etiquetar el drop para futuros sistemas de pick-up
-	dropTool:SetAttribute("WeaponName", tool.Name)
-	dropTool:SetAttribute("DroppedBy", player.Name)
-
-	dropTool.Parent = workspace
-
-	-- Aplicar impulso leve hacia adelante
-	if dropHandle then
-		local forwardDir = dropCFrame.LookVector
-		dropHandle.AssemblyLinearVelocity = forwardDir * WeaponConstants.DROP_IMPULSE
-			+ Vector3.new(0, WeaponConstants.DROP_IMPULSE * 0.5, 0)
-	end
-
-	-- Auto-destruir tras el lifetime configurado
-	if WeaponConstants.DROP_LIFETIME > 0 then
-		Debris:AddItem(dropTool, WeaponConstants.DROP_LIFETIME)
-	end
-
-	-- Destruir el Tool original del jugador
-	tool:Destroy()
-
-	-- Limpiar inventario server-side
-	_equippedWeapons[player] = nil
+	-- 4. Aplicar daño (salud, DBNO, muerte)
+	HealthStateManager.ApplyDamage(damageReport)
 end
 
 ------------------------------------------------------------------------
 -- PRIVATE: Remote handler
 ------------------------------------------------------------------------
 
-local function _onWeaponRemote(player: Player, action: string, weaponName: string?)
-	-- Sanitizar inputs
+local function _onWeaponRemote(player: Player, action: string, data: any?)
 	if typeof(action) ~= "string" then
-		return
-	end
-	if weaponName ~= nil and typeof(weaponName) ~= "string" then
 		return
 	end
 
 	if action == "Equip" then
+		local weaponName = data
 		if typeof(weaponName) == "string" and #weaponName <= 50 then
-			-- Validar que el arma existe en WeaponConstants
-			if not WeaponConstants.STATS[weaponName] then
+			local config = WeaponConstants.WEAPONS[weaponName]
+			if not config then
 				warn("[WeaponServer] Arma desconocida reportada por " .. player.Name .. ": " .. weaponName)
 				return
 			end
 			_equippedWeapons[player] = weaponName
+
+			local ammo = config.Ammo
+			_ammoState[player] = {
+				current = ammo.ClipSize,
+				reserve = ammo.CurrentAmmo - ammo.ClipSize,
+			}
+			_lastFireTime[player] = 0
+			ReloadHandler.CancelReload(player)
 		end
 	elseif action == "Unequip" then
 		_equippedWeapons[player] = nil
+		ReloadHandler.CancelReload(player)
+	elseif action == "ProcessShot" then
+		_processShot(player, data)
+	elseif action == "Reload" then
+		ReloadHandler.ProcessReload(player, data)
+	elseif action == "ActiveReload" then
+		if typeof(data) == "table" then
+			local arWpn = data.WeaponName
+			local arProgress = data.Progress
+			if typeof(arWpn) == "string" and typeof(arProgress) == "number" then
+				ReloadHandler.ProcessActiveReload(player, arWpn, arProgress)
+			end
+		end
 	end
-	-- Las demás acciones (Fire, Reload, etc.) se implementarán en fases siguientes
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Weapon drop & backpack cleanup
+------------------------------------------------------------------------
+
+--- Limpia todas las tools del Backpack del jugador
+local function _clearBackpack(player: Player)
+	local backpack = player:FindFirstChild("Backpack")
+	if not backpack then
+		return
+	end
+
+	for _, item in backpack:GetChildren() do
+		if item:IsA("Tool") then
+			item:Destroy()
+		end
+	end
+end
+
+--- Dropea el arma equipada actualmente en el mundo
+local function _dropEquippedWeapon(player: Player, character: Model)
+	-- Buscar el Tool equipado en el character
+	local equippedTool: Tool? = nil
+	for _, child in character:GetChildren() do
+		if child:IsA("Tool") then
+			equippedTool = child
+			break
+		end
+	end
+
+	if not equippedTool then
+		return
+	end
+
+	-- Obtener posición de drop (HumanoidRootPart o fallback al character)
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local dropPosition = if hrp then hrp.Position + Vector3.new(0, 2, 0) else character:GetPivot().Position
+
+	-- Clonar el Tool para crear el drop
+	local droppedTool = equippedTool:Clone()
+
+	-- Desparentar el original para que no siga en el character
+	equippedTool:Destroy()
+
+	-- Configurar el handle del drop
+	local handle = droppedTool:FindFirstChild("Handle") :: BasePart?
+	if handle then
+		handle.Anchored = false
+		handle.CanCollide = true
+		handle.CFrame = CFrame.new(dropPosition)
+
+		-- Aplicar una pequeña fuerza hacia arriba y lateral
+		local randomDir = Vector3.new(math.random() - 0.5, 0.5, math.random() - 0.5).Unit
+		handle.AssemblyLinearVelocity = randomDir * 15 + Vector3.new(0, 10, 0)
+		handle.AssemblyAngularVelocity = Vector3.new(
+			(math.random() - 0.5) * 10,
+			(math.random() - 0.5) * 10,
+			(math.random() - 0.5) * 10
+		)
+	end
+
+	-- Colocar en Workspace
+	droppedTool.Parent = workspace
+
+	-- Auto-destruir después de 30 segundos
+	Debris:AddItem(droppedTool, 30)
 end
 
 ------------------------------------------------------------------------
@@ -154,17 +240,21 @@ end
 
 local function _bindCharacter(player: Player, character: Model)
 	local humanoid = character:WaitForChild("Humanoid") :: Humanoid
-
-	-- Conexiones por personaje (se limpian al respawn)
 	local charConnections: { RBXScriptConnection } = {}
 
-	-- Al morir: drop del arma
 	table.insert(
 		charConnections,
 		humanoid.Died:Connect(function()
-			_dropWeapon(player, character)
+			-- Drop del arma equipada
+			_dropEquippedWeapon(player, character)
 
-			-- Desconectar conexiones de este personaje
+			-- Limpiar todas las tools del backpack
+			_clearBackpack(player)
+
+			-- Limpiar estado del servidor
+			_equippedWeapons[player] = nil
+			ReloadHandler.CancelReload(player)
+
 			for _, conn in charConnections do
 				conn:Disconnect()
 			end
@@ -172,13 +262,11 @@ local function _bindCharacter(player: Player, character: Model)
 		end)
 	)
 
-	-- Guardar referencia para cleanup al salir
 	_playerConnections[player] = charConnections
 end
 
 local function _onPlayerAdded(player: Player)
 	player.CharacterAdded:Connect(function(character)
-		-- Limpiar conexiones de personaje anterior
 		if _playerConnections[player] then
 			for _, conn in _playerConnections[player] do
 				conn:Disconnect()
@@ -187,14 +275,12 @@ local function _onPlayerAdded(player: Player)
 		_bindCharacter(player, character)
 	end)
 
-	-- Si ya tiene personaje (late join)
 	if player.Character then
 		_bindCharacter(player, player.Character)
 	end
 end
 
 local function _onPlayerRemoving(player: Player)
-	-- Cleanup conexiones
 	if _playerConnections[player] then
 		for _, conn in _playerConnections[player] do
 			conn:Disconnect()
@@ -202,6 +288,10 @@ local function _onPlayerRemoving(player: Player)
 		_playerConnections[player] = nil
 	end
 	_equippedWeapons[player] = nil
+	_ammoState[player] = nil
+	_lastFireTime[player] = nil
+	_reloadingPlayers[player] = nil
+	ReloadHandler.CleanupPlayer(player)
 end
 
 ------------------------------------------------------------------------
@@ -209,7 +299,6 @@ end
 ------------------------------------------------------------------------
 
 function WeaponServer:Init()
-	-- Crear carpeta de Remotes si no existe
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	if not remotes then
 		remotes = Instance.new("Folder")
@@ -217,7 +306,6 @@ function WeaponServer:Init()
 		remotes.Parent = ReplicatedStorage
 	end
 
-	-- Crear RemoteEvent para armas
 	local existing = remotes:FindFirstChild("WeaponRemote")
 	if existing then
 		existing:Destroy()
@@ -225,17 +313,17 @@ function WeaponServer:Init()
 	_weaponRemote = Instance.new("RemoteEvent")
 	_weaponRemote.Name = "WeaponRemote"
 	_weaponRemote.Parent = remotes
+
+	-- Inyectar estado compartido en sub-módulos
+	_injectState()
 end
 
 function WeaponServer:Start()
-	-- Escuchar acciones del cliente
 	_weaponRemote.OnServerEvent:Connect(_onWeaponRemote)
 
-	-- Player lifecycle
 	Players.PlayerAdded:Connect(_onPlayerAdded)
 	Players.PlayerRemoving:Connect(_onPlayerRemoving)
 
-	-- Handle jugadores ya conectados (Studio)
 	for _, player in Players:GetPlayers() do
 		task.spawn(_onPlayerAdded, player)
 	end
@@ -249,13 +337,15 @@ function WeaponServer:Destroy()
 		_playerConnections[player] = nil
 	end
 	table.clear(_equippedWeapons)
+	table.clear(_ammoState)
+	table.clear(_lastFireTime)
+	table.clear(_reloadingPlayers)
 
 	if _weaponRemote then
 		_weaponRemote:Destroy()
 	end
 end
 
---- Obtiene el nombre del arma equipada por un jugador (nil si no tiene).
 function WeaponServer:GetEquippedWeapon(player: Player): string?
 	return _equippedWeapons[player]
 end

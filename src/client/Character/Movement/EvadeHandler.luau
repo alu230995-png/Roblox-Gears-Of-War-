@@ -38,12 +38,11 @@ local EVADE_ACTIONS: { [string]: boolean } = table.freeze({
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function EvadeHandler.new(stateMachine, coverHandler, intentMapper)
+function EvadeHandler.new(stateMachine, coverHandler)
 	local self = setmetatable({}, EvadeHandler)
 
 	self._stateMachine = stateMachine
 	self._coverHandler = coverHandler
-	self._intentMapper = intentMapper
 	self._player = Players.LocalPlayer
 
 	-- Evade state
@@ -238,56 +237,44 @@ EvadeHandler._handlers = {
 	--- ExitCorner: salida diagonal desde esquina exterior.
 	--- Mismo impulso que CornerRollOut pero duración más corta (EXIT_CORNER_DURATION).
 	--- Sin animación de marometa — AnimationController diferencia por nombre de acción.
-	--- Al terminar, transiciona a Idle; ActionResolver detecta inputs retenidos (Walking/RoadieRun)
-	--- en el frame siguiente — el buffering es natural via continuous intents.
+	--- Al terminar, transiciona a Idle; ActionResolver resuelve el siguiente estado
+	--- en el frame siguiente basándose en los intents activos (Walking/RoadieRun).
 	ExitCorner = function(self, _data)
-	local hrp = self:_getCachedHRP()
-	if not hrp then
-		return
-	end
-
-	self._coverHandler:ResetCover()
-	self._stateMachine:Lock()
-
-	if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
-		local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
-		if flat.Magnitude > Constants.ZERO_MAGNITUDE then
-			self._evadeDirection = flat.Unit
-		else
-			self._evadeDirection = Vector3.new(0, 0, -1)
+		local hrp = self:_getCachedHRP()
+		if not hrp then
+			return
 		end
-	else
-		local coverNormal = self._coverHandler:GetNormal()
-		if coverNormal then
-			self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+
+		self._coverHandler:ResetCover()
+		self._stateMachine:Lock()
+
+		if _data and _data.direction and typeof(_data.direction) == "Vector3" and _data.direction.Magnitude > 0.01 then
+			local flat = Vector3.new(_data.direction.X, 0, _data.direction.Z)
+			if flat.Magnitude > Constants.ZERO_MAGNITUDE then
+				self._evadeDirection = flat.Unit
+			else
+				self._evadeDirection = Vector3.new(0, 0, -1)
+			end
 		else
-			local look = hrp.CFrame.LookVector
-			self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+			local coverNormal = self._coverHandler:GetNormal()
+			if coverNormal then
+				self._evadeDirection = Vector3.new(coverNormal.X, 0, coverNormal.Z).Unit
+			else
+				local look = hrp.CFrame.LookVector
+				self._evadeDirection = Vector3.new(-look.X, 0, -look.Z).Unit
+			end
 		end
-	end
 
-	self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
-	self:_applyImpulseToHRP(hrp)
+		self._evadeSpeed = Constants.EVADE_IMPULSE_SPEED
+		self:_applyImpulseToHRP(hrp)
 
-	self:_startTimer(Constants.EXIT_CORNER_DURATION, function()
-		self._evadeSpeed = 0
-		self._evadeDirection = nil
-		self._stateMachine:Unlock()
-		local im = self._intentMapper
-		if im and im:HasIntent("WantsRoadieRun") then
-			self._stateMachine:TransitionTo("RoadieRun")
-		elseif
-			im
-			and (im:HasIntent("WantsMoveForward")
-				or im:HasIntent("WantsMoveBackward")
-				or im:HasIntent("WantsMoveLeft")
-				or im:HasIntent("WantsMoveRight"))
-		then
-			self._stateMachine:TransitionTo("Walking")
-		else
+		self:_startTimer(Constants.EXIT_CORNER_DURATION, function()
+			self._evadeSpeed = 0
+			self._evadeDirection = nil
+			self._stateMachine:Unlock()
+			-- Transicionar a Idle; ActionResolver resuelve Walking/RoadieRun en el siguiente frame
 			self._stateMachine:TransitionTo("Idle")
-		end
-	end)
+		end)
 	end,
 }
 

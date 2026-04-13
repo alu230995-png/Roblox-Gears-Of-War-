@@ -61,6 +61,15 @@ local SoundController = require(script.Parent.Sound.SoundController)
 -- Health (observa LifeState del server → transiciones de StateMachine)
 local HealthObserver = require(script.Parent.Character.HealthObserver)
 
+-- Death Effects (ragdoll, dismember, headshot — client-side visuals)
+local DeathEffectsHandler = require(script.Parent.Character.DeathEffectsHandler)
+
+-- Weapons (shooting, reload, scope)
+local WeaponClient = require(script.Parent.Weapons.WeaponClient)
+
+-- Presentation (UI/visual — Layer 5)
+local ScopeRenderer = require(script.Parent.Presentation.ScopeRenderer)
+
 ------------------------------------------------------------------------
 -- BOOTSTRAP
 ------------------------------------------------------------------------
@@ -84,8 +93,7 @@ local envSensor = EnvironmentSensor.new()
 local intentMapper = IntentMapper.new(inputDetector)
 local inputBuffer = InputBuffer.new()
 local actionResolver = ActionResolver.new(stateMachine, inputBuffer, intentMapper, envSensor)
-local movementController =
-	MovementController.new(stateMachine, actionResolver, envSensor, inputDetector)
+local movementController = MovementController.new(stateMachine, actionResolver, envSensor)
 local animationController = AnimationController.new(stateMachine, movementController.ActionExecuted)
 local cameraController = CameraController.new(stateMachine, movementController.ActionExecuted, mouseInput)
 
@@ -110,9 +118,59 @@ end)
 -- DI: RotationHandler necesita leer GetRotationOverride() para Low Cover aim
 movementController:SetAimingController(aimingController)
 
--- Nota: SetCoverHandler se llama dentro de MovementController:Start() — no duplicar aquí.
 local soundController = SoundController.new(stateMachine)
 local healthObserver = HealthObserver.new(stateMachine)
+local deathEffectsHandler = DeathEffectsHandler.new()
+
+------------------------------------------------------------------------
+-- WEAPON SYSTEM — Per-Tool management (scan directo, sin WeaponToolManager)
+------------------------------------------------------------------------
+local player = game:GetService("Players").LocalPlayer
+local weaponClients = {} :: { [Tool]: any }
+
+local function setupWeaponTool(tool: Tool)
+	if weaponClients[tool] then
+		return
+	end
+	local wc = WeaponClient.new(player, tool)
+	wc:Init(stateMachine, movementController.ActionExecuted, ScopeRenderer)
+	wc:Start()
+	weaponClients[tool] = wc
+
+	tool.AncestryChanged:Connect(function(_, newParent)
+		if newParent == nil then
+			task.defer(function()
+				local entry = weaponClients[tool]
+				if entry then
+					weaponClients[tool] = nil
+					entry:Destroy()
+				end
+			end)
+		end
+	end)
+end
+
+local function scanForTools(container: Instance)
+	for _, child in container:GetChildren() do
+		if child:IsA("Tool") then
+			setupWeaponTool(child :: Tool)
+		end
+	end
+	container.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			setupWeaponTool(child :: Tool)
+		end
+	end)
+end
+
+local backpack = player:WaitForChild("Backpack")
+scanForTools(backpack)
+if player.Character then
+	scanForTools(player.Character)
+end
+player.CharacterAdded:Connect(function(character)
+	scanForTools(character)
+end)
 
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
@@ -128,6 +186,7 @@ locator:Register("CameraController", cameraController)
 locator:Register("AimingController", aimingController)
 locator:Register("SoundController", soundController)
 locator:Register("HealthObserver", healthObserver)
+locator:Register("DeathEffectsHandler", deathEffectsHandler)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()

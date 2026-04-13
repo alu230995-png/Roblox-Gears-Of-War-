@@ -82,13 +82,12 @@ end
 --- en esquina y tiene input lateral hacia el vacío.
 --- @return table? swapData — { newPart, newNormal, hitPosition, moveDir } o nil
 function Helpers.scanCoverSwap(resolver, ctx): any?
-	local coverHandler = ctx.CoverHandler
-	if not coverHandler or not ctx.EnvSensor then
+	if not ctx.Env.IsInActiveCover or not ctx.EnvSensor then
 		return nil
 	end
 
-	local coverNormal = coverHandler:GetNormal()
-	local wallRight = coverHandler:GetWallRight()
+	local coverNormal = ctx.Env.ActiveCoverNormal
+	local wallRight = ctx.Env.ActiveWallRight
 	if not coverNormal or not wallRight then
 		return nil
 	end
@@ -103,12 +102,12 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 		return nil
 	end
 
-	-- Usar flags con histéresis de CornerCover (via CoverMain) en vez de los flags
+	-- Usar flags con histéresis de CornerCover (via EnvironmentSensor) en vez de los flags
 	-- crudos del EnvironmentSensor. Esto garantiza que el scan de swap y el bloqueo
 	-- de movimiento vean el MISMO estado de esquina, eliminando el flicker que
 	-- causaba que el swap no se detectara al presionar hacia el vacío.
-	local atCorner = (movementScale > 0 and coverHandler:IsAtCornerRight())
-		or (movementScale < 0 and coverHandler:IsAtCornerLeft())
+	local atCorner = (movementScale > 0 and ctx.Env.ActiveAtCornerRight)
+		or (movementScale < 0 and ctx.Env.ActiveAtCornerLeft)
 
 	if Constants.DEBUG_MODE then
 		local now = os.clock()
@@ -119,8 +118,8 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 					"[CoverSwap] Escaneo pasivo: scale=%.2f | esquina=%s (izq=%s, der=%s)",
 					movementScale,
 					tostring(atCorner),
-					tostring(coverHandler:IsAtCornerLeft()),
-					tostring(coverHandler:IsAtCornerRight())
+					tostring(ctx.Env.ActiveAtCornerLeft),
+					tostring(ctx.Env.ActiveAtCornerRight)
 				)
 			)
 		end
@@ -141,7 +140,7 @@ function Helpers.scanCoverSwap(resolver, ctx): any?
 	end
 
 	local moveDir = if movementScale > 0 then 1 else -1
-	local coverInstance = coverHandler:GetCoverInstance()
+	local coverInstance = ctx.Env.ActiveCoverInstance
 	if not coverInstance then
 		return nil
 	end
@@ -211,11 +210,7 @@ end
 --- @param ctx table — ResolverContext
 --- @return number — [-1, 1]
 function Helpers.computeSignedLateralScale(ctx): number
-	local coverHandler = ctx.CoverHandler
-	if not coverHandler then
-		return 0
-	end
-	local wallRight = coverHandler:GetWallRight()
+	local wallRight = ctx.Env.ActiveWallRight
 	if not wallRight then
 		return 0
 	end
@@ -232,6 +227,52 @@ end
 --- @return number — [0, 1]
 function Helpers.computeLateralScale(ctx): number
 	return math.abs(Helpers.computeSignedLateralScale(ctx))
+end
+
+------------------------------------------------------------------------
+-- WORLD DIRECTION HELPERS
+------------------------------------------------------------------------
+
+--- Calcula la dirección de movimiento en World Space combinando el input
+--- del jugador (Vector2) con los vectores de la cámara.
+--- @param moveInput Vector2 — X = lateral (A/D), Y = forward (W/S)
+--- @return Vector3? — dirección horizontal unitaria, nil si inválida
+function Helpers.computeWorldMoveDirection(moveInput: Vector2): Vector3?
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+
+	-- Aplanar vectores de cámara al plano horizontal (ignorar pitch)
+	local camLook = camera.CFrame.LookVector
+	local camRight = camera.CFrame.RightVector
+
+	local flatLook = Vector3.new(camLook.X, 0, camLook.Z)
+	if flatLook.Magnitude <= Constants.ZERO_MAGNITUDE then
+		return nil
+	end
+	flatLook = flatLook.Unit
+
+	local flatRight = Vector3.new(camRight.X, 0, camRight.Z)
+	if flatRight.Magnitude <= Constants.ZERO_MAGNITUDE then
+		return nil
+	end
+	flatRight = flatRight.Unit
+
+	-- Si no hay input, asumir "quiere ir hacia adelante" (forward de cámara)
+	if math.abs(moveInput.X) < 0.01 and math.abs(moveInput.Y) < 0.01 then
+		return flatLook
+	end
+
+	-- Construir dirección world-space: combinar lateral + forward
+	-- moveInput.X = A(-1) / D(+1), moveInput.Y = W(+1) / S(-1)
+	local worldDir = (flatRight * moveInput.X) + (flatLook * moveInput.Y)
+
+	if worldDir.Magnitude < 0.01 then
+		return flatLook
+	end
+
+	return worldDir.Unit
 end
 
 ------------------------------------------------------------------------

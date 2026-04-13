@@ -10,30 +10,22 @@
 	  2. DisableVisualQueries — CanQuery = false en toda la malla R15
 	     y accesorios para que los raycasts de combate los ignoren
 	  3. CreateHitboxes — Parts invisibles weldeados a las zonas vitales
-	     con CanQuery = true y CollisionGroup = "CombatHitboxes"
+	     con CanQuery = true
 	  4. SetupCharacter — orquesta los tres pasos en orden
 
 	Arquitectura de Raycasts:
-	  - La malla visual (R15 + accesorios) tiene CanQuery = false
+	  - La malla visual (R15 + accesorios) del jugador tiene CanQuery = false
 	    → no intercepta raycasts de combate
-	  - Las hitboxes tienen CanQuery = true y pertenecen al grupo
-	    "CombatHitboxes" → único target de raycasts de arma
-	  - El arma usará RaycastParams.CollisionGroup = "CombatHitboxes"
-	    para filtrar solo hitboxes y geometría del mapa
+	  - Las hitboxes tienen CanQuery = true → los raycasts impactan en ellas
+	  - Los raycasts también impactan parts normales del mapa y humanoids
+	    que no tengan hitboxes (CanQuery activo por defecto)
 
 	Llamar desde el servidor en CharacterAdded (via PhysicsConfig).
 ]]
 
-local PhysicsService = game:GetService("PhysicsService")
-
 ------------------------------------------------------------------------
 -- CONSTANTS
 ------------------------------------------------------------------------
-
---- Nombre del CollisionGroup para hitboxes de combate.
---- Crear en Studio: Model → Collision Groups → "CombatHitboxes"
---- O se crea automáticamente en EnsureCollisionGroup().
-local HITBOX_GROUP_NAME = "CombatHitboxes"
 
 --- Dimensiones de cada hitbox (tamaño en studs).
 --- Las claves coinciden con los nombres de las partes R15.
@@ -65,34 +57,6 @@ local BODY_SCALES = {
 ------------------------------------------------------------------------
 
 local CharacterModifier = {}
-
-------------------------------------------------------------------------
--- 0. Garantizar que el CollisionGroup exista (server-only, idempotente)
-------------------------------------------------------------------------
-
-local _groupCreated = false
-
-function CharacterModifier.EnsureCollisionGroup()
-	if _groupCreated then
-		return
-	end
-
-	-- PhysicsService.RegisterCollisionGroup es idempotente en Roblox ≥2024
-	local ok = pcall(function()
-		PhysicsService:RegisterCollisionGroup(HITBOX_GROUP_NAME)
-	end)
-
-	if ok then
-		-- Las hitboxes NO colisionan entre sí ni con el grupo Default.
-		-- Solo sirven como target de CanQuery para raycasts de combate.
-		pcall(function()
-			PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP_NAME, "Default", false)
-			PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP_NAME, HITBOX_GROUP_NAME, false)
-		end)
-	end
-
-	_groupCreated = true
-end
 
 ------------------------------------------------------------------------
 -- 1. Proporciones GoW
@@ -134,9 +98,7 @@ end
 ---   - CanCollide = false (no choca con nada)
 ---   - CanQuery = true (detectable por raycasts)
 ---   - CanTouch = false (sin eventos Touch)
----   - CollisionGroup = "CombatHitboxes"
 function CharacterModifier.CreateHitboxes(character: Model)
-	CharacterModifier.EnsureCollisionGroup()
 
 	for partName, size in HITBOX_DATA do
 		local targetPart = character:FindFirstChild(partName) :: BasePart?
@@ -156,9 +118,6 @@ function CharacterModifier.CreateHitboxes(character: Model)
 		hitbox.CanCollide = false
 		hitbox.CanQuery = true
 		hitbox.CanTouch = false
-
-		-- Grupo de colisión
-		hitbox.CollisionGroup = HITBOX_GROUP_NAME
 
 		-- Weld al hueso R15 correspondiente
 		local weld = Instance.new("WeldConstraint")
@@ -202,11 +161,6 @@ function CharacterModifier.SetupCharacter(character: Model)
 
 	-- 3. Crear hitboxes competitivas
 	CharacterModifier.CreateHitboxes(character)
-end
-
---- Devuelve el nombre del CollisionGroup para uso en RaycastParams.
-function CharacterModifier.GetHitboxGroupName(): string
-	return HITBOX_GROUP_NAME
 end
 
 return CharacterModifier

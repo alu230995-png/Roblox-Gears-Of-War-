@@ -78,6 +78,21 @@ function EnvironmentSensor.new()
 		IsAtOuterCorner = false,
 		CornerExitDirection = nil :: Vector3?,
 		RawMovementDirection = nil :: Vector3?,
+
+		-- ════════════════════════════════════════════════════════════
+		-- ACTIVE COVER STATE (publicado por CoverMain, Capa 4)
+		-- Estos campos representan el estado ACTUAL de cover del jugador,
+		-- NO la detección de covers cercanas. ActionResolver (Capa 3) lee
+		-- estos campos en vez de acceder directamente al CoverHandler.
+		-- ════════════════════════════════════════════════════════════
+		ActiveCoverNormal = nil :: Vector3?,
+		ActiveCoverType = nil :: string?, -- "Low" | "High"
+		ActiveCoverInstance = nil :: BasePart?,
+		ActiveWallRight = nil :: Vector3?,
+		ActiveAtCornerLeft = false,
+		ActiveAtCornerRight = false,
+		IsPeekActive = false,
+		IsInActiveCover = false,
 	}
 
 	-- Cache de character refs (evita FindFirstChild cada frame)
@@ -110,6 +125,55 @@ end
 --- Retorna el EnvironmentContext actual (read-only snapshot).
 function EnvironmentSensor:GetContext()
 	return self._context
+end
+
+------------------------------------------------------------------------
+-- ACTIVE COVER STATE API (llamado por CoverMain, Capa 4)
+-- Permite que el CoverHandler publique su estado sin que las capas
+-- superiores (ActionResolver) necesiten una dependencia directa.
+------------------------------------------------------------------------
+
+--- Actualiza el estado de cover activo. Llamado por CoverMain cuando
+--- entra en cover o cuando cambian los datos de cover.
+function EnvironmentSensor:SetActiveCoverData(
+	coverNormal: Vector3?,
+	coverType: string?,
+	coverInstance: BasePart?,
+	wallRight: Vector3?
+)
+	local ctx = self._context
+	ctx.ActiveCoverNormal = coverNormal
+	ctx.ActiveCoverType = coverType
+	ctx.ActiveCoverInstance = coverInstance
+	ctx.ActiveWallRight = wallRight
+	ctx.IsInActiveCover = coverNormal ~= nil
+end
+
+--- Actualiza el estado de esquinas. Llamado por CoverMain/CornerCover
+--- cuando detecta cambios en la posición de esquina.
+function EnvironmentSensor:SetActiveCornerState(atLeft: boolean, atRight: boolean)
+	local ctx = self._context
+	ctx.ActiveAtCornerLeft = atLeft
+	ctx.ActiveAtCornerRight = atRight
+end
+
+--- Actualiza el estado de peek. Llamado por CoverMain/PeekHandler.
+function EnvironmentSensor:SetPeekActive(active: boolean)
+	self._context.IsPeekActive = active
+end
+
+--- Limpia todo el estado de cover activo. Llamado por CoverMain al
+--- salir de cover (ExitCover, ResetCover).
+function EnvironmentSensor:ClearActiveCoverData()
+	local ctx = self._context
+	ctx.ActiveCoverNormal = nil
+	ctx.ActiveCoverType = nil
+	ctx.ActiveCoverInstance = nil
+	ctx.ActiveWallRight = nil
+	ctx.ActiveAtCornerLeft = false
+	ctx.ActiveAtCornerRight = false
+	ctx.IsPeekActive = false
+	ctx.IsInActiveCover = false
 end
 
 --- Actualizar el sensor según el estado actual del jugador.
@@ -414,6 +478,10 @@ function EnvironmentSensor:_resetContext(moveDirection: Vector2)
 	ctx.IsAtOuterCorner = false
 	ctx.CornerExitDirection = nil
 	ctx.RawMovementDirection = nil
+
+	-- Mantener el estado de cover activo (NO se resetea cada frame,
+	-- solo lo actualiza CoverMain cuando cambia el estado de cover).
+	-- Los campos Active* persisten entre frames.
 end
 
 ------------------------------------------------------------------------

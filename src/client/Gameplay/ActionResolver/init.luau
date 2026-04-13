@@ -49,7 +49,6 @@ function ActionResolver.new(stateMachine, inputBuffer, intentMapper, environment
 	self._buffer = inputBuffer
 	self._intents = intentMapper
 	self._env = environmentSensor
-	self._coverHandler = nil -- Inyectado después via SetCoverHandler()
 
 	-- Signal de salida: (action: string, targetState: string?, data: any?)
 	self.ActionResolved = Signal.new()
@@ -69,11 +68,6 @@ end
 ------------------------------------------------------------------------
 -- LIFECYCLE
 ------------------------------------------------------------------------
-
---- Inyecta la referencia al CoverHandler (CoverMain) después de su creación.
-function ActionResolver:SetCoverHandler(coverHandler)
-	self._coverHandler = coverHandler
-end
 
 function ActionResolver:Destroy()
 	if self.ActionResolved then
@@ -143,7 +137,6 @@ function ActionResolver:_buildContext(state: string)
 	ctx.StateConfig = PlayerStateUtils.GetState(state)
 	ctx.Env = self._env:GetContext()
 	ctx.EnvSensor = self._env
-	ctx.CoverHandler = self._coverHandler
 	ctx.Buffer = self._buffer
 	ctx.Intents = self._intents
 	ctx.HasMovement = Helpers.hasMovementIntent(self._intents)

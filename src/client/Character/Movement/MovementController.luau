@@ -35,8 +35,7 @@ MovementController.__index = MovementController
 function MovementController.new(
 	stateMachine,
 	actionResolver,
-	environmentSensor,
-	inputDetector
+	environmentSensor
 )
 	local self = setmetatable({}, MovementController)
 
@@ -47,9 +46,9 @@ function MovementController.new(
 
 	-- Sub-handlers
 	self._coverHandler = CoverMain.new(stateMachine, environmentSensor)
-	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler, actionResolver._intents)
+	self._evadeHandler = EvadeHandler.new(stateMachine, self._coverHandler)
 	self._vaultHandler = VaultHandler.new(stateMachine, self._coverHandler, environmentSensor)
-	self._rotationHandler = RotationHandler.new(inputDetector)
+	self._rotationHandler = RotationHandler.new()
 
 	-- Cache de character refs (evita FindFirstChild cada frame)
 	self._cachedCharacter = nil :: Model?
@@ -82,9 +81,6 @@ end
 function MovementController:Start()
 	-- RotationHandler gestiona AutoRotate del Humanoid
 	self._rotationHandler:Start()
-
-	-- Inyectar CoverHandler al resolver (necesario para CoverSwap)
-	self._actionResolver:SetCoverHandler(self._coverHandler)
 
 	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(function(action, targetState, data)
 		self:ExecuteAction(action, targetState, data)
@@ -146,6 +142,12 @@ function MovementController:ExecuteAction(action: string, targetState: string?, 
 				print(`[AimDebug] MovementController: TransitionTo({targetState}) SUCCESS from {currentState} — executing {action}`)
 			end
 		end
+	end
+
+	-- RoadieRun: cachear dirección para RotationHandler (dirección viene de ActionResolver)
+	if action == "StartRoadieRun" or action == "CancelSwapToRun" then
+		local direction = data and data.direction or nil
+		self._rotationHandler:SetRoadieRunDirection(direction)
 	end
 
 	-- Intentar delegar a sub-handlers (cover → vault → evade → fallback)
@@ -226,6 +228,7 @@ end
 --- Inyecta referencia al AimingController en RotationHandler (para Low Cover rotation override).
 function MovementController:SetAimingController(aimingController)
 	self._rotationHandler:SetAimingController(aimingController)
+	self._rotationHandler:SetCoverHandler(self._coverHandler)
 end
 
 ------------------------------------------------------------------------

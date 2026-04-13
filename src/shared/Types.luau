@@ -176,40 +176,80 @@ export type EnvironmentContext = {
 }
 
 ------------------------------------------------------------------------
--- WEAPON SYSTEM — RESERVED Phase 7 — not yet used
+-- WEAPON SYSTEM
 ------------------------------------------------------------------------
 
-export type WeaponType = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
+export type WeaponTypeName = "Lancer" | "Gnasher" | "Longshot" | "TorqueBow" | "HammerOfDawn" | "Boomshot" | "Snub"
 
 export type WeaponState = "Equipped" | "Unequipped" | "Shooting" | "Reloading"
 
-export type WeaponConfig = {
+--- Identidad del arma: nombre, tipo de disparo, descripción, peso.
+export type IdentityType = {
 	Name: string,
-	Type: WeaponType,
-	Damage: number,
-	FireRate: number,
-	MagazineSize: number,
-	ReloadTime: number,
-	Range: number,
-	HeadshotMultiplier: number,
-	ActiveReloadBonus: number,
+	Type: "Hitscan",
+	Description: string,
+	IsHeavy: boolean,
 }
 
---- Stats de arma tal como se definen en WeaponConstants.STATS[weaponName].
-export type WeaponStats = {
-	Damage: number,
+--- Estadísticas base del arma.
+export type StatsType = {
+	BaseDamage: number,
 	FireRate: number,
-	MagazineSize: number,
-	ReloadTime: number,
 	Range: number,
+	AutoFire: boolean,
+}
+
+--- Munición y recarga.
+export type AmmoType = {
+	MaxCapacity: number,
+	CurrentAmmo: number,
+	ClipSize: number,
+	ReloadTime: number,
+	ActiveReloadWindowStart: number?,
+	ActiveReloadWindowDuration: number?,
+}
+
+--- Caída de daño por distancia.
+export type FalloffType = {
+	Enabled: boolean,
+	StartDistance: number,
+	DamagePerUnit: number,
 	Spread: number,
-	FireMode: "Auto" | "Semi" | "Burst",
 }
 
---- Datos de un arma dropeada en el mundo (atributos del Model).
-export type WeaponDropInfo = {
-	WeaponName: string,
-	DroppedBy: string,
+--- Configuración de explosión (Boomshot, TorqueBow, HammerOfDawn).
+export type ExplosiveType = {
+	Enabled: boolean,
+	Radius: number,
+}
+
+--- Balística completa del arma.
+export type BallisticsType = {
+	Falloff: FalloffType,
+	Explosive: ExplosiveType,
+	SpreadPattern: { [number]: UDim2 },
+}
+
+--- Mecánica de carga antes de disparar (hold-to-fire).
+export type HoldingBreathType = {
+	Enabled: boolean,
+	Duration: number,
+	CancelOnRelease: boolean,
+}
+
+--- Mecánicas especiales del arma.
+export type MechanicsType = {
+	SphereCastRadius: number,
+	HoldingBreath: HoldingBreathType,
+}
+
+--- Configuración completa de un arma.
+export type WeaponConfigType = {
+	Identity: IdentityType,
+	Stats: StatsType,
+	Ammo: AmmoType,
+	Ballistics: BallisticsType,
+	Mechanics: MechanicsType,
 }
 
 ------------------------------------------------------------------------
@@ -276,6 +316,19 @@ export type NetworkPayload = {
 	Action: string,
 	Timestamp: number,
 	Data: { [string]: any }?,
+}
+
+------------------------------------------------------------------------
+-- SHOOTING SYSTEM
+------------------------------------------------------------------------
+
+--- Datos de un disparo enviados del cliente al servidor para validación.
+export type ShotData = {
+	WeaponName: string,
+	Origin: Vector3,
+	HitPositions: { [string]: Vector3 },
+	HitParts: { [string]: string },
+	Timestamp: number,
 }
 
 return nil

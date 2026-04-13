@@ -63,4 +63,38 @@ function AimAngleUtils.IsInsideFrontCone(cameraLookFlat: Vector3, coverNormal: V
 	return dot >= math.cos(math.rad(halfAngle))
 end
 
+--- Verifica si la cámara está en la zona muerta de apuntado (mirando hacia la pared).
+---
+--- Para High cover, la deadzone es el ángulo donde el personaje no puede asomarse.
+--- Para Low cover, NO hay deadzone — el personaje apunta sobre la cobertura.
+---
+--- @param coverNormal Vector3 — normal de la pared de cover
+--- @param coverType string? — "Low" | "High"
+--- @param deadzoneAngle number — ángulo de deadzone (grados)
+--- @return boolean — true si está en deadzone
+function AimAngleUtils.IsAimDeadzone(coverNormal: Vector3?, coverType: string?, deadzoneAngle: number): boolean
+	if not coverNormal then
+		return false
+	end
+
+	-- Low cover: NO deadzone (cono frontal siempre válido)
+	if coverType == "Low" then
+		return false
+	end
+
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return false
+	end
+
+	local look = camera.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.001 then
+		return false
+	end
+
+	local angle = AimAngleUtils.AngleFromCoverNormal(flat.Unit, coverNormal)
+	return AimAngleUtils.GetShoulderSide(angle, deadzoneAngle) == nil
+end
+
 return table.freeze(AimAngleUtils)

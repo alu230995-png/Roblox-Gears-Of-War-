@@ -64,12 +64,10 @@ local CAPABILITY_EXCEPTIONS = {
 
 	Reloading = {
 		canShoot = false,
-		canSprint = false,
 	},
 
 	ActiveReloading = {
 		canShoot = false,
-		canSprint = false,
 	},
 
 	-- COVER GROUP: estados activos donde el jugador toma decisiones

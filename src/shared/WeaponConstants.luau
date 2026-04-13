@@ -1,150 +1,382 @@
 --[[
 	WeaponConstants.luau
 	═══════════════════════════════════════════════════════════════
-	Constantes exclusivas del sistema de armas.
+	Configuración completa de todas las armas del juego.
 	═══════════════════════════════════════════════════════════════
 
-	Separado de Constants.luau para mantener la tabla principal limpia.
-	Contiene:
-	  1. TIMINGS — equip, unequip, drop
-	  2. WEAPON_STATS — stats base por arma (daño, cadencia, cargador, etc.)
-	  3. WEAPON_EFFECTS — IDs de sonido/partículas por arma (placeholder)
+	Cada arma se define con: Identity, Stats, Ammo, Ballistics, Mechanics.
+	La clave DEBE coincidir con el nombre del Tool en Roblox.
 
-	Convención de nombres: las claves de WEAPON_STATS coinciden
-	con WeaponType.Types[key].Name (Lancer, Gnasher, Longshot, etc.)
+	Estructura:
+	  Identity   — nombre, tipo de disparo, descripción, IsHeavy
+	  Stats      — daño base, cadencia, alcance, auto-fire
+	  Ammo       — capacidad total, munición inicial, cargador, recarga, active reload
+	  Ballistics — falloff (caída de daño), explosive (explosión), spread pattern
+	  Mechanics  — SphereCastRadius (aim-assist server), HoldingBreath (hold-to-fire)
 ]]
 
 local WeaponConstants = {}
 
 ------------------------------------------------------------------------
--- 1. TIMINGS — equip/unequip/drop
+-- TIMINGS — equip/unequip
 ------------------------------------------------------------------------
 
--- Duración (segundos) de la animación de equipar/desequipar
 WeaponConstants.EQUIP_TIME = 0.4
 WeaponConstants.UNEQUIP_TIME = 0.3
 
--- Elevación (studs) del modelo dropeado respecto al HRP al morir
-WeaponConstants.DROP_HEIGHT_OFFSET = 2
--- Fuerza aplicada al modelo dropeado al morir (studs/s en la dirección forward)
-WeaponConstants.DROP_IMPULSE = 10
--- Tiempo (segundos) antes de destruir el drop del mundo (0 = nunca)
-WeaponConstants.DROP_LIFETIME = 60
-
 ------------------------------------------------------------------------
--- 2. WEAPON_STATS — stats base por arma
+-- WEAPONS — configuración completa por arma
 ------------------------------------------------------------------------
 
---- Campos por arma:
----   Damage       — daño base por impacto (por pellet en escopetas)
----   FireRate     — segundos entre disparos
----   MagazineSize — balas por cargador
----   ReloadTime   — segundos de recarga
----   Range        — alcance máximo en studs
----   Spread       — grados de dispersión base (cono)
----   FireMode     — "Auto" | "Semi" | "Burst"
-WeaponConstants.STATS = table.freeze({
+WeaponConstants.WEAPONS = table.freeze({
+
+	------------------------------------------------------------------------
+	-- LANCER — Rifle de asalto con sierra (arma default)
+	------------------------------------------------------------------------
 	Lancer = table.freeze({
-		Damage = 20,
-		FireRate = 0.1,
-		MagazineSize = 60,
-		ReloadTime = 2.5,
-		Range = 200,
-		Spread = 1.5,
-		FireMode = "Auto",
+		Identity = table.freeze({
+			Name = "Lancer",
+			Type = "Hitscan",
+			Description = "Rifle de asalto versátil con sierra integrada.",
+			IsHeavy = false,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 20,
+			FireRate = 0.12,
+			Range = 200,
+			AutoFire = true,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 360,
+			CurrentAmmo = 240,
+			ClipSize = 60,
+			ReloadTime = 2.5,
+			ActiveReloadWindowStart = 0.30,
+			ActiveReloadWindowDuration = 0.15,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = true,
+				StartDistance = 80,
+				DamagePerUnit = 0.05,
+				Spread = 1.5,
+			}),
+			Explosive = table.freeze({
+				Enabled = false,
+				Radius = 0,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.5,
+			HoldingBreath = table.freeze({
+				Enabled = false,
+				Duration = 0,
+				CancelOnRelease = false,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- GNASHER — Escopeta táctica de corto alcance (arma default)
+	------------------------------------------------------------------------
 	Gnasher = table.freeze({
-		Damage = 100,
-		FireRate = 0.8,
-		MagazineSize = 8,
-		ReloadTime = 2.8,
-		Range = 30,
-		Spread = 8.0,
-		FireMode = "Semi",
+		Identity = table.freeze({
+			Name = "Gnasher",
+			Type = "Hitscan",
+			Description = "Escopeta devastadora de corto alcance. Icónica de Gears of War.",
+			IsHeavy = false,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 75,
+			FireRate = 0.8,
+			Range = 30,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 32,
+			CurrentAmmo = 24,
+			ClipSize = 12,
+			ReloadTime = 2.8,
+			ActiveReloadWindowStart = 0.35,
+			ActiveReloadWindowDuration = 0.15,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = true,
+				StartDistance = 10,
+				DamagePerUnit = 3.0,
+				Spread = 8.0,
+			}),
+			Explosive = table.freeze({
+				Enabled = false,
+				Radius = 0,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+				[2] = UDim2.new(0.4, 0, 0.35, 0),
+				[3] = UDim2.new(0.6, 0, 0.35, 0),
+				[4] = UDim2.new(0.35, 0, 0.5, 0),
+				[5] = UDim2.new(0.65, 0, 0.5, 0),
+				[6] = UDim2.new(0.4, 0, 0.65, 0),
+				[7] = UDim2.new(0.6, 0, 0.65, 0),
+				[8] = UDim2.new(0.5, 0, 0.3, 0),
+				[9] = UDim2.new(0.5, 0, 0.7, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 0,
+			HoldingBreath = table.freeze({
+				Enabled = false,
+				Duration = 0,
+				CancelOnRelease = false,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- LONGSHOT — Sniper de alto daño, un tiro por cargador
+	------------------------------------------------------------------------
 	Longshot = table.freeze({
-		Damage = 500,
-		FireRate = 1.5,
-		MagazineSize = 1,
-		ReloadTime = 3.0,
-		Range = 500,
-		Spread = 0.2,
-		FireMode = "Semi",
+		Identity = table.freeze({
+			Name = "Longshot",
+			Type = "Hitscan",
+			Description = "Rifle de francotirador de alto daño. Letal en cabeza.",
+			IsHeavy = false,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 500,
+			FireRate = 1.5,
+			Range = 500,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 12,
+			CurrentAmmo = 12,
+			ClipSize = 1,
+			ReloadTime = 3.0,
+			ActiveReloadWindowStart = 0.25,
+			ActiveReloadWindowDuration = 0.12,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = false,
+				StartDistance = 0,
+				DamagePerUnit = 0,
+				Spread = 0.2,
+			}),
+			Explosive = table.freeze({
+				Enabled = false,
+				Radius = 0,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.0,
+			HoldingBreath = table.freeze({
+				Enabled = false,
+				Duration = 0,
+				CancelOnRelease = false,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- TORQUE BOW — Arco explosivo, requiere carga antes de disparar
+	------------------------------------------------------------------------
 	TorqueBow = table.freeze({
-		Damage = 600,
-		FireRate = 2.0,
-		MagazineSize = 1,
-		ReloadTime = 3.5,
-		Range = 300,
-		Spread = 0.0,
-		FireMode = "Semi",
+		Identity = table.freeze({
+			Name = "TorqueBow",
+			Type = "Hitscan",
+			Description = "Arco explosivo que requiere carga. Devastador al impactar.",
+			IsHeavy = false,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 600,
+			FireRate = 2.0,
+			Range = 300,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 6,
+			CurrentAmmo = 6,
+			ClipSize = 1,
+			ReloadTime = 3.5,
+			ActiveReloadWindowStart = 0.30,
+			ActiveReloadWindowDuration = 0.10,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = false,
+				StartDistance = 0,
+				DamagePerUnit = 0,
+				Spread = 0.0,
+			}),
+			Explosive = table.freeze({
+				Enabled = true,
+				Radius = 10,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.0,
+			HoldingBreath = table.freeze({
+				Enabled = true,
+				Duration = 1.5,
+				CancelOnRelease = true,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- HAMMER OF DAWN — Arma pesada orbital, requiere carga
+	------------------------------------------------------------------------
 	HammerOfDawn = table.freeze({
-		Damage = 1000,
-		FireRate = 5.0,
-		MagazineSize = 1,
-		ReloadTime = 0,
-		Range = 999,
-		Spread = 0.0,
-		FireMode = "Semi",
+		Identity = table.freeze({
+			Name = "HammerOfDawn",
+			Type = "Hitscan",
+			Description = "Arma orbital devastadora. Requiere carga y línea de visión al cielo.",
+			IsHeavy = true,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 1000,
+			FireRate = 5.0,
+			Range = 999,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 1,
+			CurrentAmmo = 1,
+			ClipSize = 1,
+			ReloadTime = 0,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = false,
+				StartDistance = 0,
+				DamagePerUnit = 0,
+				Spread = 0.0,
+			}),
+			Explosive = table.freeze({
+				Enabled = true,
+				Radius = 15,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.0,
+			HoldingBreath = table.freeze({
+				Enabled = true,
+				Duration = 2.0,
+				CancelOnRelease = true,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- BOOMSHOT — Lanzagranadas pesado, explosivo
+	------------------------------------------------------------------------
 	Boomshot = table.freeze({
-		Damage = 800,
-		FireRate = 2.0,
-		MagazineSize = 1,
-		ReloadTime = 3.0,
-		Range = 150,
-		Spread = 0.0,
-		FireMode = "Semi",
+		Identity = table.freeze({
+			Name = "Boomshot",
+			Type = "Hitscan",
+			Description = "Lanzagranadas pesado. Daño explosivo en área.",
+			IsHeavy = true,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 800,
+			FireRate = 2.0,
+			Range = 150,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 4,
+			CurrentAmmo = 4,
+			ClipSize = 1,
+			ReloadTime = 3.0,
+			ActiveReloadWindowStart = 0.30,
+			ActiveReloadWindowDuration = 0.12,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = false,
+				StartDistance = 0,
+				DamagePerUnit = 0,
+				Spread = 0.0,
+			}),
+			Explosive = table.freeze({
+				Enabled = true,
+				Radius = 12,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.0,
+			HoldingBreath = table.freeze({
+				Enabled = false,
+				Duration = 0,
+				CancelOnRelease = false,
+			}),
+		}),
 	}),
 
+	------------------------------------------------------------------------
+	-- SNUB — Pistola secundaria (arma default)
+	------------------------------------------------------------------------
 	Snub = table.freeze({
-		Damage = 30,
-		FireRate = 0.2,
-		MagazineSize = 12,
-		ReloadTime = 1.8,
-		Range = 100,
-		Spread = 2.0,
-		FireMode = "Semi",
-	}),
-})
-
-------------------------------------------------------------------------
--- 3. WEAPON_EFFECTS — IDs placeholder de sonido/partículas
--- Reemplazar "rbxassetid://0" por asset IDs reales al importar
-------------------------------------------------------------------------
-
-WeaponConstants.EFFECTS = table.freeze({
-	Lancer = table.freeze({
-		FireSound = "rbxassetid://0",
-		ReloadSound = "rbxassetid://0",
-		EquipSound = "rbxassetid://0",
-		MuzzleFlash = "rbxassetid://0",
-		ChainsawSound = "rbxassetid://0",
-	}),
-	Gnasher = table.freeze({
-		FireSound = "rbxassetid://0",
-		ReloadSound = "rbxassetid://0",
-		EquipSound = "rbxassetid://0",
-		MuzzleFlash = "rbxassetid://0",
-	}),
-	Longshot = table.freeze({
-		FireSound = "rbxassetid://0",
-		ReloadSound = "rbxassetid://0",
-		EquipSound = "rbxassetid://0",
-		MuzzleFlash = "rbxassetid://0",
-	}),
-	Snub = table.freeze({
-		FireSound = "rbxassetid://0",
-		ReloadSound = "rbxassetid://0",
-		EquipSound = "rbxassetid://0",
-		MuzzleFlash = "rbxassetid://0",
+		Identity = table.freeze({
+			Name = "Snub",
+			Type = "Hitscan",
+			Description = "Pistola secundaria confiable. Buena precisión a media distancia.",
+			IsHeavy = false,
+		}),
+		Stats = table.freeze({
+			BaseDamage = 30,
+			FireRate = 0.2,
+			Range = 100,
+			AutoFire = false,
+		}),
+		Ammo = table.freeze({
+			MaxCapacity = 48,
+			CurrentAmmo = 36,
+			ClipSize = 12,
+			ReloadTime = 1.8,
+			ActiveReloadWindowStart = 0.25,
+			ActiveReloadWindowDuration = 0.15,
+		}),
+		Ballistics = table.freeze({
+			Falloff = table.freeze({
+				Enabled = true,
+				StartDistance = 40,
+				DamagePerUnit = 0.1,
+				Spread = 2.0,
+			}),
+			Explosive = table.freeze({
+				Enabled = false,
+				Radius = 0,
+			}),
+			SpreadPattern = table.freeze({
+				[1] = UDim2.new(0.5, 0, 0.5, 0),
+			}),
+		}),
+		Mechanics = table.freeze({
+			SphereCastRadius = 1.5,
+			HoldingBreath = table.freeze({
+				Enabled = false,
+				Duration = 0,
+				CancelOnRelease = false,
+			}),
+		}),
 	}),
 })
 

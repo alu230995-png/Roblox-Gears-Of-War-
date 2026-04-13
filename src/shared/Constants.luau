@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = true
+Constants.DEBUG_MODE = false
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -93,7 +93,7 @@ Constants.CAMERA_FOV_LERP_SPEED = 5
 Constants.CAMERA_FOV_COVER_AIM_OFFSET = -5
 Constants.CAMERA_FOV_COVER_RUN_OFFSET = 3
 Constants.CAMERA_FOV_AIM_OFFSET = -10
-Constants.CAMERA_FOV_FIRING_OFFSET = -8
+Constants.CAMERA_FOV_FIRING_OFFSET = 0
 Constants.CAMERA_FOV_DBNO_OFFSET = -5
 Constants.CAMERA_FOV_DEATH_OFFSET = -10
 
@@ -124,7 +124,6 @@ Constants.CAMERA_BOB_ROADIE_MULTIPLIER = 2.5
 Constants.CAMERA_BOB_WALK_MULTIPLIER = 1.0
 Constants.CAM_BOB_LERP_SPEED = 6
 Constants.CAM_BOB_VELOCITY_THRESHOLD = 1.0
-
 -- Spring Arm (anti-colisión)
 Constants.CAM_ARM_LENGTH = 8.0
 Constants.CAM_ARM_SPHERE_RADIUS = 0.3
@@ -190,13 +189,13 @@ Constants.AIM_ZOOM_FOV_DELTA = -15
 -- Fracción de velocidad base conservada al caminar apuntando (0.45 = 45%)
 Constants.AIM_WALK_SPEED_MULTIPLIER = 0.45
 -- Ángulo (grados) desde la normal de la pared donde el apuntado está bloqueado (deadzone)
-Constants.COVER_AIM_DEADZONE_ANGLE = 20
+Constants.COVER_AIM_DEADZONE_ANGLE = 10
 -- Duración del lerp (segundos) al cambiar de hombro en cover aim
 Constants.COVER_AIM_SHOULDER_BLEND = 0.12
 -- Medio-cono frontal (grados) en low cover donde el personaje rota hacia afuera
 Constants.LOW_COVER_FRONT_HALF_ANGLE = 20
 -- Mínimo input direccional (0-1) para activar peek en esquina
-Constants.PEEK_INPUT_THRESHOLD = 0.30
+Constants.PEEK_INPUT_THRESHOLD = 0.01
 -- Desplazamiento lateral (studs) del personaje al asomarse en esquina
 Constants.PEEK_OFFSET_STUDS = 2.0
 
@@ -422,13 +421,22 @@ Constants.HEALTH_REGEN_RATE = 60
 Constants.DBNO_HEALTH = 150
 Constants.DBNO_BLEEDOUT_TIME = 30
 
+-- Death types: overkill thresholds y fuerzas
+Constants.OVERKILL_THRESHOLD = 20 -- Daño extra sobre la salud restante para considerar un golpe como overkill
+Constants.DISMEMBER_LIFETIME = 8 -- Tiempo que permanecen los miembros dismembrados antes de desaparecer (segundos)
+Constants.DISMEMBER_FORCE_MULTIPLIER = 1 -- Multiplicador de fuerza para miembros dismembrados (aplicado sobre el daño total del golpe, no solo el daño extra del overkill)
+Constants.HEADSHOT_FORCE_MULTIPLIER = 1 -- Multiplicador de fuerza para headshots (aplicado sobre el daño total, no solo el daño extra del headshot)
+Constants.BODY_FORCE_MULTIPLIER = 1 -- Multiplicador general para la fuerza aplicada al cuerpo (headshot y standard)
+Constants.MIN_BODY_FORCE = 1 -- Fuerza mínima aplicada al cuerpo para evitar que muertes con poco overkill no tengan ninguna reacción física
+Constants.MAX_FORCE = 100 -- Tope máximo de fuerza para evitar velocidades extremas en casos de mucho overkill
+
 ------------------------------------------------------------------------
 -- RESERVED — ACTIVE RELOAD (Phase 7)
 ------------------------------------------------------------------------
 
 Constants.RELOAD_BAR_SPEED = 1.0
 Constants.ACTIVE_RELOAD_WINDOW = 0.15
-Constants.ACTIVE_RELOAD_BONUS_DAMAGE = 1.08
+Constants.ACTIVE_RELOAD_BONUS_DAMAGE = 1.5
 Constants.ACTIVE_RELOAD_BONUS_DURATION = 4.0
 Constants.FAILED_RELOAD_PENALTY = 1.5
 
@@ -461,5 +469,24 @@ Constants.COVER_EXIT_SPEED = 10
 Constants.COVER_CORNER_RAY_ANGLE = 60
 Constants.MANTLE_MAX_HEIGHT = 5
 Constants.COVER_MIN_HEIGHT = 3
+
+------------------------------------------------------------------------
+-- 15. SHOOTING SYSTEM
+------------------------------------------------------------------------
+
+--- Tamaño del crosshair (scope) sin apuntar (pixeles).
+Constants.SCOPE_SIZE_NORMAL = 200
+--- Tamaño del crosshair (scope) al apuntar (pixeles).
+Constants.SCOPE_SIZE_AIMING = 100
+--- Radio visual de cada dot del scope (pixeles).
+Constants.SCOPE_DOT_RADIUS = 3
+--- Duración del tween de tamaño al apuntar/dejar de apuntar (segundos).
+Constants.SCOPE_TWEEN_DURATION = 0.15
+--- RaycastFilterType para disparos del jugador.
+Constants.SHOT_RAYCAST_FILTER = Enum.RaycastFilterType.Exclude
+--- Tolerancia del servidor al validar timing de disparos (segundos extra).
+Constants.SERVER_FIRE_RATE_TOLERANCE = 0.05
+--- Distancia máxima de re-raycast del servidor al validar hits (studs).
+Constants.SERVER_HIT_TOLERANCE = 5
 
 return Constants

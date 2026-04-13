@@ -40,9 +40,9 @@ PlayerState.Transitions = {
 	Walking = { "Idle", "RoadieRun", "Aiming", "Firing", "Reloading" },
 	RoadieRun = { "Idle", "Walking" },
 	Aiming = { "Idle", "Walking", "Firing", "Evading", "CoverSlide" },
-	Firing = { "Idle", "Aiming", "Reloading", "Evading" },
-	Reloading = { "Idle", "ActiveReloading", "Evading", "CoverIdle" },
-	ActiveReloading = { "Idle", "Evading", "CoverIdle" },
+	Firing = { "Idle", "Walking", "Aiming", "Reloading", "Evading" },
+	Reloading = { "Idle", "ActiveReloading", "Evading", "RoadieRun", "CoverIdle" },
+	ActiveReloading = { "Idle", "Evading", "RoadieRun", "CoverIdle" },
 
 	-- Transiciones específicas — Cover Group
 	CoverIdle = {
@@ -53,15 +53,14 @@ PlayerState.Transitions = {
 		"CoverWalking",
 		"CoverCorners",
 		"CoverSwap",
-		"Reloading",
 		"Mantling",
 		"Vaulting",
 	},
 	CoverAim = { "CoverIdle", "Firing" },
 	CoverAimHigh = { "CoverIdle", "CoverPeek", "CoverFiring" },
 	CoverAimLow = { "CoverIdle", "CoverPeek", "CoverFiring" },
-	CoverPeek = { "CoverAimHigh", "CoverAimLow", "CoverIdle" },
-	CoverFiring = { "CoverAimHigh", "CoverAimLow", "CoverIdle" },
+	CoverPeek = { "CoverAimHigh", "CoverAimLow", "CoverIdle", "CoverFiring" },
+	CoverFiring = { "CoverAimHigh", "CoverAimLow", "CoverIdle", "CoverPeek" },
 	CoverBlindFire = { "CoverIdle" },
 	CoverWalking = {
 		"CoverIdle",

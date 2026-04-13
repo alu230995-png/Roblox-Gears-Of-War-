@@ -27,9 +27,6 @@ function PhysicsConfig.Initialize()
 	-- Gravedad más alta que default (196.2) para sensación de peso
 	workspace.Gravity = Constants.GRAVITY
 
-	-- Crear el CollisionGroup de hitboxes una sola vez al inicio
-	CharacterModifier.EnsureCollisionGroup()
-
 	-- Escuchar nuevos jugadores para configurar su Humanoid
 	Players.PlayerAdded:Connect(function(player)
 		player.CharacterAdded:Connect(function(character)

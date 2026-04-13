@@ -52,6 +52,7 @@ local COVER_ACTIONS: { [string]: boolean } = table.freeze({
 	CancelSwapToRun = true,
 	EnterPeek = true,
 	ExitPeek = true,
+	ReturnToCover = true,
 })
 
 ------------------------------------------------------------------------
@@ -201,13 +202,15 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	-- de Low a High (o vice versa) sin que el jugador salga de cover.
 	if
 		self._coverState.coverNormal
-		and (currentState == "CoverIdle"
+		and (
+			currentState == "CoverIdle"
 			or currentState == "CoverWalking"
 			or currentState == "CoverRunning"
 			or currentState == "CoverAimHigh"
 			or currentState == "CoverAimLow"
 			or currentState == "CoverFiring"
-			or currentState == "CoverPeek")
+			or currentState == "CoverPeek"
+		)
 	then
 		local character = self._coverState.player.Character
 		local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -249,9 +252,11 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 	-- COVER AIM (CoverAimHigh, CoverAimLow, CoverFiring): movimiento lateral a velocidad reducida.
 	-- El aim NO bloquea el movimiento — solo reduce la velocidad con AIM_WALK_SPEED_MULTIPLIER.
 	-- Sin movimiento: UpdateWalking ya zeroes la velocidad, comportamiento idéntico a UpdateIdle.
+	-- Excepción: durante CoverFiring con peek activo, el peek handler controla la posición.
 	if
 		(currentState == "CoverAimHigh" or currentState == "CoverAimLow" or currentState == "CoverFiring")
 		and self._coverState.coverNormal
+		and not (currentState == "CoverFiring" and self._peekHandler:IsActive())
 	then
 		self._inCover:UpdateWalking(dt, envContext, Constants.COVER_WALK_SPEED * Constants.AIM_WALK_SPEED_MULTIPLIER)
 	end
@@ -280,8 +285,15 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 
 	-- PEEK: desplazamiento lateral en esquina durante aim
 	if self._peekHandler:IsActive() then
+		-- El peek handler puede estar activo en CoverPeek o CoverFiring
+		-- (disparo desde peek mantiene la posición desplazada).
+		-- También durante _returning (End() fue llamado, volviendo a startPos).
 		self._peekHandler:Update(dt)
 	end
+
+	-- Sincronizar estado con EnvironmentSensor para que ActionResolver
+	-- pueda leer los datos sin depender directamente de CoverHandler.
+	self:_syncToEnvironmentSensor()
 end
 
 --- Retorna la normal de la pared de cover actual (nil si no está en cover).
@@ -349,106 +361,135 @@ end
 CoverMain._handlers = {
 	--- Entrada a cover caminando. Estado: CoverEntering.
 	EnterCover = function(self, data)
-	if not data then
-		return
-	end
+		if not data then
+			return
+		end
 
-	-- Escribir estado compartido
-	self._coverState.coverNormal = data.coverNormal
-	self._coverState.coverPosition = data.coverPos
-	self._coverState.coverInstance = data.coverInstance
-	self._coverState.coverType = data.coverType
+		-- Escribir estado compartido
+		self._coverState.coverNormal = data.coverNormal
+		self._coverState.coverPosition = data.coverPos
+		self._coverState.coverInstance = data.coverInstance
+		self._coverState.coverType = data.coverType
 
-	-- NO activar Dynamic Framing aquí — durante CoverEntering el HRP se
-	-- mueve y rota activamente, lo que hace oscilar el target del framing
-	-- y provoca que la cámara gire sin control. La normal se inyecta en
-	-- _cleanupSettle (cuando InCover termina el settle) via _onSettleComplete.
-	-- Bloquear Dynamic Framing preventivamente durante entering + settle:
-	self.CoverSettleChanged:Fire(true)
+		-- Publicar al EnvironmentSensor (desacopla ActionResolver de CoverHandler)
+		local envSensor = self._coverState.envSensor
+		if envSensor then
+			envSensor:SetActiveCoverData(
+				data.coverNormal,
+				data.coverType,
+				data.coverInstance,
+				nil -- wallRight se calcula después en InCover
+			)
+		end
 
-	-- Delegar entering al sub-módulo
-	self._enteringCover:Begin(data)
+		-- NO activar Dynamic Framing aquí — durante CoverEntering el HRP se
+		-- mueve y rota activamente, lo que hace oscilar el target del framing
+		-- y provoca que la cámara gire sin control. La normal se inyecta en
+		-- _cleanupSettle (cuando InCover termina el settle) via _onSettleComplete.
+		-- Bloquear Dynamic Framing preventivamente durante entering + settle:
+		self.CoverSettleChanged:Fire(true)
+
+		-- Delegar entering al sub-módulo
+		self._enteringCover:Begin(data)
 	end,
 
 	--- Slide rápido desde RoadieRun. Estado: CoverSlide.
 	SlideIntoCover = function(self, data)
-	if not data then
-		return
-	end
-
-	self._coverState.coverNormal = data.coverNormal
-	self._coverState.coverPosition = data.coverPos
-	self._coverState.coverInstance = data.coverInstance
-	self._coverState.coverType = data.coverType
-
-	-- NO activar Dynamic Framing aquí — misma razón que EnterCover.
-	-- Se activa al completar el settle en InCover._cleanupSettle.
-	self.CoverSettleChanged:Fire(true)
-
-	self._enteringCover:BeginSlide(data)
-
-	-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
-	self:_startTimer(Constants.COVER_SLIDE_DURATION, function()
-		self._enteringCover:Cancel()
-		self._inCover:NotifyEnterFromSnap()
-		if not self._stateMachine:TransitionTo("CoverIdle") then
-			self._pendingCoverIdleTransition = true
+		if not data then
+			return
 		end
-	end)
+
+		self._coverState.coverNormal = data.coverNormal
+		self._coverState.coverPosition = data.coverPos
+		self._coverState.coverInstance = data.coverInstance
+		self._coverState.coverType = data.coverType
+
+		-- Publicar al EnvironmentSensor (desacopla ActionResolver de CoverHandler)
+		local envSensor = self._coverState.envSensor
+		if envSensor then
+			envSensor:SetActiveCoverData(
+				data.coverNormal,
+				data.coverType,
+				data.coverInstance,
+				nil -- wallRight se calcula después en InCover
+			)
+		end
+
+		-- NO activar Dynamic Framing aquí — misma razón que EnterCover.
+		-- Se activa al completar el settle en InCover._cleanupSettle.
+		self.CoverSettleChanged:Fire(true)
+
+		self._enteringCover:BeginSlide(data)
+
+		-- CoverSlide dura COVER_SLIDE_DURATION, luego transiciona a CoverIdle
+		self:_startTimer(Constants.COVER_SLIDE_DURATION, function()
+			self._enteringCover:Cancel()
+			self._inCover:NotifyEnterFromSnap()
+			if not self._stateMachine:TransitionTo("CoverIdle") then
+				self._pendingCoverIdleTransition = true
+			end
+		end)
 	end,
 
 	--- Salida de cover. Estado: CoverExiting.
 	ExitCover = function(self, _data)
-	self._enteringCover:Cancel()
-	self._coverSwapController:Cancel()
-	self._peekHandler:Cancel()
-	self._cornerCover:Reset()
-	self._coverRunning:Stop()
-	self:_clearCoverState()
+		self._enteringCover:Cancel()
+		self._coverSwapController:Cancel()
+		self._peekHandler:Cancel()
+		self._cornerCover:Reset()
+		self._coverRunning:Stop()
+		self:_clearCoverState()
 
-	self:_startTimer(Constants.COVER_EXIT_DURATION, function()
-		if not self._stateMachine:TransitionTo("Idle") then
-			self._pendingIdleTransition = true
-		end
-	end)
+		self:_startTimer(Constants.COVER_EXIT_DURATION, function()
+			if not self._stateMachine:TransitionTo("Idle") then
+				self._pendingIdleTransition = true
+			end
+		end)
 	end,
 
 	--- Inicia CoverRunning (sprint en cover).
 	StartCoverRunning = function(self, _data)
-	-- Cancelar swap en progreso si se activa CoverRunning (hold Space durante swap)
-	self._coverSwapController:Cancel()
-	self._coverRunning:Begin()
+		-- Cancelar swap en progreso si se activa CoverRunning (hold Space durante swap)
+		self._coverSwapController:Cancel()
+		self._coverRunning:Begin()
 	end,
 
 	--- Detiene CoverRunning (suelta sprint o deja de moverse).
 	StopCoverRunning = function(self, _data)
-	self._coverRunning:Stop()
+		self._coverRunning:Stop()
 	end,
 
 	--- Cover Swap: salto entre coberturas adyacentes desde esquina.
 	CoverSwap = function(self, data)
-	if not data then
-		return
-	end
-	self._coverSwapController:Begin(data)
+		if not data then
+			return
+		end
+		self._coverSwapController:Begin(data)
 	end,
 
 	--- Cancela CoverSwap y sale a RoadieRun (hold Space durante swap).
 	CancelSwapToRun = function(self, _data)
-	self._coverSwapController:Cancel()
-	self:_clearCoverState()
+		self._coverSwapController:Cancel()
+		self:_clearCoverState()
 	end,
 
 	--- Inicia peek: desplazamiento lateral hacia esquina.
 	EnterPeek = function(self, data)
-	if data and data.side then
-		self._peekHandler:Begin(data.side)
-	end
+		if data and data.side then
+			self._peekHandler:Begin(data.side)
+		end
 	end,
 
 	--- Finaliza peek: retorno a posición original.
 	ExitPeek = function(self, _data)
-	self._peekHandler:End()
+		self._peekHandler:End()
+	end,
+
+	--- ReturnToCover: finaliza peek si estaba activo (CoverFiring → CoverIdle).
+	ReturnToCover = function(self, _data)
+		if self._peekHandler:IsActive() then
+			self._peekHandler:End()
+		end
 	end,
 }
 
@@ -463,6 +504,12 @@ function CoverMain:_clearCoverState()
 	self._coverState.coverInstance = nil
 	self._coverState.coverType = nil
 	self._coverState.wallRight = nil
+
+	-- Notificar al EnvironmentSensor que ya no estamos en cover
+	local envSensor = self._coverState.envSensor
+	if envSensor then
+		envSensor:ClearActiveCoverData()
+	end
 end
 
 function CoverMain:_startTimer(duration: number, callback: () -> ())
@@ -475,7 +522,59 @@ function CoverMain:_cancelTimer()
 	self._timerCallback = nil
 end
 
+--- Sincroniza el estado actual de cover con el EnvironmentSensor.
+--- Llamar cada frame desde Update() para que ActionResolver tenga datos frescos.
+function CoverMain:_syncToEnvironmentSensor()
+	local envSensor = self._coverState.envSensor
+	if not envSensor then
+		return
+	end
+
+	-- Si no estamos en cover, limpiar datos
+	if not self._coverState.coverNormal then
+		envSensor:ClearActiveCoverData()
+		return
+	end
+
+	-- Calcular wallRight igual que InCover
+	local coverNormal = self._coverState.coverNormal
+	local wallRight = Vector3.yAxis:Cross(coverNormal)
+	if wallRight.Magnitude < 0.001 then
+		wallRight = Vector3.xAxis
+	else
+		wallRight = wallRight.Unit
+	end
+	self._coverState.wallRight = wallRight
+
+	-- Sincronizar datos de cover
+	envSensor:SetActiveCoverData(
+		self._coverState.coverNormal,
+		self._coverState.coverType,
+		self._coverState.coverInstance,
+		wallRight
+	)
+
+	-- Sincronizar estado de esquinas (desde CornerCover con histéresis)
+	envSensor:SetActiveCornerState(
+		self._cornerCover:IsAtLeft(),
+		self._cornerCover:IsAtRight()
+	)
+
+	-- Sincronizar estado de peek
+	envSensor:SetPeekActive(self._peekHandler:IsActive())
+end
+
 function CoverMain:Destroy()
+	-- Limpiar sub-módulos
+	self._enteringCover:Cancel()
+	self._coverSwapController:Cancel()
+	self._peekHandler:Cancel()
+	self._cornerCover:Reset()
+	self._coverRunning:Stop()
+	self:_clearCoverState()
+	self:_cancelTimer()
+
+	-- Destruir señales
 	self.CoverSettleChanged:Destroy()
 	self.ShoulderSideChanged:Destroy()
 	self.InnerCornerTransition:Destroy()
