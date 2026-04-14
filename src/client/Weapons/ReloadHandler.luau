@@ -41,6 +41,8 @@ function ReloadHandler.new(
 	self._isReloading = false
 	self._reloadThread = nil :: thread?
 	self._reloadStartTime = 0
+	self._hasActiveReloadBuff = false
+	self._activeBuffThread = nil :: thread?
 
 	return self
 end
@@ -53,17 +55,29 @@ function ReloadHandler:IsReloading(): boolean
 	return self._isReloading
 end
 
-function ReloadHandler:StartReload()
+function ReloadHandler:HasActiveReloadBuff(): boolean
+	return self._hasActiveReloadBuff == true
+end
+
+function ReloadHandler:ClearActiveReloadBuff()
+	if self._activeBuffThread then
+		task.cancel(self._activeBuffThread)
+		self._activeBuffThread = nil
+	end
+	self._hasActiveReloadBuff = false
+end
+
+function ReloadHandler:StartReload(): boolean
 	if self._isReloading then
-		return
+		return false
 	end
 	if not self._config then
-		return
+		return false
 	end
 
 	local ammoConfig = self._config.Ammo
 	if self._ammoState.current >= ammoConfig.ClipSize or self._ammoState.reserve <= 0 then
-		return
+		return false
 	end
 
 	self._isReloading = true
@@ -74,6 +88,9 @@ function ReloadHandler:StartReload()
 		self._weaponRemote:FireServer("Reload", self._weaponName)
 	end
 
+	-- El buff del active reload anterior se consume al iniciar una recarga nueva.
+	self:ClearActiveReloadBuff()
+
 	if Constants.DEBUG_MODE then
 		print(`[ReloadHandler] Reload started — {self._weaponName} ({ammoConfig.ReloadTime}s)`)
 	end
@@ -83,6 +100,8 @@ function ReloadHandler:StartReload()
 		self._reloadThread = nil
 		self:_completeReload()
 	end)
+
+	return true
 end
 
 function ReloadHandler:CancelReload()
@@ -102,12 +121,12 @@ function ReloadHandler:CancelReload()
 	end
 end
 
-function ReloadHandler:AttemptActiveReload()
+function ReloadHandler:AttemptActiveReload(): boolean
 	if not self._isReloading then
-		return
+		return false
 	end
 	if not self._config then
-		return
+		return false
 	end
 
 	local ammoConfig = self._config.Ammo
@@ -143,6 +162,14 @@ function ReloadHandler:AttemptActiveReload()
 	if progress >= windowStart and progress <= windowEnd then
 		-- ACTIVE RELOAD EXITOSO — mitad del tiempo restante
 		local newDelay = remainingTime / 2
+		self._hasActiveReloadBuff = true
+		if self._activeBuffThread then
+			task.cancel(self._activeBuffThread)
+		end
+		self._activeBuffThread = task.delay(Constants.ACTIVE_RELOAD_BONUS_DURATION, function()
+			self._activeBuffThread = nil
+			self._hasActiveReloadBuff = false
+		end)
 		if Constants.DEBUG_MODE then
 			print(
 				`[ReloadHandler] ¡RECARGA ACTIVA EXITOSA! — {self._weaponName} | Completa en {string.format(
@@ -159,6 +186,7 @@ function ReloadHandler:AttemptActiveReload()
 	else
 		-- ACTIVE RELOAD FALLIDO — arma atascada, +50% tiempo
 		local newDelay = remainingTime * 1.5
+		self:ClearActiveReloadBuff()
 		if Constants.DEBUG_MODE then
 			print(
 				`[ReloadHandler] RECARGA FALLIDA: Arma atascada — {self._weaponName} | Atascada {string.format(
@@ -173,9 +201,12 @@ function ReloadHandler:AttemptActiveReload()
 			self:_completeReload()
 		end)
 	end
+
+	return true
 end
 
 function ReloadHandler:Destroy()
+	self:ClearActiveReloadBuff()
 	self:CancelReload()
 end
 

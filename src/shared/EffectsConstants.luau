@@ -126,23 +126,25 @@ end
 ------------------------------------------------------------------------
 -- EMIT HELPER
 -- Busca todos los ParticleEmitters en un clon y hace :Emit(n).
--- Cada emitter puede tener un atributo "EmitCount" (number) para
--- definir cuántas partículas emitir. Si no existe, usa 1.
+-- countOverride: si se pasa, usa ese valor para todos los emitters.
+-- Si no, cada emitter usa su atributo "EmitCount" (o 1 si no tiene).
 -- NO usa Enabled = true — solo burst instantáneo.
 ------------------------------------------------------------------------
 
-function EffectsConstants.EmitAll(instance: Instance)
+-- countOverride: si se pasa, reemplaza el atributo EmitCount de cada emitter.
+-- nil → cada emitter usa su propio atributo EmitCount (o 1 si no tiene).
+function EffectsConstants.EmitAll(instance: Instance, countOverride: number?)
 	for _, desc in instance:GetDescendants() do
 		if desc:IsA("ParticleEmitter") then
 			desc.Enabled = false
-			local count = desc:GetAttribute("EmitCount") or 1
+			local count = countOverride or desc:GetAttribute("EmitCount") or 1
 			desc:Emit(count)
 		end
 	end
 	-- También chequear si la instancia misma es un ParticleEmitter
 	if instance:IsA("ParticleEmitter") then
 		instance.Enabled = false
-		local count = instance:GetAttribute("EmitCount") or 1
+		local count = countOverride or instance:GetAttribute("EmitCount") or 1
 		instance:Emit(count)
 	end
 end

@@ -68,6 +68,11 @@ function ShootingHandler.FireOneShot(player: Player, scopeContainer: Frame?, sta
 			continue
 		end
 
+		-- Solo procesar pellet dots (ignorar hitmarkers y otros UI de presentación)
+		if string.sub(dot.Name, 1, 7) ~= "Pellet_" then
+			continue
+		end
+
 		-- Obtener posición absoluta del dot en pantalla
 		local absPos = dot.AbsolutePosition
 		local absSize = dot.AbsoluteSize

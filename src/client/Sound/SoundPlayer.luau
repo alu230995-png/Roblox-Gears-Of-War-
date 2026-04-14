@@ -53,6 +53,7 @@ function SoundPlayer.new()
 
 	-- Índice secuencial por soundName para modo Random=false
 	self._sequentialIndex = {} -- { [string]: number }
+	self._missingAssetWarnings = {} -- { [string]: true }
 
 	-- Pool de Sound instances reutilizables: { [assetId] = { Sound } }
 	self._pool = {} -- { [string]: { Sound } }
@@ -252,26 +253,35 @@ function SoundPlayer:_selectId(
 	soundName: string,
 	config: { Ids: { string }, Random: boolean, Looped: boolean }
 ): string?
-	local ids = config.Ids
-	if #ids == 0 then
-		warn(`[SoundPlayer] Tabla de Ids vacía para: {soundName}`)
+	local validIds = {}
+	for _, assetId in config.Ids do
+		if type(assetId) == "string" and assetId ~= "" and assetId ~= "rbxassetid://0" then
+			table.insert(validIds, assetId)
+		end
+	end
+
+	if #validIds == 0 then
+		if not self._missingAssetWarnings[soundName] then
+			warn(`[SoundPlayer] Sonido sin assets válidos (IDs placeholder) para: {soundName}`)
+			self._missingAssetWarnings[soundName] = true
+		end
 		return nil
 	end
 
-	if #ids == 1 then
-		return ids[1]
+	if #validIds == 1 then
+		return validIds[1]
 	end
 
 	if config.Random then
-		return ids[math.random(1, #ids)]
+		return validIds[math.random(1, #validIds)]
 	else
 		-- Secuencial: avanza uno cada vez
 		local idx = (self._sequentialIndex[soundName] or 0) + 1
-		if idx > #ids then
+		if idx > #validIds then
 			idx = 1
 		end
 		self._sequentialIndex[soundName] = idx
-		return ids[idx]
+		return validIds[idx]
 	end
 end
 

@@ -25,7 +25,7 @@ function MuzzleFlashEffect:Destroy() end
 -- PUBLIC API
 ------------------------------------------------------------------------
 
-function MuzzleFlashEffect:Fire(character: Model?, weaponName: string)
+function MuzzleFlashEffect:Fire(character: Model?, weaponName: string, hasActiveReload: boolean?)
 	if not character then
 		return
 	end
@@ -36,6 +36,9 @@ function MuzzleFlashEffect:Fire(character: Model?, weaponName: string)
 	end
 
 	local muzzleConfig = config.MuzzleFlash
+	if hasActiveReload and config.ActiveReloadEffects and config.ActiveReloadEffects.MuzzleFlash then
+		muzzleConfig = config.ActiveReloadEffects.MuzzleFlash
+	end
 
 	-- Buscar el Tool en el personaje y su Handle
 	local tool = nil
@@ -129,12 +132,6 @@ function MuzzleFlashEffect:Fire(character: Model?, weaponName: string)
 
 	-- Buscar Attachment "Muzzle" o usar posición del Handle
 	local muzzlePoint = handle:FindFirstChild("Muzzle")
-	local position: Vector3
-	if muzzlePoint and muzzlePoint:IsA("Attachment") then
-		position = muzzlePoint.WorldPosition
-	else
-		position = handle.Position + handle.CFrame.LookVector * (handle.Size.Z * 0.5)
-	end
 
 	-- PointLight temporal
 	local light = Instance.new("PointLight")

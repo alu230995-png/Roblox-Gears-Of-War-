@@ -31,7 +31,7 @@ local Constants = require(Shared:WaitForChild("Constants"))
 local Signal = require(Shared:WaitForChild("Signal"))
 
 local ShootingHandler = require(script.Parent:WaitForChild("ShootingHandler"))
-local ReloadHandler = require(script.Parent:WaitForChild("ReloadHandler"))
+local ReloadHandlerModule: any = require(script.Parent:WaitForChild("ReloadHandler"))
 local HoldBreathHandler = require(script.Parent:WaitForChild("HoldBreathHandler"))
 
 ------------------------------------------------------------------------
@@ -61,6 +61,22 @@ local FORCE_UNEQUIP_STATES: { [string]: true } = {
 	Death = true,
 	Spectator = true,
 	Lobby = true,
+}
+
+-- Estados donde el disparo está activo — _onPlayerStateChanged NO debe matar el loop
+local FIRING_ACTIVE_STATES: { [string]: true } = {
+	Firing = true,
+	CoverFiring = true,
+	CoverBlindFire = true,
+}
+
+-- Estados del StateMachine que solo existen mientras un arma está activa.
+-- Si desequipamos el arma y la FSM sigue en uno de estos, FORZAR Idle
+-- para que el arma nueva no quede bloqueada por un estado ajeno.
+local WEAPON_OWNED_STATES: { [string]: true } = {
+	Reloading = true,
+	ActiveReloading = true,
+	Firing = true,
 }
 
 ------------------------------------------------------------------------
@@ -143,7 +159,7 @@ function WeaponClient:Init(stateMachine, actionExecutedSignal, ScopeRendererClas
 
 	-- Sub-handlers
 	if self._config then
-		self._reloadHandler = ReloadHandler.new(
+		self._reloadHandler = ReloadHandlerModule.new(
 			self._ammoState,
 			self._config,
 			self._weaponRemote,
@@ -161,34 +177,49 @@ end
 
 function WeaponClient:Start()
 	-- Tool events
-	table.insert(self._connections, self._tool.Equipped:Connect(function()
-		self:_onToolEquipped()
-	end))
+	table.insert(
+		self._connections,
+		self._tool.Equipped:Connect(function()
+			self:_onToolEquipped()
+		end)
+	)
 
-	table.insert(self._connections, self._tool.Unequipped:Connect(function()
-		self:_onToolUnequipped()
-	end))
+	table.insert(
+		self._connections,
+		self._tool.Unequipped:Connect(function()
+			self:_onToolUnequipped()
+		end)
+	)
 
 	-- PlayerState observer
 	if self._stateMachine then
-		table.insert(self._connections, self._stateMachine.StateChanged:Connect(function(newState, _oldState)
-			self:_onPlayerStateChanged(newState)
-		end))
+		table.insert(
+			self._connections,
+			self._stateMachine.StateChanged:Connect(function(newState, _oldState)
+				self:_onPlayerStateChanged(newState)
+			end)
+		)
 	end
 
 	-- ActionExecuted → HandleAction
 	if self._actionExecutedSignal then
-		table.insert(self._connections, self._actionExecutedSignal:Connect(function(action, targetState, data)
-			self:HandleAction(action, targetState, data)
-		end))
+		table.insert(
+			self._connections,
+			self._actionExecutedSignal:Connect(function(action, targetState, data)
+				self:HandleAction(action, targetState, data)
+			end)
+		)
 	end
 
 	-- AimingChanged → scope visual
-	table.insert(self._connections, self.AimingChanged:Connect(function(isAiming)
-		if self._scope then
-			self._scope:SetAiming(isAiming)
-		end
-	end))
+	table.insert(
+		self._connections,
+		self.AimingChanged:Connect(function(isAiming)
+			if self._scope then
+				self._scope:SetAiming(isAiming)
+			end
+		end)
+	)
 
 	-- Si el Tool ya está equipado
 	if self._tool.Parent and self._tool.Parent == self._player.Character then
@@ -288,9 +319,24 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 		return
 	end
 
-	-- Shooting
+	-- Shooting (WeaponClient es autoridad de transición a Firing desde estados libres)
 	if action == "Shoot" or action == "ShootFromCover" or action == "BlindFire" then
-		self:_startFiring()
+		if not _targetState then
+			-- Estado libre: transicionar ANTES de arrancar el loop.
+			-- Si STATE_MIN_DURATION bloquea la transición, no se dispara.
+			if not self._stateMachine or not self._stateMachine:TransitionTo("Firing") then
+				return
+			end
+		end
+		local started = self:_startFiring()
+		-- Si arrancó el loop pero falla (sin munición, recargando, etc.),
+		-- revertir a Idle si seguimos en Firing.
+		if not started and not _targetState then
+			local current = self._stateMachine and self._stateMachine:GetCurrentState()
+			if current == "Firing" then
+				self._stateMachine:TransitionTo("Idle")
+			end
+		end
 	elseif action == "StopShoot" or action == "StopBlindFire" then
 		self:_stopFiring()
 	elseif action == "ReturnToCover" then
@@ -305,9 +351,14 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 	elseif action == "StopAim" then
 		self.AimingChanged:Fire(false)
 
-	-- Reload (delegado a ReloadHandler)
+	-- Reload (delegado a ReloadHandler — WeaponClient es autoridad de transición)
 	elseif action == "Reload" then
 		if self._reloadHandler then
+			local started = self._reloadHandler:StartReload()
+			if not started then
+				return
+			end
+
 			if self._stateMachine then
 				self._stateMachine:TransitionTo("Reloading")
 			end
@@ -315,14 +366,16 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 			if self._holdBreathHandler then
 				self._holdBreathHandler:ForceCancel()
 			end
-			self._reloadHandler:StartReload()
 			self.ReloadStarted:Fire(self._weaponName)
 		end
 
-	-- Active Reload (delegado a ReloadHandler)
+	-- Active Reload (delegado a ReloadHandler — WeaponClient es autoridad de transición)
 	elseif action == "ActiveReload" then
 		if self._reloadHandler then
-			self._reloadHandler:AttemptActiveReload()
+			local accepted = self._reloadHandler:AttemptActiveReload()
+			if accepted and self._stateMachine then
+				self._stateMachine:TransitionTo("ActiveReloading")
+			end
 		end
 	end
 end
@@ -331,38 +384,37 @@ end
 -- PRIVATE — Shooting
 ------------------------------------------------------------------------
 
-function WeaponClient:_startFiring()
+function WeaponClient:_startFiring(): boolean
 	if self._isShooting then
-		return
+		return false
 	end
 	if self._reloadHandler and self._reloadHandler:IsReloading() then
-		return
+		return false
 	end
 	if self._ammoState.current <= 0 then
 		if self._ammoState.reserve > 0 and self._config and self._reloadHandler then
 			if Constants.DEBUG_MODE then
 				print(`[WeaponClient] Sin munición — recarga automática — {self._weaponName}`)
 			end
-			-- Transicionar a Reloading. Si falla (estado actual no lo permite),
-			-- primero ir a Idle y luego a Reloading.
-			if self._stateMachine then
-				if not self._stateMachine:TransitionTo("Reloading") then
-					self._stateMachine:TransitionTo("Idle")
+			-- Validar primero, transicionar solo si StartReload aprueba
+			local started = self._reloadHandler:StartReload()
+			if started then
+				if self._stateMachine then
 					self._stateMachine:TransitionTo("Reloading")
 				end
+				self.ReloadStarted:Fire(self._weaponName)
 			end
-			self._reloadHandler:StartReload()
 		end
-		return
+		return false
 	end
 	if not self._config then
-		return
+		return false
 	end
 
 	-- HoldBreath: delegar al handler
 	if self._holdBreathHandler and self._holdBreathHandler:IsEnabled() then
 		if self._holdBreathHandler:IsActive() then
-			return
+			return false
 		end
 		self._isShooting = true
 		self._holdBreathHandler:Start(function()
@@ -371,7 +423,7 @@ function WeaponClient:_startFiring()
 			end
 			self._isShooting = false
 		end)
-		return
+		return true
 	end
 
 	-- Disparo normal
@@ -402,7 +454,32 @@ function WeaponClient:_startFiring()
 				break
 			end
 		end
+
+		-- Post-loop cleanup: el loop terminó naturalmente (no por _stopFiring)
+		self._isShooting = false
+		self._fireThread = nil
+
+		-- Si la munición se agotó, intentar recarga automática
+		if self._ammoState.current <= 0 and self._ammoState.reserve > 0 then
+			if self._reloadHandler and self._config then
+				local started = self._reloadHandler:StartReload()
+				if started then
+					if self._stateMachine then
+						self._stateMachine:TransitionTo("Reloading")
+					end
+					self.ReloadStarted:Fire(self._weaponName)
+					return
+				end
+			end
+		end
+
+		-- No se pudo recargar: volver al estado apropiado si seguimos en Firing
+		if self._stateMachine and self._stateMachine:GetCurrentState() == "Firing" then
+			self._stateMachine:TransitionTo("Idle")
+		end
 	end)
+
+	return true
 end
 
 function WeaponClient:_stopFiring()
@@ -456,7 +533,16 @@ function WeaponClient:_fireOneShot()
 
 	-- Effects hook: notificar EffectsController del disparo
 	if shotResult then
-		self.ShotFired:Fire(self._weaponName, shotResult, self._player.Character)
+		local hasActiveReload = false
+		if self._reloadHandler and self._reloadHandler.HasActiveReloadBuff then
+			hasActiveReload = self._reloadHandler:HasActiveReloadBuff()
+		end
+
+		self.ShotFired:Fire(self._weaponName, shotResult, self._player.Character, hasActiveReload)
+	end
+
+	if self._ammoState.current == 0 and self._reloadHandler and self._reloadHandler.ClearActiveReloadBuff then
+		self._reloadHandler:ClearActiveReloadBuff()
 	end
 end
 
@@ -492,6 +578,12 @@ function WeaponClient:_onToolEquipped()
 
 	self:_setWeaponState(WS_EQUIPPING)
 
+	-- Notificar servidor INMEDIATAMENTE (no tras el delay) para que
+	-- el estado de arma equipada esté sincronizado antes de disparar.
+	if self._weaponRemote then
+		self._weaponRemote:FireServer("Equip", self._weaponName)
+	end
+
 	self._transitionThread = task.delay(WeaponConstants.EQUIP_TIME, function()
 		self._transitionThread = nil
 		if self._weaponState ~= WS_EQUIPPING then
@@ -508,10 +600,6 @@ function WeaponClient:_onToolEquipped()
 			self._scope = self._ScopeRendererClass.new(self._player, spreadPattern)
 			self._scope:SetVisible(true)
 		end
-
-		if self._weaponRemote then
-			self._weaponRemote:FireServer("Equip", self._weaponName)
-		end
 	end)
 end
 
@@ -523,6 +611,12 @@ function WeaponClient:_onToolUnequipped()
 
 	if self._weaponState == WS_UNEQUIPPED then
 		return
+	end
+
+	-- Notificar servidor INMEDIATAMENTE con el nombre del arma
+	-- para que ignore unequips tardíos si ya se equipó otra.
+	if self._weaponRemote then
+		self._weaponRemote:FireServer("Unequip", self._weaponName)
 	end
 
 	self:_setWeaponState(WS_UNEQUIPPING)
@@ -538,10 +632,6 @@ function WeaponClient:_onToolUnequipped()
 
 		-- Scope cleanup al desequipar
 		self:_destroyScope()
-
-		if self._weaponRemote then
-			self._weaponRemote:FireServer("Unequip", self._weaponName)
-		end
 	end)
 end
 
@@ -560,7 +650,10 @@ function WeaponClient:_onPlayerStateChanged(newState: string)
 			self:_destroyScope()
 		end
 	else
-		self:_stopFiring()
+		-- No matar el loop de disparo si transitamos a un estado donde se está disparando
+		if not FIRING_ACTIVE_STATES[newState] then
+			self:_stopFiring()
+		end
 
 		if self._isToolEquipped and self._weaponState == WS_UNEQUIPPED then
 			self:_onToolEquipped()
@@ -581,6 +674,17 @@ function WeaponClient:_cancelAllOperations()
 	end
 	if self._reloadHandler then
 		self._reloadHandler:CancelReload()
+	end
+
+	-- Safety net: si la StateMachine sigue en un estado que solo existe
+	-- mientras esta arma está activa (Reloading, Firing, etc.), forzar a Idle.
+	-- Necesario porque TransitionTo puede fallar por STATE_MIN_DURATION
+	-- cuando el swap es más rápido que 0.1s.
+	if self._stateMachine then
+		local currentState = self._stateMachine:GetCurrentState()
+		if WEAPON_OWNED_STATES[currentState] then
+			self._stateMachine:ForceState("Idle")
+		end
 	end
 end
 

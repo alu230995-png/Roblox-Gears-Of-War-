@@ -135,7 +135,7 @@ local FreeStateRules = {
 		and (ctx.State == "Aiming" or ctx.State == "Idle" or ctx.State == "Walking")
 		end,
 		execute = function()
-	return "Shoot", "Firing", nil
+	return "Shoot", nil, nil -- WeaponClient es autoridad de transición a Firing
 		end,
 	},
 
@@ -176,9 +176,9 @@ local FreeStateRules = {
 		execute = function(_resolver, ctx)
 	ctx.Buffer:Consume("WantsReload")
 	if ctx.State == "Reloading" then
-		return "ActiveReload", "ActiveReloading", nil
+		return "ActiveReload", nil, nil
 	end
-	return "Reload", "Reloading", nil
+	return "Reload", nil, nil
 		end,
 	},
 

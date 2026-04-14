@@ -37,7 +37,6 @@ function BloodEffect:FireHit(position: Vector3, direction: Vector3?, damage: num
 		return
 	end
 
-	-- Intensidad proporcional al daño (normalizado a 100 como referencia)
 	local intensity = math.clamp((damage or 50) / 100, 0.3, 3.0)
 
 	local config = {
@@ -70,8 +69,6 @@ function BloodEffect:FireDeath(character: Model, deathType: string, hitDirection
 		return
 	end
 
-	print("paritcles death")
-
 	local burstConfig = deathConfig.BloodBurst
 
 	-- Posición: HumanoidRootPart o torso
@@ -89,19 +86,19 @@ function BloodEffect:FireDeath(character: Model, deathType: string, hitDirection
 
 	local normal = hitDirection and hitDirection.Unit or Vector3.yAxis
 
-	-- Burst principal
+	-- Burst principal (one-shot via pool)
 	self._particlePool:Acquire(position, normal, burstConfig)
 
-	-- Si es headshot, burst extra en la cabeza
+	-- Si es headshot, burst extra + emitter persistente en la cabeza
 	if deathType == "Headshot" then
 		local head = character:FindFirstChild("Head") :: BasePart?
 		if head then
 			self._particlePool:Acquire(head.Position, normal, burstConfig)
-			print("se realizo headshot")
+			self:_attachPersistentEmitter(head, burstConfig, 4.0)
 		end
 	end
 
-	-- Si es dismember, bursts en extremidades
+	-- Si es dismember, bursts + emitters persistentes en extremidades
 	if deathType == "Dismember" then
 		for _, partName in { "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg" } do
 			local limb = character:FindFirstChild(partName) :: BasePart?
@@ -117,9 +114,76 @@ function BloodEffect:FireDeath(character: Model, deathType: string, hitDirection
 						Color = burstConfig.Color,
 					}
 				)
+				self:_attachPersistentEmitter(limb, burstConfig, 3.0)
 			end
 		end
 	end
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Emitter persistente clonado desde Path, parenteado a un part
+------------------------------------------------------------------------
+
+--- Clona el template de partículas desde burstConfig.Path, lo attacha a `part`
+--- con Enabled=true durante `duration` segundos, luego lo desactiva y destruye.
+function BloodEffect:_attachPersistentEmitter(part: BasePart, burstConfig, duration: number)
+	if not burstConfig.Path then
+		return
+	end
+
+	local template = EffectsConstants.ResolvePath(burstConfig.Path)
+	if not template then
+		return
+	end
+
+	local clone = template:Clone()
+
+	-- Habilitar todos los emitters (emisión continua, no burst)
+	for _, desc in clone:GetDescendants() do
+		if desc:IsA("ParticleEmitter") then
+			desc.Enabled = true
+		end
+	end
+	if clone:IsA("ParticleEmitter") then
+		clone.Enabled = true
+	end
+
+	-- Parentear al part del character (Head, limb, etc.)
+	if clone:IsA("BasePart") then
+		clone.Transparency = 1
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		clone.Massless = true
+		clone.Anchored = false
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = part
+		weld.Part1 = clone
+		weld.Parent = clone
+
+		clone.CFrame = part.CFrame
+		clone.Parent = part.Parent
+	else
+		clone.Parent = part
+	end
+
+	-- Desactivar tras `duration`, luego destruir tras el lifetime residual
+	task.delay(duration, function()
+		for _, desc in clone:GetDescendants() do
+			if desc:IsA("ParticleEmitter") then
+				desc.Enabled = false
+			end
+		end
+		if clone:IsA("ParticleEmitter") then
+			clone.Enabled = false
+		end
+
+		local maxLifetime = burstConfig.Lifetime or 1.0
+		task.delay(maxLifetime + 0.5, function()
+			clone:Destroy()
+		end)
+	end)
 end
 
 return BloodEffect

@@ -85,6 +85,12 @@ function MovementController:Start()
 	self._connections.actionResolved = self._actionResolver.ActionResolved:Connect(function(action, targetState, data)
 		self:ExecuteAction(action, targetState, data)
 	end)
+
+	-- Sincronizar WalkSpeed cuando WeaponClient (u otro sistema) transiciona el estado
+	-- sin pasar por ExecuteAction (e.g. Reload, Firing, ActiveReloading).
+	self._connections.stateChanged = self._stateMachine.StateChanged:Connect(function(_newState, _oldState)
+		self:_applyMovementSpeed()
+	end)
 end
 
 function MovementController:Destroy()

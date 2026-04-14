@@ -433,9 +433,8 @@ end
 ------------------------------------------------------------------------
 
 function CameraController:_onActionResolved(action: string)
-	if action == "Shoot" then
-		self:FireImpulseShake(math.rad(1.2), math.rad(0.4))
-	elseif action == "Evade" or action == "RollOutOfCover" then
+	-- Shake de disparo movido a ShotFired signal (solo tras disparo real validado por WeaponClient)
+	if action == "Evade" or action == "RollOutOfCover" then
 		self:FireImpulseShake(math.rad(0.5), math.rad(0.8))
 	end
 end

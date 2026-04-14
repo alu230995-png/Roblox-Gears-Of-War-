@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -437,7 +437,7 @@ Constants.MAX_FORCE = 100 -- Tope máximo de fuerza para evitar velocidades extr
 Constants.RELOAD_BAR_SPEED = 1.0
 Constants.ACTIVE_RELOAD_WINDOW = 0.15
 Constants.ACTIVE_RELOAD_BONUS_DAMAGE = 1.5
-Constants.ACTIVE_RELOAD_BONUS_DURATION = 4.0
+Constants.ACTIVE_RELOAD_BONUS_DURATION = 12
 Constants.FAILED_RELOAD_PENALTY = 1.5
 
 ------------------------------------------------------------------------

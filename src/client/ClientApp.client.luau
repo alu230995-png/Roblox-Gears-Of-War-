@@ -144,6 +144,11 @@ local function setupWeaponTool(tool: Tool)
 	-- Bind effects system to this weapon
 	effectsController:BindWeaponClient(wc)
 
+	-- Camera shake: solo tras disparo real validado por WeaponClient
+	wc.ShotFired:Connect(function()
+		cameraController:FireImpulseShake(math.rad(1.2), math.rad(0.4))
+	end)
+
 	tool.AncestryChanged:Connect(function(_, newParent)
 		if newParent == nil then
 			task.defer(function()

@@ -50,7 +50,11 @@ local WeaponServer = {}
 --- Arma equipada por cada jugador: Player → weaponName
 local _equippedWeapons: { [Player]: string } = {}
 
---- Munición server-side por jugador: Player → { current: number, reserve: number }
+--- Munición server-side por jugador POR ARMA: Player → { [weaponName] → { current, reserve } }
+local _ammoStatePerWeapon: { [Player]: { [string]: { current: number, reserve: number } } } = {}
+
+--- Munición activa (referencia al arma equipada): Player → { current, reserve }
+--- Apunta siempre a _ammoStatePerWeapon[player][equippedWeapon]
 local _ammoState: { [Player]: { current: number, reserve: number } } = {}
 
 --- Último tiempo de disparo por jugador (anti rapid-fire)
@@ -89,7 +93,7 @@ end
 
 --- Envía datos de efectos visuales a todos los clientes EXCEPTO el tirador.
 --- El tirador ya renderiza sus propios efectos localmente.
-local function _replicateShotEffects(shooter: Player, shotData: any, validation: any)
+local function _replicateShotEffects(shooter: Player, shotData: any, validation: any, hasActiveReload: boolean)
 	if not _weaponEffectsRemote then
 		return
 	end
@@ -100,6 +104,7 @@ local function _replicateShotEffects(shooter: Player, shotData: any, validation:
 		HitPositions = shotData.HitPositions,
 		HitParts = shotData.HitParts,
 		ShooterCharacter = validation.Character,
+		HasActiveReload = hasActiveReload,
 	}
 
 	for _, otherPlayer in Players:GetPlayers() do
@@ -115,7 +120,7 @@ end
 
 --- Envía datos validados del disparo al tirador para efectos
 --- diferidos (trails, blood scalado, hitmarkers).
-local function _sendShotConfirmed(shooter: Player, damageReport: any, validation: any)
+local function _sendShotConfirmed(shooter: Player, damageReport: any, validation: any, hasActiveReload: boolean)
 	if not _shotConfirmedRemote then
 		return
 	end
@@ -153,6 +158,7 @@ local function _sendShotConfirmed(shooter: Player, damageReport: any, validation
 		MuzzlePosition = validation.MuzzlePosition,
 		ValidatedHits = validatedHits,
 		Kills = kills,
+		HasActiveReload = hasActiveReload,
 	})
 end
 
@@ -189,7 +195,8 @@ local function _processShot(player: Player, shotData: any)
 	)
 
 	-- 3b. Aplicar buff de recarga activa (x1.5 daño)
-	if ReloadHandler.HasActiveBuff(player) then
+	local hasActiveReloadBuff = ReloadHandler.HasActiveBuff(player)
+	if hasActiveReloadBuff then
 		for _, victim in damageReport.Victims do
 			victim.TotalDamage = victim.TotalDamage * Constants.ACTIVE_RELOAD_BONUS_DAMAGE
 		end
@@ -204,10 +211,10 @@ local function _processShot(player: Player, shotData: any)
 	HealthStateManager.ApplyDamage(damageReport)
 
 	-- 5. Replicar efectos visuales a otros clientes
-	_replicateShotEffects(player, shotData, validation)
+	_replicateShotEffects(player, shotData, validation, hasActiveReloadBuff)
 
 	-- 6. Confirmar disparo al tirador (posiciones validadas + daño por pellet)
-	_sendShotConfirmed(player, damageReport, validation)
+	_sendShotConfirmed(player, damageReport, validation, hasActiveReloadBuff)
 end
 
 ------------------------------------------------------------------------
@@ -234,8 +241,8 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 	end
 
 	if action == "Equip" then
-		-- Rate limit: máximo 1 equip cada 0.4s (EQUIP_TIME)
-		if not _isActionAllowed(player, "Equip", WeaponConstants.EQUIP_TIME) then
+		-- Rate limit: máximo 1 equip cada 0.3s (más tolerante que EQUIP_TIME para swaps rápidos)
+		if not _isActionAllowed(player, "Equip", 0.3) then
 			return
 		end
 		local weaponName = data
@@ -246,17 +253,25 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 				return
 			end
 
-			-- Solo resetear munición si cambia de arma (no re-equip de la misma)
+			-- Solo switchear si cambia de arma (no re-equip de la misma)
 			if _equippedWeapons[player] ~= weaponName then
 				_equippedWeapons[player] = weaponName
-				-- Solo inicializar ammo si no hay estado previo para esta arma
-				if not _ammoState[player] then
+
+				-- Ammo per-weapon: inicializar solo la primera vez que se equipa este arma
+				if not _ammoStatePerWeapon[player] then
+					_ammoStatePerWeapon[player] = {}
+				end
+				if not _ammoStatePerWeapon[player][weaponName] then
 					local ammo = config.Ammo
-					_ammoState[player] = {
+					_ammoStatePerWeapon[player][weaponName] = {
 						current = ammo.ClipSize,
 						reserve = ammo.CurrentAmmo - ammo.ClipSize,
 					}
 				end
+
+				-- Apuntar _ammoState al arma activa (ShotValidator y ReloadHandler usan esto)
+				_ammoState[player] = _ammoStatePerWeapon[player][weaponName]
+
 				_lastFireTime[player] = 0
 				ReloadHandler.CancelReload(player)
 			end
@@ -265,8 +280,19 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 		if not _isActionAllowed(player, "Unequip", 0.2) then
 			return
 		end
-		_equippedWeapons[player] = nil
-		ReloadHandler.CancelReload(player)
+		-- El cliente envía weaponName con Unequip: solo limpiar si coincide
+		-- con el arma actualmente equipada (ignorar unequips tardíos de armas ya swapeadas)
+		local weaponName = data
+		if typeof(weaponName) == "string" then
+			if _equippedWeapons[player] == weaponName then
+				_equippedWeapons[player] = nil
+				ReloadHandler.CancelReload(player)
+			end
+		else
+			-- Fallback legacy: si no envía nombre, limpiar igualmente
+			_equippedWeapons[player] = nil
+			ReloadHandler.CancelReload(player)
+		end
 	elseif action == "ProcessShot" then
 		_processShot(player, data)
 	elseif action == "Reload" then
@@ -368,6 +394,8 @@ local function _bindCharacter(player: Player, character: Model)
 
 			-- Limpiar estado del servidor
 			_equippedWeapons[player] = nil
+			_ammoState[player] = nil
+			_ammoStatePerWeapon[player] = nil
 			ReloadHandler.CancelReload(player)
 
 			for _, conn in charConnections do
@@ -404,6 +432,7 @@ local function _onPlayerRemoving(player: Player)
 	end
 	_equippedWeapons[player] = nil
 	_ammoState[player] = nil
+	_ammoStatePerWeapon[player] = nil
 	_lastFireTime[player] = nil
 	_reloadingPlayers[player] = nil
 	_lastActionTime[player] = nil

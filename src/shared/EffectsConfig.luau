@@ -51,6 +51,25 @@ EffectsConfig.WEAPONS = {
 			Color = Color3.fromRGB(255, 220, 100),
 			FadeTime = 0.1,
 		},
+		ActiveReloadEffects = {
+			MuzzleFlash = {
+				Path = nil,
+				PathDelay = nil,
+				Duration = 0.06,
+				Scale = 1.1,
+				Color = Color3.fromRGB(70, 170, 255),
+				LightRange = 10,
+				LightBrightness = 3,
+			},
+			BulletTrail = {
+				Path = nil,
+				PathDelay = nil,
+				Width = 0.07,
+				Lifetime = 0.18,
+				Color = Color3.fromRGB(70, 190, 255),
+				FadeTime = 0.12,
+			},
+		},
 		ShellEjection = {
 			Path = nil,
 			PathDelay = nil,
@@ -304,7 +323,7 @@ EffectsConfig.IMPACTS = {
 	Flesh = {
 		Path = "ReplicatedStorage.Assets.Effects.Blood.Gore",
 		PathDelay = nil,
-		ParticleCount = 10,
+		ParticleCount = 8,
 		Spread = 25,
 		Lifetime = 0.8,
 		Speed = 8,
@@ -321,9 +340,9 @@ EffectsConfig.DEATH = {
 
 	Standard = {
 		BloodBurst = {
-			Path = "ReplicatedStorage.Assets.Effects.Blood.Gore",
+			Path = "ReplicatedStorage.Assets.Effects.Blood.Blood",
 			PathDelay = nil,
-			ParticleCount = 15,
+			ParticleCount = 1,
 			Spread = 30,
 			Lifetime = 1.0,
 			Speed = 6,
@@ -338,9 +357,9 @@ EffectsConfig.DEATH = {
 
 	Headshot = {
 		BloodBurst = {
-			Path = "ReplicatedStorage.Assets.Effects.Blood.Death",
+			Path = "ReplicatedStorage.Assets.Effects.Blood.Blood",
 			PathDelay = nil,
-			ParticleCount = 25,
+			ParticleCount = 1,
 			Spread = 45,
 			Lifetime = 1.2,
 			Speed = 12,
@@ -355,9 +374,9 @@ EffectsConfig.DEATH = {
 
 	Dismember = {
 		BloodBurst = {
-			Path = "ReplicatedStorage.Assets.Effects.Blood.Gore",
+			Path = "ReplicatedStorage.Assets.Effects.Blood.Blood",
 			PathDelay = nil,
-			ParticleCount = 35,
+			ParticleCount = 1,
 			Spread = 60,
 			Lifetime = 1.5,
 			Speed = 15,
@@ -439,6 +458,11 @@ EffectsConfig.EXPLOSION = {
 for _, weaponEffects in EffectsConfig.WEAPONS do
 	for _, subTable in weaponEffects do
 		if type(subTable) == "table" then
+			for _, nestedSubTable in subTable do
+				if type(nestedSubTable) == "table" then
+					table.freeze(nestedSubTable)
+				end
+			end
 			table.freeze(subTable)
 		end
 	end

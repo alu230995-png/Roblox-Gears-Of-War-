@@ -25,7 +25,12 @@ function BulletTrailEffect:Destroy() end
 -- PUBLIC API
 ------------------------------------------------------------------------
 
-function BulletTrailEffect:Fire(origin: Vector3, hitPositions: { [string]: Vector3 }, weaponName: string)
+function BulletTrailEffect:Fire(
+	origin: Vector3,
+	hitPositions: { [string]: Vector3 },
+	weaponName: string,
+	hasActiveReload: boolean?
+)
 	if not self._trailPool then
 		return
 	end
@@ -36,6 +41,9 @@ function BulletTrailEffect:Fire(origin: Vector3, hitPositions: { [string]: Vecto
 	end
 
 	local trailConfig = weaponConfig.BulletTrail
+	if hasActiveReload and weaponConfig.ActiveReloadEffects and weaponConfig.ActiveReloadEffects.BulletTrail then
+		trailConfig = weaponConfig.ActiveReloadEffects.BulletTrail
+	end
 
 	for _, hitPos in hitPositions do
 		self._trailPool:Fire(origin, hitPos, trailConfig)

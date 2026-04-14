@@ -93,13 +93,13 @@ function ParticlePool:Acquire(
 						if i > 1 then
 							task.wait(pathDelay)
 						end
-						self:_acquireFromPath(position, normal, p, config.Lifetime or 1)
+						self:_acquireFromPath(position, normal, p, config.Lifetime or 1, config.ParticleCount)
 					end
 				end)
 			else
 				-- Todos simultáneos
 				for _, p in paths do
-					self:_acquireFromPath(position, normal, p, config.Lifetime or 1)
+					self:_acquireFromPath(position, normal, p, config.Lifetime or 1, config.ParticleCount)
 				end
 			end
 		end
@@ -161,7 +161,7 @@ end
 -- PRIVATE
 ------------------------------------------------------------------------
 
-function ParticlePool:_acquireFromPath(position: Vector3, normal: Vector3?, path: string, lifetime: number): Part?
+function ParticlePool:_acquireFromPath(position: Vector3, normal: Vector3?, path: string, lifetime: number, particleCount: number?): Part?
 	local template = EffectsConstants.ResolvePath(path)
 	if not template then
 		warn("[ParticlePool] Path not found: " .. path)
@@ -182,7 +182,7 @@ function ParticlePool:_acquireFromPath(position: Vector3, normal: Vector3?, path
 		clone.Parent = self._folder
 
 		-- Emit burst en todos los ParticleEmitters (NO Enabled)
-		EffectsConstants.EmitAll(clone)
+		EffectsConstants.EmitAll(clone, particleCount)
 
 		task.delay(lifetime + 0.5, function()
 			clone:Destroy()
@@ -195,7 +195,7 @@ function ParticlePool:_acquireFromPath(position: Vector3, normal: Vector3?, path
 		clone:PivotTo(CFrame.lookAt(position, position + lookDir))
 		clone.Parent = self._folder
 
-		EffectsConstants.EmitAll(clone)
+		EffectsConstants.EmitAll(clone, particleCount)
 
 		task.delay(lifetime + 0.5, function()
 			clone:Destroy()
@@ -221,7 +221,7 @@ function ParticlePool:_acquireFromPath(position: Vector3, normal: Vector3?, path
 
 		clone.Parent = part
 		clone.Enabled = false
-		local count = clone:GetAttribute("EmitCount") or 1
+		local count = particleCount or clone:GetAttribute("EmitCount") or 1
 		clone:Emit(count)
 
 		task.delay(lifetime + 0.5, function()

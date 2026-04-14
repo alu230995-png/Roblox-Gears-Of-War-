@@ -200,8 +200,8 @@ function EffectsController:BindWeaponClient(weaponClient)
 	if weaponClient.ShotFired then
 		table.insert(
 			connections,
-			weaponClient.ShotFired:Connect(function(weaponName, shotResult, character)
-				self:OnShotFired(weaponName, shotResult, character, true)
+			weaponClient.ShotFired:Connect(function(weaponName, shotResult, character, hasActiveReload)
+			self:OnShotFired(weaponName, shotResult, character, true, hasActiveReload)
 			end)
 		)
 	end
@@ -252,19 +252,25 @@ end
 -- PUBLIC API — Event handlers
 ------------------------------------------------------------------------
 
-function EffectsController:OnShotFired(weaponName: string, shotResult: any, character: Model?, isLocalShot: boolean?)
+function EffectsController:OnShotFired(
+	weaponName: string,
+	shotResult: any,
+	character: Model?,
+	isLocalShot: boolean?,
+	hasActiveReload: boolean?
+)
 	if not shotResult then
 		return
 	end
 
 	-- 1. Muzzle flash (siempre, para local y remoto)
-	self._muzzleFlash:Fire(character, weaponName)
+	self._muzzleFlash:Fire(character, weaponName, hasActiveReload)
 
 	if isLocalShot == false then
 		-- Disparos de OTROS jugadores: usar datos del servidor tal cual
 		-- (trails, impactos, sangre, sonido — todo inmediato)
 		local origin = shotResult.Origin
-		self._bulletTrail:Fire(origin, shotResult.HitPositions, weaponName)
+		self._bulletTrail:Fire(origin, shotResult.HitPositions, weaponName, hasActiveReload)
 
 		for pelletName, hitPos in shotResult.HitPositions do
 			local hitPartName = shotResult.HitParts and shotResult.HitParts[pelletName]
@@ -375,6 +381,7 @@ function EffectsController:_onRemoteShotEffects(effectsData: any)
 	local hitPositions = effectsData.HitPositions
 	local hitParts = effectsData.HitParts
 	local shooterCharacter = effectsData.ShooterCharacter
+	local hasActiveReload = effectsData.HasActiveReload
 
 	if typeof(weaponName) ~= "string" or typeof(origin) ~= "Vector3" then
 		return
@@ -389,7 +396,7 @@ function EffectsController:_onRemoteShotEffects(effectsData: any)
 		HitParts = hitParts,
 	}
 
-	self:OnShotFired(weaponName, shotResult, shooterCharacter, false)
+	self:OnShotFired(weaponName, shotResult, shooterCharacter, false, hasActiveReload)
 end
 
 ------------------------------------------------------------------------
@@ -407,6 +414,7 @@ function EffectsController:_onShotConfirmed(data: any)
 	local muzzlePosition = data.MuzzlePosition
 	local validatedHits = data.ValidatedHits
 	local kills = data.Kills
+	local hasActiveReload = data.HasActiveReload
 
 	if typeof(weaponName) ~= "string" or typeof(muzzlePosition) ~= "Vector3" then
 		return
@@ -421,7 +429,7 @@ function EffectsController:_onShotConfirmed(data: any)
 		local pelletKey = "Pellet_" .. tostring(hit.PelletIndex or 0)
 		hitPositionsMap[pelletKey] = hit.HitPosition
 	end
-	self._bulletTrail:Fire(muzzlePosition, hitPositionsMap, weaponName)
+	self._bulletTrail:Fire(muzzlePosition, hitPositionsMap, weaponName, hasActiveReload)
 
 	-- 2. Impactos y sangre por pellet (con daño para scaling)
 	local hasFleshHit = false
