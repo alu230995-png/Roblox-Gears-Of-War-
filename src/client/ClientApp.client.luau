@@ -64,6 +64,12 @@ local HealthObserver = require(script.Parent.Character.HealthObserver)
 -- Death Effects (ragdoll, dismember, headshot — client-side visuals)
 local DeathEffectsHandler = require(script.Parent.Character.DeathEffectsHandler)
 
+-- Death Sequence (blood effect → spectator transition → respawn hooks)
+local DeathSequenceHandler = require(script.Parent.Character.DeathSequenceHandler)
+
+-- Spectator (camera cycling over other players during death)
+local SpectatorController = require(script.Parent.Spectator.SpectatorController)
+
 -- Effects System (VFX: muzzle flash, trails, impacts, blood, explosions)
 local EffectsController = require(script.Parent.Effects.EffectsController)
 
@@ -125,6 +131,8 @@ local soundController = SoundController.new(stateMachine)
 local healthObserver = HealthObserver.new(stateMachine)
 local effectsController = EffectsController.new(stateMachine)
 local deathEffectsHandler = DeathEffectsHandler.new(effectsController)
+local deathSequenceHandler = DeathSequenceHandler.new(stateMachine, effectsController)
+local spectatorController = SpectatorController.new(stateMachine)
 
 ------------------------------------------------------------------------
 -- WEAPON SYSTEM — Per-Tool management (scan directo, sin WeaponToolManager)
@@ -221,6 +229,8 @@ locator:Register("SoundController", soundController)
 locator:Register("HealthObserver", healthObserver)
 locator:Register("EffectsController", effectsController)
 locator:Register("DeathEffectsHandler", deathEffectsHandler)
+locator:Register("DeathSequenceHandler", deathSequenceHandler)
+locator:Register("SpectatorController", spectatorController)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()
@@ -274,7 +284,10 @@ RunService.Heartbeat:Connect(function(dt: number)
 	-- Paso 5b: MouseInput lee delta ANTES de la cámara
 	mouseInput:Update()
 
-	-- Paso 5c: Cámara DESPUÉS de movement — garantiza que lea el HRP post-corrección
+	-- Paso 5c: SpectatorController — smooth follow del target (antes de cámara normal)
+	spectatorController:Update(dt)
+
+	-- Paso 5d: Cámara DESPUÉS de movement — garantiza que lea el HRP post-corrección
 	-- (wall-glue, smooth rotation) sin jitter de 1-frame lag.
 	cameraController:Update(dt)
 

@@ -112,7 +112,9 @@ local function _writeDeathData(
 	character: Model,
 	deathType: string,
 	hitDirection: Vector3?,
-	overkillDamage: number?
+	overkillDamage: number?,
+	killerName: string?,
+	weaponName: string?
 )
 	humanoid.BreakJointsOnDeath = (deathType == "Dismember")
 	humanoid.RequiresNeck = false
@@ -125,6 +127,14 @@ local function _writeDeathData(
 		character:SetAttribute("DeathOverkillDamage", overkillDamage)
 	end
 
+	-- Killer info hooks (UI, sonido, kill feed)
+	if killerName then
+		character:SetAttribute("KillerName", killerName)
+	end
+	if weaponName then
+		character:SetAttribute("KillerWeapon", weaponName)
+	end
+
 	-- LifeState = "Dead" → CombatService cancela bleedout
 	character:SetAttribute("LifeState", "Dead")
 end
@@ -134,8 +144,15 @@ end
 ------------------------------------------------------------------------
 
 --- Standard: ragdoll + fuerza al cuerpo
-local function _standardDeath(humanoid: Humanoid, character: Model, hitDirection: Vector3?, overkillDamage: number?)
-	_writeDeathData(humanoid, character, "Standard", hitDirection, overkillDamage)
+local function _standardDeath(
+	humanoid: Humanoid,
+	character: Model,
+	hitDirection: Vector3?,
+	overkillDamage: number?,
+	killerName: string?,
+	weaponName: string?
+)
+	_writeDeathData(humanoid, character, "Standard", hitDirection, overkillDamage, killerName, weaponName)
 	_takeServerOwnership(character)
 	humanoid.Health = 0
 	_enableRagdoll(character)
@@ -145,8 +162,15 @@ local function _standardDeath(humanoid: Humanoid, character: Model, hitDirection
 end
 
 --- Headshot: ragdoll + eliminar attachments del Head + fuerza cabeza + fuerza cuerpo
-local function _headshotDeath(humanoid: Humanoid, character: Model, hitDirection: Vector3, overkillDamage: number)
-	_writeDeathData(humanoid, character, "Headshot", hitDirection, overkillDamage)
+local function _headshotDeath(
+	humanoid: Humanoid,
+	character: Model,
+	hitDirection: Vector3,
+	overkillDamage: number,
+	killerName: string?,
+	weaponName: string?
+)
+	_writeDeathData(humanoid, character, "Headshot", hitDirection, overkillDamage, killerName, weaponName)
 	_takeServerOwnership(character)
 	humanoid.Health = 0
 	_enableRagdoll(character)
@@ -169,8 +193,15 @@ local function _headshotDeath(humanoid: Humanoid, character: Model, hitDirection
 end
 
 --- Dismember: eliminar todos los attachments + ragdoll + fuerzas a cada part
-local function _dismemberDeath(humanoid: Humanoid, character: Model, overkillDamage: number, hitDirection: Vector3)
-	_writeDeathData(humanoid, character, "Dismember", hitDirection, overkillDamage)
+local function _dismemberDeath(
+	humanoid: Humanoid,
+	character: Model,
+	overkillDamage: number,
+	hitDirection: Vector3,
+	killerName: string?,
+	weaponName: string?
+)
+	_writeDeathData(humanoid, character, "Dismember", hitDirection, overkillDamage, killerName, weaponName)
 	_takeServerOwnership(character)
 	humanoid.Health = 0
 
@@ -238,7 +269,7 @@ end
 ---      d. else → standard death
 ---
 --- @param damageReport DamageReport — resultado de DamageHandler.CalculateDamage
-function HealthStateManager.ApplyDamage(damageReport: any)
+function HealthStateManager.ApplyDamage(damageReport: any, shooterName: string?, weaponName: string?)
 	if Constants.DEBUG_MODE then
 		print(damageReport)
 	end
@@ -279,13 +310,13 @@ function HealthStateManager.ApplyDamage(damageReport: any)
 			-- Determinar tipo de muerte
 			if victim.IsHeadshot and victim.LastHitZone == "Head" then
 				-- Headshot death: cabeza sale volando
-				_headshotDeath(humanoid, character, victim.HitDirection, overkillDamage)
+				_headshotDeath(humanoid, character, victim.HitDirection, overkillDamage, shooterName, weaponName)
 			elseif overkillDamage > OVERKILL_THRESHOLD then
 				-- Dismember death: parts salen volando
-				_dismemberDeath(humanoid, character, overkillDamage, victim.HitDirection)
+				_dismemberDeath(humanoid, character, overkillDamage, victim.HitDirection, shooterName, weaponName)
 			else
 				-- Standard death
-				_standardDeath(humanoid, character, victim.HitDirection, overkillDamage)
+				_standardDeath(humanoid, character, victim.HitDirection, overkillDamage, shooterName, weaponName)
 			end
 		end
 	end

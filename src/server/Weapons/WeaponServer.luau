@@ -226,7 +226,8 @@ local function _processShot(player: Player, shotData: any)
 	end
 
 	-- 4. Aplicar daño (salud, DBNO, muerte)
-	HealthStateManager.ApplyDamage(damageReport)
+	local equippedWeapon = _equippedWeapons[player] or "Unknown"
+	HealthStateManager.ApplyDamage(damageReport, player.Name, equippedWeapon)
 
 	-- 5. Replicar efectos visuales a otros clientes
 	_replicateShotEffects(player, shotData, validation, hasActiveReloadBuff)

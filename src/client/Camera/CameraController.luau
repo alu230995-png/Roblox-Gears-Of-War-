@@ -454,6 +454,12 @@ function CameraController:Update(dt: number)
 		camera.CameraType = Enum.CameraType.Scriptable
 	end
 
+	-- En Spectator/Death la cámara la controla SpectatorController — no sobrescribir
+	local currentState = self._stateMachine:GetCurrentState()
+	if currentState == "Spectator" or currentState == "Death" then
+		return
+	end
+
 	local character = Players.LocalPlayer.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then

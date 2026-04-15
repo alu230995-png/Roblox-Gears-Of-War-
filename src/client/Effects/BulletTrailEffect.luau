@@ -443,8 +443,8 @@ function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vect
 
 		smokeBeam.Enabled = true
 
-		TweenService:Create(a1, tweenLinear, { Position = targetOffset }):Play()
 		TweenService:Create(a2, tweenLinear, { Position = targetOffset }):Play()
+		TweenService:Create(a1, tweenLinear, { Position = targetOffset }):Play()
 	end)
 
 	-- 4) A1 llega a destino en TrailDelay + travelTime → apagar bullet beams

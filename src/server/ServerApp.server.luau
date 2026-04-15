@@ -24,6 +24,7 @@ local CharacterService = require(script.Parent.Character.CharacterService)
 local CombatService = require(script.Parent.Combat.CombatService)
 local WeaponServer = require(script.Parent.Weapons.WeaponServer)
 local SoundService = require(script.Parent.Sound.SoundService)
+local RespawnService = require(script.Parent.Respawn.RespawnService)
 
 ------------------------------------------------------------------------
 -- BOOTSTRAP
@@ -34,12 +35,14 @@ CharacterService:Init()
 CombatService:Init()
 WeaponServer:Init()
 SoundService:Init()
+RespawnService:Init()
 
 -- Fase Start
 CharacterService:Start()
 CombatService:Start()
 WeaponServer:Start()
 SoundService:Start()
+RespawnService:Start()
 
 ------------------------------------------------------------------------
 -- STARTUP LOG
@@ -50,7 +53,7 @@ if Constants.DEBUG_MODE then
 	)
 	print("[GoW Server] Gears of War — Server iniciado")
 	print(`[GoW Server] Gravity: {workspace.Gravity}`)
-	print("[GoW Server] Servicios: Character, Combat, Weapons, Sound")
+	print("[GoW Server] Servicios: Character, Combat, Weapons, Sound, Respawn")
 	print(
 		"[GoW Server] ═══════════════════════════════════════"
 	)

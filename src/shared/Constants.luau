@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
@@ -509,5 +509,24 @@ Constants.HITMARKER_STANDARD_BASE_SIZE = 12
 Constants.HITMARKER_HEADSHOT_BASE_SIZE = 16
 --- Color del hitmarker en headshot.
 Constants.HITMARKER_HEADSHOT_COLOR = Color3.fromRGB(255, 50, 50)
+
+------------------------------------------------------------------------
+-- DEATH / SPECTATOR / RESPAWN
+------------------------------------------------------------------------
+
+--- Duración del efecto de sangre de muerte antes de transicionar a Spectator (segundos).
+Constants.DEATH_BLOOD_EFFECT_DURATION = 4.0
+
+--- Tiempo base de respawn para el equipo (countdown global descendente, segundos).
+Constants.RESPAWN_TEAM_COUNTDOWN = 10.0
+--- Mínimo tiempo de respawn si un compañero ya está muerto (segundos).
+Constants.RESPAWN_MIN_TIME = 2.0
+
+--- Sensibilidad de cámara en modo espectador.
+Constants.SPECTATOR_CAMERA_SENSITIVITY = 1.0
+--- Offset de cámara del espectador (detrás del jugador observado).
+Constants.SPECTATOR_CAMERA_OFFSET = Vector3.new(0, 3, -6)
+--- FOV del espectador.
+Constants.SPECTATOR_FOV = 70
 
 return Constants

@@ -265,6 +265,25 @@ export type CombatResult = {
 }
 
 ------------------------------------------------------------------------
+-- DEATH / SPECTATOR / RESPAWN
+------------------------------------------------------------------------
+
+--- Info del kill para hooks de UI y sonido.
+--- Se setea como atributos en el Character al morir.
+export type KillInfo = {
+	KillerName: string?,
+	KillerUserId: number?,
+	WeaponName: string?,
+	DeathType: string?, -- "Standard" | "Dismember" | "Headshot" | "Bleedout"
+}
+
+--- Estado de respawn enviado del servidor al cliente.
+export type RespawnState = {
+	TimeRemaining: number,
+	IsGlobalCountdown: boolean,
+}
+
+------------------------------------------------------------------------
 -- ACTION RESOLVER (Capa 5)
 ------------------------------------------------------------------------
 

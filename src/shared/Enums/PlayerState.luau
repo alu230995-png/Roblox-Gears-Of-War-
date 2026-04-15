@@ -91,8 +91,8 @@ PlayerState.Transitions = {
 	DBNO = { "Idle", "Executing", "Death" },
 
 	-- Inactive Group
-	Death = { "Lobby", "Spectator" },
-	Spectator = { "Lobby" },
+	Death = { "Lobby", "Spectator", "Idle" },
+	Spectator = { "Lobby", "Idle" },
 	Lobby = { "Idle" },
 }
 

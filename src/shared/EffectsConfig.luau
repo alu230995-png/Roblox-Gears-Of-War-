@@ -49,6 +49,7 @@ EffectsConfig.WEAPONS = {
 				"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Beam2",
 			},
 			ParticlePath = "ReplicatedStorage.Assets.Effects.Bullets.Lanzer.BulletGlow",
+			SmokePath = "ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Smoke",
 			PathDelay = 0,
 			Speed = 500,
 		},
