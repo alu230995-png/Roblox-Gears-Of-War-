@@ -17,6 +17,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local Signal = require(Shared:WaitForChild("Signal"))
 
 local ReloadHandler = {}
 ReloadHandler.__index = ReloadHandler
@@ -26,7 +27,6 @@ function ReloadHandler.new(
 	config,
 	weaponRemote: RemoteEvent?,
 	weaponName: string,
-	stateMachine,
 	ammoChangedSignal
 )
 	local self = setmetatable({}, ReloadHandler)
@@ -35,7 +35,6 @@ function ReloadHandler.new(
 	self._config = config
 	self._weaponRemote = weaponRemote
 	self._weaponName = weaponName
-	self._stateMachine = stateMachine
 	self._ammoChangedSignal = ammoChangedSignal
 
 	self._isReloading = false
@@ -43,6 +42,26 @@ function ReloadHandler.new(
 	self._reloadStartTime = 0
 	self._hasActiveReloadBuff = false
 	self._activeBuffThread = nil :: thread?
+
+	-- ════════════════════════════════════════════════════════════
+	-- UI HOOKS — Señales que la capa de Presentation puede escuchar
+	-- ════════════════════════════════════════════════════════════
+
+	--- Se dispara al iniciar la recarga.
+	--- Payload: (weaponName: string, reloadTime: number, windowStart: number, windowDuration: number)
+	self.ReloadBegan = Signal.new()
+
+	--- Se dispara cuando se completa la recarga (normal o active reload).
+	--- Payload: (weaponName: string)
+	self.ReloadCompleted = Signal.new()
+
+	--- Se dispara cuando se cancela la recarga (swap, evade, etc.).
+	--- Payload: (weaponName: string)
+	self.ReloadCancelled = Signal.new()
+
+	--- Se dispara cuando el jugador intenta active reload.
+	--- Payload: (weaponName: string, success: boolean, progress: number)
+	self.ActiveReloadAttempted = Signal.new()
 
 	return self
 end
@@ -101,10 +120,16 @@ function ReloadHandler:StartReload(): boolean
 		self:_completeReload()
 	end)
 
+	-- UI Hook: notificar inicio de recarga con datos de ventana
+	local windowStart = ammoConfig.ActiveReloadWindowStart or 0.35
+	local windowDuration = ammoConfig.ActiveReloadWindowDuration or 0.15
+	self.ReloadBegan:Fire(self._weaponName, ammoConfig.ReloadTime, windowStart, windowDuration)
+
 	return true
 end
 
 function ReloadHandler:CancelReload()
+	local wasReloading = self._isReloading
 	if self._reloadThread then
 		task.cancel(self._reloadThread)
 		self._reloadThread = nil
@@ -112,12 +137,9 @@ function ReloadHandler:CancelReload()
 	self._isReloading = false
 	self._reloadStartTime = 0
 
-	-- Devolver a Idle si seguimos en estado de recarga
-	if self._stateMachine then
-		local current = self._stateMachine:GetCurrentState()
-		if current == "Reloading" or current == "ActiveReloading" then
-			self._stateMachine:TransitionTo("Idle")
-		end
+	-- UI Hook: notificar cancelación
+	if wasReloading then
+		self.ReloadCancelled:Fire(self._weaponName)
 	end
 end
 
@@ -159,7 +181,11 @@ function ReloadHandler:AttemptActiveReload(): boolean
 
 	local remainingTime = math.max(reloadTime - elapsed, 0.05)
 
-	if progress >= windowStart and progress <= windowEnd then
+	-- UI Hook: notificar intento de active reload
+	local isInWindow = progress >= windowStart and progress <= windowEnd
+	self.ActiveReloadAttempted:Fire(self._weaponName, isInWindow, progress)
+
+	if isInWindow then
 		-- ACTIVE RELOAD EXITOSO — mitad del tiempo restante
 		local newDelay = remainingTime / 2
 		self._hasActiveReloadBuff = true
@@ -208,6 +234,10 @@ end
 function ReloadHandler:Destroy()
 	self:ClearActiveReloadBuff()
 	self:CancelReload()
+	self.ReloadBegan:Destroy()
+	self.ReloadCompleted:Destroy()
+	self.ReloadCancelled:Destroy()
+	self.ActiveReloadAttempted:Destroy()
 end
 
 ------------------------------------------------------------------------
@@ -231,16 +261,8 @@ function ReloadHandler:_completeReload()
 
 	self._ammoChangedSignal:Fire(self._ammoState.current, self._ammoState.reserve)
 
-	-- Devolver al jugador a un estado que permita actuar
-	if self._stateMachine then
-		local current = self._stateMachine:GetCurrentState()
-		if current == "Reloading" or current == "ActiveReloading" then
-			self._stateMachine:TransitionTo("Idle")
-		elseif current == "Firing" then
-			-- Auto-reload desde Firing: Firing → Idle (o Walking si se mueve)
-			self._stateMachine:TransitionTo("Idle")
-		end
-	end
+	-- UI Hook: notificar recarga completada
+	self.ReloadCompleted:Fire(self._weaponName)
 
 	if Constants.DEBUG_MODE then
 		print(

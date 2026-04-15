@@ -88,8 +88,6 @@ local FreeStateRules = {
 		and (
 			ctx.State == "Idle"
 			or ctx.State == "Walking"
-			or ctx.State == "Reloading"
-			or ctx.State == "ActiveReloading"
 		)
 		end,
 		execute = function(_resolver, ctx)
@@ -156,28 +154,19 @@ local FreeStateRules = {
 		end,
 	},
 
-	-- Prio 7: Reload / Active Reload
+	-- Prio 7: Reload
 	{
 		id = "Reload",
 		check = function(_resolver, ctx)
 	if not ctx.Buffer:HasIntent("WantsReload") then
 		return false
 	end
-	-- Active Reload: solo válido desde Reloading
-	if ctx.State == "Reloading" then
-		return true
-	end
-	-- Ya en ActiveReloading: ignorar (no se puede repetir)
-	if ctx.State == "ActiveReloading" then
-		return false
-	end
+	-- Reloading es un estado del arma, no del jugador.
+	-- WeaponClient decide internamente si es recarga nueva o active reload.
 	return ctx.StateConfig.canMove
 		end,
 		execute = function(_resolver, ctx)
 	ctx.Buffer:Consume("WantsReload")
-	if ctx.State == "Reloading" then
-		return "ActiveReload", nil, nil
-	end
 	return "Reload", nil, nil
 		end,
 	},

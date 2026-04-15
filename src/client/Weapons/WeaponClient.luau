@@ -29,6 +29,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local WeaponConstants = require(Shared:WaitForChild("WeaponConstants"))
 local Constants = require(Shared:WaitForChild("Constants"))
 local Signal = require(Shared:WaitForChild("Signal"))
+local SoundConfig = require(Shared:WaitForChild("SoundConfig"))
 
 local ShootingHandler = require(script.Parent:WaitForChild("ShootingHandler"))
 local ReloadHandlerModule: any = require(script.Parent:WaitForChild("ReloadHandler"))
@@ -74,8 +75,6 @@ local FIRING_ACTIVE_STATES: { [string]: true } = {
 -- Si desequipamos el arma y la FSM sigue en uno de estos, FORZAR Idle
 -- para que el arma nueva no quede bloqueada por un estado ajeno.
 local WEAPON_OWNED_STATES: { [string]: true } = {
-	Reloading = true,
-	ActiveReloading = true,
 	Firing = true,
 }
 
@@ -130,10 +129,13 @@ function WeaponClient.new(player: Player, tool: Tool)
 	self.AimingChanged = Signal.new()
 	self.ShotFired = Signal.new()
 	self.ReloadStarted = Signal.new()
+	self.HoldStarted = Signal.new()
+	self.HoldReleased = Signal.new()
 
 	-- Deps (inyectadas en Init)
 	self._stateMachine = nil
 	self._weaponRemote = nil :: RemoteEvent?
+	self._soundController = nil
 
 	-- Sub-handlers (creados en Init, cuando config y deps están listos)
 	self._reloadHandler = nil
@@ -164,7 +166,6 @@ function WeaponClient:Init(stateMachine, actionExecutedSignal, ScopeRendererClas
 			self._config,
 			self._weaponRemote,
 			self._weaponName,
-			self._stateMachine,
 			self.AmmoChanged
 		)
 
@@ -256,6 +257,8 @@ function WeaponClient:Destroy()
 	self.AimingChanged:Destroy()
 	self.ShotFired:Destroy()
 	self.ReloadStarted:Destroy()
+	self.HoldStarted:Destroy()
+	self.HoldReleased:Destroy()
 
 	self._stateMachine = nil
 	self._tool = nil :: any
@@ -298,12 +301,20 @@ function WeaponClient:GetConfig()
 	return self._config
 end
 
+function WeaponClient:SetSoundController(soundController)
+	self._soundController = soundController
+end
+
 function WeaponClient:CanAct(): boolean
 	return self._weaponState == WS_EQUIPPED
 end
 
 function WeaponClient:GetSpreadPattern()
 	return self._config and self._config.Ballistics and self._config.Ballistics.SpreadPattern
+end
+
+function WeaponClient:GetReloadHandler()
+	return self._reloadHandler
 end
 
 function WeaponClient:GetScope()
@@ -351,31 +362,28 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 	elseif action == "StopAim" then
 		self.AimingChanged:Fire(false)
 
-	-- Reload (delegado a ReloadHandler — WeaponClient es autoridad de transición)
+	-- Reload (delegado a ReloadHandler — WeaponClient decide normal vs active)
+	-- Reloading es un ESTADO DEL ARMA, no del jugador.
+	-- El PlayerState no cambia: el jugador puede recargar en Idle, Walking, CoverIdle, etc.
 	elseif action == "Reload" then
 		if self._reloadHandler then
+			-- Si ya está recargando → intentar active reload
+			if self._reloadHandler:IsReloading() then
+				self._reloadHandler:AttemptActiveReload()
+				return
+			end
+
+			-- Iniciar recarga nueva
 			local started = self._reloadHandler:StartReload()
 			if not started then
 				return
 			end
 
-			if self._stateMachine then
-				self._stateMachine:TransitionTo("Reloading")
-			end
 			self:_stopFiring()
 			if self._holdBreathHandler then
 				self._holdBreathHandler:ForceCancel()
 			end
 			self.ReloadStarted:Fire(self._weaponName)
-		end
-
-	-- Active Reload (delegado a ReloadHandler — WeaponClient es autoridad de transición)
-	elseif action == "ActiveReload" then
-		if self._reloadHandler then
-			local accepted = self._reloadHandler:AttemptActiveReload()
-			if accepted and self._stateMachine then
-				self._stateMachine:TransitionTo("ActiveReloading")
-			end
 		end
 	end
 end
@@ -396,12 +404,9 @@ function WeaponClient:_startFiring(): boolean
 			if Constants.DEBUG_MODE then
 				print(`[WeaponClient] Sin munición — recarga automática — {self._weaponName}`)
 			end
-			-- Validar primero, transicionar solo si StartReload aprueba
+			-- Validar primero, no transicionar player state (reload es estado del arma)
 			local started = self._reloadHandler:StartReload()
 			if started then
-				if self._stateMachine then
-					self._stateMachine:TransitionTo("Reloading")
-				end
 				self.ReloadStarted:Fire(self._weaponName)
 			end
 		end
@@ -417,9 +422,13 @@ function WeaponClient:_startFiring(): boolean
 			return false
 		end
 		self._isShooting = true
+		self:_startHoldSound()
+		self.HoldStarted:Fire(self._weaponName, self._player.Character)
 		self._holdBreathHandler:Start(function()
+			self:_stopHoldSound()
+			self.HoldReleased:Fire(self._weaponName, self._player.Character)
 			if self._isShooting and self._weaponState == WS_EQUIPPED and self._ammoState.current > 0 then
-				self:_fireOneShot()
+				self:_fireOneShot(1) -- carga completa = precisión perfecta
 			end
 			self._isShooting = false
 		end)
@@ -464,9 +473,6 @@ function WeaponClient:_startFiring(): boolean
 			if self._reloadHandler and self._config then
 				local started = self._reloadHandler:StartReload()
 				if started then
-					if self._stateMachine then
-						self._stateMachine:TransitionTo("Reloading")
-					end
 					self.ReloadStarted:Fire(self._weaponName)
 					return
 				end
@@ -485,10 +491,23 @@ end
 function WeaponClient:_stopFiring()
 	-- HoldBreath cancel
 	if self._holdBreathHandler and self._holdBreathHandler:IsActive() then
+		local progress = self._holdBreathHandler:GetProgress()
+		self:_stopHoldSound()
+		self.HoldReleased:Fire(self._weaponName, self._player.Character)
+
 		if self._holdBreathHandler:Cancel() then
+			-- CancelOnRelease=true: disparo cancelado completamente
 			self._isShooting = false
 			return
 		end
+
+		-- CancelOnRelease=false: disparar con precisión según progreso de carga
+		self._holdBreathHandler:ForceCancel()
+		if self._weaponState == WS_EQUIPPED and self._ammoState.current > 0 then
+			self:_fireOneShot(progress)
+		end
+		self._isShooting = false
+		return
 	end
 
 	self._isShooting = false
@@ -498,13 +517,21 @@ function WeaponClient:_stopFiring()
 	end
 end
 
-function WeaponClient:_fireOneShot()
+function WeaponClient:_fireOneShot(chargeProgress: number?)
 	if not self._config then
 		return
 	end
 
+	-- Calcular dispersión angular por carga incompleta
+	local chargeSpreadRad: number? = nil
+	if chargeProgress ~= nil and chargeProgress < 1 then
+		local holdConfig = self._config.Mechanics and self._config.Mechanics.HoldingBreath
+		local maxSpreadDeg = holdConfig and holdConfig.MaxChargeSpread or 15
+		chargeSpreadRad = math.rad(maxSpreadDeg) * (1 - chargeProgress)
+	end
+
 	local scopeContainer = self._scope and self._scope:GetContainer()
-	local shotResult = ShootingHandler.FireOneShot(self._player, scopeContainer, self._config.Stats)
+	local shotResult = ShootingHandler.FireOneShot(self._player, scopeContainer, self._config.Stats, chargeSpreadRad)
 
 	self._ammoState.current = math.max(self._ammoState.current - 1, 0)
 	self.AmmoChanged:Fire(self._ammoState.current, self._ammoState.reserve)
@@ -516,6 +543,7 @@ function WeaponClient:_fireOneShot()
 			HitPositions = shotResult.HitPositions,
 			HitParts = shotResult.HitParts,
 			Timestamp = os.clock(),
+			ChargeProgress = chargeProgress,
 		})
 	end
 
@@ -669,11 +697,13 @@ end
 --- Usado en unequip, force-unequip y Destroy.
 function WeaponClient:_cancelAllOperations()
 	self:_stopFiring()
+	self:_stopHoldSound()
 	if self._holdBreathHandler then
 		self._holdBreathHandler:ForceCancel()
 	end
 	if self._reloadHandler then
 		self._reloadHandler:CancelReload()
+		self._reloadHandler:ClearActiveReloadBuff()
 	end
 
 	-- Safety net: si la StateMachine sigue en un estado que solo existe
@@ -701,6 +731,43 @@ function WeaponClient:_cancelTransition()
 		task.cancel(self._transitionThread)
 		self._transitionThread = nil
 	end
+end
+
+------------------------------------------------------------------------
+-- PRIVATE — Hold Sound (looped while holding breath)
+------------------------------------------------------------------------
+
+function WeaponClient:_getHoldSoundName(): string?
+	local key = "VFX_Weapon_" .. self._weaponName .. "_Hold"
+	if SoundConfig[key] then
+		return key
+	end
+	return nil
+end
+
+function WeaponClient:_startHoldSound()
+	if not self._soundController then
+		return
+	end
+	local soundName = self:_getHoldSoundName()
+	if not soundName then
+		return
+	end
+	local character = self._player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local position = hrp and hrp.Position or nil
+	self._soundController:PlayLocal(soundName, position)
+end
+
+function WeaponClient:_stopHoldSound()
+	if not self._soundController then
+		return
+	end
+	local soundName = self:_getHoldSoundName()
+	if not soundName then
+		return
+	end
+	self._soundController:StopLooped(soundName)
 end
 
 function WeaponClient:_setWeaponState(newState: string)

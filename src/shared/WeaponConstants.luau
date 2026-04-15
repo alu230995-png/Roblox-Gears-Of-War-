@@ -228,8 +228,9 @@ WeaponConstants.WEAPONS = table.freeze({
 			SphereCastRadius = 1.0,
 			HoldingBreath = table.freeze({
 				Enabled = true,
-				Duration = 1.5,
-				CancelOnRelease = true,
+				Duration = 8,
+				CancelOnRelease = false,
+				MaxChargeSpread = 15,
 			}),
 		}),
 	}),

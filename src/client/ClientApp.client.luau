@@ -141,8 +141,28 @@ local function setupWeaponTool(tool: Tool)
 	wc:Start()
 	weaponClients[tool] = wc
 
+	wc:SetSoundController(soundController)
+
 	-- Bind effects system to this weapon
 	effectsController:BindWeaponClient(wc)
+
+	-- TEST: exponer WeaponClient para AmmoHUD de prueba (borrar después)
+	local function exposeToAmmoHUD(weaponClient)
+		-- selene: allow(global_usage)
+		_G._testAmmoHUD = {
+			WeaponClient = weaponClient,
+			ReloadHandler = weaponClient:GetReloadHandler(),
+		}
+		-- selene: allow(global_usage)
+		local cb = _G._testAmmoHUD_onSwap
+		if cb then
+			cb()
+		end
+	end
+	exposeToAmmoHUD(wc)
+	wc.WeaponEquipped:Connect(function()
+		exposeToAmmoHUD(wc)
+	end)
 
 	-- Camera shake: solo tras disparo real validado por WeaponClient
 	wc.ShotFired:Connect(function()

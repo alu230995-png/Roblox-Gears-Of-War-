@@ -120,7 +120,13 @@ end
 
 --- Envía datos validados del disparo al tirador para efectos
 --- diferidos (trails, blood scalado, hitmarkers).
-local function _sendShotConfirmed(shooter: Player, damageReport: any, validation: any, hasActiveReload: boolean)
+local function _sendShotConfirmed(
+	shooter: Player,
+	damageReport: any,
+	validation: any,
+	hasActiveReload: boolean,
+	rayResult: any
+)
 	if not _shotConfirmedRemote then
 		return
 	end
@@ -153,10 +159,22 @@ local function _sendShotConfirmed(shooter: Player, damageReport: any, validation
 		end
 	end
 
+	-- Incluir posiciones de misses (pellets que no impactaron nada → fin de rango)
+	local missPositions = {}
+	if rayResult and rayResult.MissPositions then
+		for _, miss in rayResult.MissPositions do
+			table.insert(missPositions, {
+				PelletName = miss.PelletName,
+				EndPosition = miss.EndPosition,
+			})
+		end
+	end
+
 	_shotConfirmedRemote:FireClient(shooter, {
 		WeaponName = validation.Config.Name or validation.WeaponName,
 		MuzzlePosition = validation.MuzzlePosition,
 		ValidatedHits = validatedHits,
+		MissPositions = missPositions,
 		Kills = kills,
 		HasActiveReload = hasActiveReload,
 	})
@@ -213,8 +231,8 @@ local function _processShot(player: Player, shotData: any)
 	-- 5. Replicar efectos visuales a otros clientes
 	_replicateShotEffects(player, shotData, validation, hasActiveReloadBuff)
 
-	-- 6. Confirmar disparo al tirador (posiciones validadas + daño por pellet)
-	_sendShotConfirmed(player, damageReport, validation, hasActiveReloadBuff)
+	-- 6. Confirmar disparo al tirador (posiciones validadas + daño por pellet + misses)
+	_sendShotConfirmed(player, damageReport, validation, hasActiveReloadBuff, rayResult)
 end
 
 ------------------------------------------------------------------------
@@ -241,10 +259,9 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 	end
 
 	if action == "Equip" then
-		-- Rate limit: máximo 1 equip cada 0.3s (más tolerante que EQUIP_TIME para swaps rápidos)
-		if not _isActionAllowed(player, "Equip", 0.3) then
-			return
-		end
+		-- Sin rate limit: Equip es un write O(1) en tabla y DEBE procesarse siempre.
+		-- Rate-limitarlo causaba que swaps rápidos perdieran el Equip del arma nueva,
+		-- dejando _equippedWeapons[player] = nil y rechazando todos los disparos.
 		local weaponName = data
 		if typeof(weaponName) == "string" and #weaponName <= 50 then
 			local config = WeaponConstants.WEAPONS[weaponName]
@@ -274,12 +291,11 @@ local function _onWeaponRemote(player: Player, action: string, data: any?)
 
 				_lastFireTime[player] = 0
 				ReloadHandler.CancelReload(player)
+				ReloadHandler.ClearActiveBuff(player)
 			end
 		end
 	elseif action == "Unequip" then
-		if not _isActionAllowed(player, "Unequip", 0.2) then
-			return
-		end
+		-- Sin rate limit: mismo razonamiento que Equip.
 		-- El cliente envía weaponName con Unequip: solo limpiar si coincide
 		-- con el arma actualmente equipada (ignorar unequips tardíos de armas ya swapeadas)
 		local weaponName = data

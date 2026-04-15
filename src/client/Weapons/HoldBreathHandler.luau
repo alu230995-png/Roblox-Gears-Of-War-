@@ -7,6 +7,7 @@
 	Responsabilidades:
 	  - Timer de espera antes de disparar (HoldingBreath.Duration)
 	  - Cancelación al soltar botón (CancelOnRelease)
+	  - Si CancelOnRelease=false: soltar dispara con precisión según progreso
 	  - Callback al cumplir duración → WeaponClient dispara
 ]]
 
@@ -16,9 +17,10 @@ HoldBreathHandler.__index = HoldBreathHandler
 function HoldBreathHandler.new(holdConfig)
 	local self = setmetatable({}, HoldBreathHandler)
 
-	self._config = holdConfig -- { Enabled, Duration, CancelOnRelease }
+	self._config = holdConfig -- { Enabled, Duration, CancelOnRelease, MaxChargeSpread? }
 	self._isActive = false
 	self._thread = nil :: thread?
+	self._startTime = 0
 
 	return self
 end
@@ -44,6 +46,7 @@ function HoldBreathHandler:Start(onComplete: () -> ())
 	end
 
 	self._isActive = true
+	self._startTime = os.clock()
 
 	self._thread = task.delay(self._config.Duration, function()
 		self._thread = nil
@@ -52,6 +55,15 @@ function HoldBreathHandler:Start(onComplete: () -> ())
 			onComplete()
 		end
 	end)
+end
+
+--- Retorna el progreso actual de carga (0..1). 0 = recién empezó, 1 = completo.
+function HoldBreathHandler:GetProgress(): number
+	if not self._isActive then
+		return 0
+	end
+	local elapsed = os.clock() - self._startTime
+	return math.clamp(elapsed / self._config.Duration, 0, 1)
 end
 
 --- Cancela el timer. Retorna true si CancelOnRelease aplica.

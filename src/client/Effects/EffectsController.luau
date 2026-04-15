@@ -73,6 +73,9 @@ function EffectsController.new(_stateMachine: any)
 	-- Active weapon client reference (for accessing scope)
 	self._activeWeaponClient = nil
 
+	-- Charging particle state: { emitter: ParticleEmitter?, attachment: Attachment? }
+	self._chargingEffect = nil
+
 	return self
 end
 
@@ -121,6 +124,9 @@ function EffectsController:Start()
 end
 
 function EffectsController:Destroy()
+	-- Stop charging effect
+	self:_stopChargingEffect()
+
 	-- Desconectar remote de efectos replicados
 	if self._remoteConnection then
 		self._remoteConnection:Disconnect()
@@ -201,7 +207,7 @@ function EffectsController:BindWeaponClient(weaponClient)
 		table.insert(
 			connections,
 			weaponClient.ShotFired:Connect(function(weaponName, shotResult, character, hasActiveReload)
-			self:OnShotFired(weaponName, shotResult, character, true, hasActiveReload)
+				self:OnShotFired(weaponName, shotResult, character, true, hasActiveReload)
 			end)
 		)
 	end
@@ -228,6 +234,24 @@ function EffectsController:BindWeaponClient(weaponClient)
 		)
 	end
 
+	-- HoldStarted / HoldReleased signals (charging particle effect)
+	if weaponClient.HoldStarted then
+		table.insert(
+			connections,
+			weaponClient.HoldStarted:Connect(function(weaponName, character)
+				self:OnHoldStarted(weaponName, character)
+			end)
+		)
+	end
+	if weaponClient.HoldReleased then
+		table.insert(
+			connections,
+			weaponClient.HoldReleased:Connect(function(weaponName, character)
+				self:OnHoldReleased(weaponName, character)
+			end)
+		)
+	end
+
 	self._weaponConnections[weaponClient] = connections
 	self._activeWeaponClient = weaponClient
 end
@@ -244,6 +268,7 @@ function EffectsController:UnbindWeaponClient(weaponClient)
 	end
 	self._weaponConnections[weaponClient] = nil
 	if self._activeWeaponClient == weaponClient then
+		self:_stopChargingEffect()
 		self._activeWeaponClient = nil
 	end
 end
@@ -286,8 +311,8 @@ function EffectsController:OnShotFired(
 			end
 		end
 	else
-		-- Disparo LOCAL: solo efectos inmediatos (trails/impactos/blood/hitmarkers
-		-- se renderizan al recibir ShotConfirmed del servidor)
+		-- Disparo LOCAL: trails se renderizan al recibir ShotConfirmed del servidor
+		-- (el servidor es AUTORITATIVO: envía posiciones validadas + misses desde muzzle)
 
 		-- Screen shake por disparo
 		self._screenShake:FireWeaponKick(weaponName)
@@ -346,6 +371,73 @@ function EffectsController:OnDeath(
 	if localPlayer and localPlayer.Character and localPlayer.Character ~= character then
 		self._screenShake:FireDeathShake(deathType)
 	end
+end
+
+------------------------------------------------------------------------
+-- PUBLIC API — Hold / Charging effects
+------------------------------------------------------------------------
+
+--- Mapa de partículas de carga por arma.
+--- Key = weaponName, Value = ruta relativa al Tool del ParticleEmitter template.
+--- El usuario debe llenar estas rutas con sus assets reales.
+local CHARGE_PARTICLE_PATH: { [string]: string } = {
+	-- Ejemplo: TorqueBow = "Handle.ChargeParticle"
+	-- Rellenar con la ruta real dentro del Tool
+}
+
+--- Llamado cuando el jugador empieza a cargar (hold-to-fire).
+function EffectsController:OnHoldStarted(weaponName: string, character: Model?)
+	self:_stopChargingEffect()
+
+	local particlePath = CHARGE_PARTICLE_PATH[weaponName]
+	if not particlePath or not character then
+		return
+	end
+
+	-- Buscar el Tool dentro del character
+	local tool = character:FindFirstChildWhichIsA("Tool")
+	if not tool then
+		return
+	end
+
+	-- Navegar la ruta (ej: "Handle.ChargeParticle")
+	local current: Instance = tool
+	for segment in string.gmatch(particlePath, "[^%.]+") do
+		local child = current:FindFirstChild(segment)
+		if not child then
+			warn(`[EffectsController] Charging particle path not found: {particlePath} (missing: {segment})`)
+			return
+		end
+		current = child
+	end
+
+	local emitter = current :: ParticleEmitter
+	if not emitter:IsA("ParticleEmitter") then
+		warn(`[EffectsController] Charging path does not point to a ParticleEmitter: {particlePath}`)
+		return
+	end
+
+	emitter.Enabled = true
+	self._chargingEffect = {
+		emitter = emitter,
+		weaponName = weaponName,
+	}
+end
+
+--- Llamado cuando el jugador suelta / completa la carga.
+function EffectsController:OnHoldReleased(_weaponName: string, _character: Model?)
+	self:_stopChargingEffect()
+end
+
+function EffectsController:_stopChargingEffect()
+	if not self._chargingEffect then
+		return
+	end
+	local emitter = self._chargingEffect.emitter
+	if emitter then
+		emitter.Enabled = false
+	end
+	self._chargingEffect = nil
 end
 
 function EffectsController:OnExplosion(position: Vector3, radius: number, weaponName: string)
@@ -423,11 +515,21 @@ function EffectsController:_onShotConfirmed(data: any)
 		return
 	end
 
-	-- 1. Bullet trails desde muzzle del servidor hasta cada hit validado
+	-- 1. Bullet trails desde muzzle: hits + misses (servidor es autoritativo)
 	local hitPositionsMap = {}
 	for _, hit in validatedHits do
 		local pelletKey = "Pellet_" .. tostring(hit.PelletIndex or 0)
 		hitPositionsMap[pelletKey] = hit.HitPosition
+	end
+	-- Incluir misses: pellets que no impactaron nada (posición = fin de rango)
+	local missPositions = data.MissPositions
+	if typeof(missPositions) == "table" then
+		for _, miss in missPositions do
+			if typeof(miss.EndPosition) == "Vector3" then
+				local key = miss.PelletName or ("Miss_" .. tostring(#hitPositionsMap + 1))
+				hitPositionsMap[key] = miss.EndPosition
+			end
+		end
 	end
 	self._bulletTrail:Fire(muzzlePosition, hitPositionsMap, weaponName, hasActiveReload)
 
@@ -517,6 +619,13 @@ function EffectsController:_getCharacterPosition(character: Model): Vector3?
 		return hrp.Position
 	end
 	return nil
+end
+
+--- Registra la ruta de partícula de carga para un arma específica.
+--- @param weaponName string — Nombre del arma (ej: "TorqueBow")
+--- @param path string — Ruta relativa dentro del Tool (ej: "Handle.ChargeParticle")
+function EffectsController:SetChargeParticlePath(weaponName: string, path: string)
+	CHARGE_PARTICLE_PATH[weaponName] = path
 end
 
 return EffectsController

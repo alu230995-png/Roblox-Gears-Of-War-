@@ -256,6 +256,17 @@ SoundConfig.VFX_Weapon_TorqueBow_Fire = {
 	PitchVariation = 0.04,
 }
 
+SoundConfig.VFX_Weapon_TorqueBow_Hold = {
+	Ids = { "rbxassetid://84725573145149" },
+	Random = false,
+	Looped = true,
+	Scope = "Global",
+	Group = "VFX",
+	Volume = 0.5,
+	MaxDistance = 100,
+	PitchVariation = 0.02,
+}
+
 SoundConfig.VFX_Weapon_HammerOfDawn_Fire = {
 	Ids = { "rbxassetid://0" },
 	Random = false,

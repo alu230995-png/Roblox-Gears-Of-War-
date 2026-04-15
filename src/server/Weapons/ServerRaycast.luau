@@ -36,9 +36,15 @@ export type PelletHit = {
 	HitHumanoid: Humanoid?,
 }
 
+export type MissInfo = {
+	PelletName: string,
+	EndPosition: Vector3,
+}
+
 export type ServerRaycastResult = {
 	Hits: { PelletHit },
 	Misses: number,
+	MissPositions: { MissInfo },
 	Origin: Vector3,
 }
 
@@ -186,6 +192,7 @@ function ServerRaycast.CastPellets(
 	local sphereRadius = config.Mechanics.SphereCastRadius
 
 	local hits: { PelletHit } = {}
+	local missPositions: { MissInfo } = {}
 	local misses = 0
 
 	-- Anti-DDoS: límite máximo de pellets basado en SpreadPattern
@@ -281,14 +288,21 @@ function ServerRaycast.CastPellets(
 			_createDebugRayLine(origin, finalResult.Position, isCharHit)
 			_createDebugHitPart(finalResult.Position, isCharHit)
 		else
+			-- Miss: guardar posición final del rayo (muzzle + dirección * rango)
+			local endPos = origin + rayDir
 			misses += 1
-			_createDebugRayLine(origin, origin + rayDir, nil)
+			table.insert(missPositions, {
+				PelletName = pelletName,
+				EndPosition = endPos,
+			})
+			_createDebugRayLine(origin, endPos, nil)
 		end
 	end
 
 	return {
 		Hits = hits,
 		Misses = misses,
+		MissPositions = missPositions,
 		Origin = origin,
 	}
 end

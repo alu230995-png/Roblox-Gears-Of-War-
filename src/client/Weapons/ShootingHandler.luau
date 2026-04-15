@@ -44,8 +44,9 @@ end
 --- @param player Player — jugador local
 --- @param scopeContainer Frame? — contenedor del ScopeRenderer con dots
 --- @param stats table — WeaponConstants.WEAPONS[weaponName].Stats
---- @return table? — { Origin: Vector3, HitPositions: { [string]: Vector3 }, HitParts: { [string]: string } } o nil
-function ShootingHandler.FireOneShot(player: Player, scopeContainer: Frame?, stats: any): any?
+--- @param chargeSpreadRad number? — dispersión angular en radianes por carga incompleta (0 = perfecto)
+--- @return table? — { Origin, HitPositions, HitParts, ChargeProgress? } o nil
+function ShootingHandler.FireOneShot(player: Player, scopeContainer: Frame?, stats: any, chargeSpreadRad: number?): any?
 	local camera = Workspace.CurrentCamera
 	if not camera then
 		return nil
@@ -62,6 +63,8 @@ function ShootingHandler.FireOneShot(player: Player, scopeContainer: Frame?, sta
 	local hitPositions: { [string]: Vector3 } = {}
 	local hitParts: { [string]: string } = {}
 	local hitCount = 0
+
+	local applySpread = chargeSpreadRad and chargeSpreadRad > 0
 
 	for _, dot in scopeContainer:GetChildren() do
 		if not dot:IsA("GuiObject") or dot:IsA("UIConstraint") then
@@ -84,6 +87,19 @@ function ShootingHandler.FireOneShot(player: Player, scopeContainer: Frame?, sta
 
 		-- Disparo: raycast desde la posición de la cámara en la dirección del rayo
 		local direction = unitRay.Direction * range
+
+		-- Aplicar dispersión por carga incompleta (cono aleatorio)
+		if applySpread then
+			local phi = math.random() * math.pi * 2
+			local theta = chargeSpreadRad * math.sqrt(math.random())
+			local dir = unitRay.Direction
+			local refUp = if math.abs(dir.Y) < 0.99 then Vector3.yAxis else Vector3.xAxis
+			local right = dir:Cross(refUp).Unit
+			local up = right:Cross(dir).Unit
+			local deflected = (dir * math.cos(theta) + (right * math.cos(phi) + up * math.sin(phi)) * math.sin(theta)).Unit
+			direction = deflected * range
+		end
+
 		local result = Workspace:Raycast(unitRay.Origin, direction, _cachedParams)
 
 		local pelletName = dot.Name

@@ -82,17 +82,21 @@ function MuzzleFlashEffect:Fire(character: Model?, weaponName: string, hasActive
 			local muzzleAtt = handle:FindFirstChild("Muzzle")
 
 			-- Orientación inteligente:
-			-- El LookVector del Part clonado apunta en la dirección de disparo.
-			-- Así EmissionDirection = Front sale hacia adelante del arma,
-			-- Top/Bottom/Left/Right quedan relativas al cañón.
+			-- Construimos el CFrame con CFrame.lookAt para que el LookVector
+			-- del Part clonado apunte siempre en la dirección de disparo del arma.
+			-- Esto alinea correctamente partículas con Orientation = VelocityParallel
+			-- y EmissionDirection = Front.
 			if clone:IsA("BasePart") then
+				local forward = handle.CFrame.LookVector
+				local up = handle.CFrame.UpVector
 				if muzzleAtt and muzzleAtt:IsA("Attachment") then
-					-- WorldCFrame del attachment ya tiene posición + rotación del cañón
-					clone.CFrame = muzzleAtt.WorldCFrame
+					-- Posición del attachment, rotación alineada al cañón
+					local pos = muzzleAtt.WorldPosition
+					clone.CFrame = CFrame.lookAt(pos, pos + forward, up)
 				else
 					-- Sin attachment: punta del handle, mirando hacia adelante
-					local tipPos = handle.Position + handle.CFrame.LookVector * (handle.Size.Z * 0.5)
-					clone.CFrame = CFrame.lookAt(tipPos, tipPos + handle.CFrame.LookVector)
+					local tipPos = handle.Position + forward * (handle.Size.Z * 0.5)
+					clone.CFrame = CFrame.lookAt(tipPos, tipPos + forward, up)
 				end
 				clone.Anchored = true
 				clone.CanCollide = false

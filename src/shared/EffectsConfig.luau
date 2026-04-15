@@ -35,7 +35,7 @@ EffectsConfig.WEAPONS = {
 
 	Lancer = {
 		MuzzleFlash = {
-			Path = nil, -- string | {string} | nil. e.g. {"RS.Particles.Flash", "RS.Particles.Smoke"}
+			Path = "ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Explocion", -- string | {string} | nil. e.g. {"RS.Particles.Flash", "RS.Particles.Smoke"}
 			PathDelay = nil, -- seconds between each Path entry (nil/0 = all at once)
 			Duration = 0.05,
 			Scale = 1.0,
@@ -44,12 +44,13 @@ EffectsConfig.WEAPONS = {
 			LightBrightness = 2,
 		},
 		BulletTrail = {
-			Path = nil,
-			PathDelay = nil,
-			Width = 0.06,
-			Lifetime = 0.15,
-			Color = Color3.fromRGB(255, 220, 100),
-			FadeTime = 0.1,
+			Path = {
+				"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Beam1",
+				"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Beam2",
+			},
+			ParticlePath = "ReplicatedStorage.Assets.Effects.Bullets.Lanzer.BulletGlow",
+			PathDelay = 0,
+			Speed = 500,
 		},
 		ActiveReloadEffects = {
 			MuzzleFlash = {
@@ -68,6 +69,11 @@ EffectsConfig.WEAPONS = {
 				Lifetime = 0.18,
 				Color = Color3.fromRGB(70, 190, 255),
 				FadeTime = 0.12,
+				Speed = 120,
+				TrailDelay = 0.15,
+				HoldTime = 0.3,
+				SmokeColor = Color3.fromRGB(150, 180, 220),
+				SmokeWidth = 0.05,
 			},
 		},
 		ShellEjection = {
@@ -100,6 +106,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.1,
 			Color = Color3.fromRGB(255, 200, 80),
 			FadeTime = 0.08,
+			Speed = 80,
+			TrailDelay = 0.08,
+			HoldTime = 0.2,
+			SmokeColor = Color3.fromRGB(210, 200, 180),
+			SmokeWidth = 0.05,
 		},
 		ShellEjection = {
 			Path = nil,
@@ -131,6 +142,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.25,
 			Color = Color3.fromRGB(200, 220, 255),
 			FadeTime = 0.15,
+			Speed = 150,
+			TrailDelay = 0.25,
+			HoldTime = 0.6,
+			SmokeColor = Color3.fromRGB(180, 190, 210),
+			SmokeWidth = 0.03,
 		},
 		ShellEjection = {
 			Path = nil,
@@ -162,6 +178,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.4,
 			Color = Color3.fromRGB(100, 150, 255),
 			FadeTime = 0.2,
+			Speed = 100,
+			TrailDelay = 0.2,
+			HoldTime = 0.5,
+			SmokeColor = Color3.fromRGB(120, 140, 200),
+			SmokeWidth = 0.06,
 		},
 		ShellEjection = {
 			Path = nil,
@@ -193,6 +214,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.8,
 			Color = Color3.fromRGB(255, 100, 50),
 			FadeTime = 0.4,
+			Speed = 60,
+			TrailDelay = 0.3,
+			HoldTime = 0.8,
+			SmokeColor = Color3.fromRGB(255, 150, 80),
+			SmokeWidth = 0.2,
 		},
 		ShellEjection = {
 			Path = nil,
@@ -224,6 +250,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.3,
 			Color = Color3.fromRGB(255, 160, 30),
 			FadeTime = 0.15,
+			Speed = 70,
+			TrailDelay = 0.15,
+			HoldTime = 0.4,
+			SmokeColor = Color3.fromRGB(220, 180, 100),
+			SmokeWidth = 0.1,
 		},
 		ShellEjection = {
 			Path = nil,
@@ -255,6 +286,11 @@ EffectsConfig.WEAPONS = {
 			Lifetime = 0.12,
 			Color = Color3.fromRGB(255, 220, 120),
 			FadeTime = 0.08,
+			Speed = 110,
+			TrailDelay = 0.1,
+			HoldTime = 0.25,
+			SmokeColor = Color3.fromRGB(200, 200, 190),
+			SmokeWidth = 0.03,
 		},
 		ShellEjection = {
 			Path = nil,
