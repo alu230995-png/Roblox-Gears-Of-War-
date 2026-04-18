@@ -1,31 +1,42 @@
 --[[
 	DeathPhysicsHandler.luau
 	═══════════════════════════════════════════════════════════════
-	Aplica fuerzas físicas de muerte en el CLIENTE.
+	Client-Sided Ragdolls — ULTRA-OPTIMIZACIÓN
 	═══════════════════════════════════════════════════════════════
 
-	El servidor (HealthStateManager) escribe atributos y ejecuta cambios
-	estructurales que deben replicar (ragdoll, destruir attachments, kill).
+	El servidor NO ejecuta ninguna física de muerte. Solo dispara
+	un RemoteEvent ("DeathPhysicsRemote") con los datos matemáticos
+	del impacto (tipo, dirección, daño excedente).
 
-	Este módulo observa LifeState = "Dead" en TODOS los characters y
-	aplica las fuerzas físicas (velocidades) desde el cliente, evitando
-	que el servidor tenga que ejecutar SetNetworkOwner(nil) + cálculos
-	de física para cada muerte.
+	CADA cliente recibe el evento y:
+	  1. Clona el character original (que el servidor dejó congelado/anclado)
+	  2. Oculta el original (Transparency = 1, cambio local-only)
+	  3. Marca el clon con IsRagdollClone = true (evita re-detección)
+	  4. Convierte el clon a ragdoll (IsKinematic = false)
+	  5. Aplica cambios estructurales según tipo de muerte:
+	     - Headshot → destruir attachments del Head
+	     - Dismember → destruir TODOS los attachments
+	  6. Aplica fuerzas (velocidades) sobre el clon
+	  7. Auto-limpieza del clon con Debris
 
-	Cada cliente aplica fuerzas solo si el character fue asignado a él
-	vía el atributo `ClientPhysicsOwner`.
-	- Para los jugadores: se asignan a sí mismos.
-	- Para NPCs: el servidor se los asigna al jugador que los mató
-	  (o al jugador más cercano).
+	Resultado:
+	  - 0% CPU de física en el servidor
+	  - 0% ancho de banda de replicación de partes en movimiento
+	  - Cada PC simula su propio ragdoll (posiciones finales ligeramente
+	    diferentes entre clientes — imperceptible en un shooter rápido)
 
-	Atributos que lee del Character (escritos por HealthStateManager):
-	  ClientPhysicsOwner  → Nombre del jugador que debe ejecutar la física
-	  DeathType           → "Standard" | "Dismember" | "Headshot"
-	  DeathHitDirection   → Vector3 (dirección normalizada de impacto)
-	  DeathOverkillDamage → number (daño excedente sobre 0 HP)
+	Atributos que lee del Character original (para DeathEffectsHandler):
+	  DeathType, DeathHitDirection, DeathOverkillDamage, LifeState
+	  Estos siguen funcionando porque el original permanece en Workspace.
+
+	Datos recibidos por RemoteEvent:
+	  character      → Model (referencia al original congelado)
+	  deathType      → "Standard" | "Dismember" | "Headshot"
+	  hitDirection   → Vector3? (dirección normalizada de impacto)
+	  overkillDamage → number (daño excedente sobre 0 HP)
 ]]
 
-local Players = game:GetService("Players")
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -43,6 +54,12 @@ local DISMEMBER_FORCE_MULTIPLIER = Constants.DISMEMBER_FORCE_MULTIPLIER or 15
 local BODY_FORCE_MULTIPLIER = Constants.BODY_FORCE_MULTIPLIER or 1.2
 local MIN_BODY_FORCE = Constants.MIN_BODY_FORCE or 1
 local MAX_FORCE = Constants.MAX_FORCE or 100
+local DISMEMBER_LIFETIME = Constants.DISMEMBER_LIFETIME or 8
+
+-- Tiempo (segundos) que el ragdoll tiene física activa antes de congelarse
+local RAGDOLL_SETTLE_TIME = 3
+-- Tiempo para dismember (más largo porque las piezas vuelan más lejos)
+local DISMEMBER_SETTLE_TIME = 4
 
 ------------------------------------------------------------------------
 -- CONSTRUCTOR
@@ -55,12 +72,12 @@ function DeathPhysicsHandler.new()
 end
 
 ------------------------------------------------------------------------
--- PRIVATE: Force application
+-- PRIVATE: Force application (sobre el clon local)
 ------------------------------------------------------------------------
 
---- Fuerza al HumanoidRootPart (standard y headshot)
-local function _applyBodyForce(character: Model, hitDirection: Vector3, overkillDamage: number)
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+--- Fuerza al HumanoidRootPart
+local function _applyBodyForce(clone: Model, hitDirection: Vector3, overkillDamage: number)
+	local hrp = clone:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return
 	end
@@ -69,15 +86,15 @@ local function _applyBodyForce(character: Model, hitDirection: Vector3, overkill
 end
 
 --- Standard: fuerza al cuerpo
-local function _applyStandardForces(character: Model, hitDirection: Vector3?, overkillDamage: number)
+local function _applyStandardForces(clone: Model, hitDirection: Vector3?, overkillDamage: number)
 	if hitDirection then
-		_applyBodyForce(character, hitDirection, overkillDamage)
+		_applyBodyForce(clone, hitDirection, overkillDamage)
 	end
 end
 
 --- Headshot: fuerza a la cabeza + fuerza al cuerpo
-local function _applyHeadshotForces(character: Model, hitDirection: Vector3, overkillDamage: number)
-	local head = character:FindFirstChild("Head") :: BasePart?
+local function _applyHeadshotForces(clone: Model, hitDirection: Vector3, overkillDamage: number)
+	local head = clone:FindFirstChild("Head") :: BasePart?
 	if head then
 		local force = math.min(math.max(overkillDamage, 5) * HEADSHOT_FORCE_MULTIPLIER, MAX_FORCE)
 		local upComponent = Vector3.new(0, 0.4, 0)
@@ -85,14 +102,14 @@ local function _applyHeadshotForces(character: Model, hitDirection: Vector3, ove
 		head.AssemblyAngularVelocity =
 			Vector3.new((math.random() - 0.5) * 20, (math.random() - 0.5) * 20, (math.random() - 0.5) * 20)
 	end
-	_applyBodyForce(character, hitDirection, overkillDamage)
+	_applyBodyForce(clone, hitDirection, overkillDamage)
 end
 
 --- Dismember: fuerza con spread a cada part
-local function _applyDismemberForces(character: Model, hitDirection: Vector3, overkillDamage: number)
+local function _applyDismemberForces(clone: Model, hitDirection: Vector3, overkillDamage: number)
 	local force = math.min(math.max(overkillDamage, 5) * DISMEMBER_FORCE_MULTIPLIER, MAX_FORCE)
 
-	for _, part in character:GetDescendants() do
+	for _, part in clone:GetDescendants() do
 		if part:IsA("BasePart") then
 			local randomSpread = Vector3.new(math.random() - 0.5, math.random() * 0.5 + 0.3, math.random() - 0.5).Unit
 			local finalDir = (hitDirection * 0.7 + randomSpread * 0.3).Unit
@@ -108,100 +125,141 @@ local function _applyDismemberForces(character: Model, hitDirection: Vector3, ov
 end
 
 ------------------------------------------------------------------------
--- PRIVATE: Death handler — dispatches by DeathType
+-- PRIVATE: Structural ragdoll setup (sobre el clon local)
 ------------------------------------------------------------------------
 
-function DeathPhysicsHandler:_onCharacterDied(character: Model)
-	-- Verificar si nuestro cliente es el asignado para simular física
-	local physicsOwner = character:GetAttribute("ClientPhysicsOwner")
-	if physicsOwner ~= Players.LocalPlayer.Name then
+--- Ragdoll: IsKinematic = false en todos los AnimationConstraints del clon
+local function _enableRagdoll(clone: Model)
+	for _, descendant in clone:GetDescendants() do
+		if descendant:IsA("AnimationConstraint") then
+			descendant.IsKinematic = false
+		end
+	end
+end
+
+--- Destruye todos los Attachments de una BasePart
+local function _destroyAttachmentsOnPart(part: BasePart)
+	for _, child in part:GetChildren() do
+		if child:IsA("Attachment") then
+			child:Destroy()
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Hide original character (local-only, no replica)
+------------------------------------------------------------------------
+
+local function _hideOriginal(character: Model)
+	for _, descendant in character:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Transparency = 1
+		end
+	end
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Settle — congela el ragdoll tras N segundos para que no tiemble
+------------------------------------------------------------------------
+
+local function _settleClone(clone: Model, delay: number)
+	task.delay(delay, function()
+		if not clone or not clone.Parent then
+			return
+		end
+		for _, part in clone:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.Anchored = true
+				part.AssemblyLinearVelocity = Vector3.zero
+				part.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
+	end)
+end
+
+------------------------------------------------------------------------
+-- PRIVATE: Create local ragdoll clone
+------------------------------------------------------------------------
+
+function DeathPhysicsHandler:_processDeathLocally(
+	character: Model,
+	deathType: string,
+	hitDirection: Vector3?,
+	overkillDamage: number
+)
+	-- Guard: character may have been destroyed between server fire and client receive
+	-- Roblox can deliver a "dead" Instance ref that isn't nil but has no properties
+	if not character or not character.Parent then
 		return
 	end
 
-	local deathType = character:GetAttribute("DeathType") or "Standard"
-	local hitDirection = character:GetAttribute("DeathHitDirection") :: Vector3?
-	local overkillDamage = (character:GetAttribute("DeathOverkillDamage") or 0) :: number
+	-- Asegurar Archivable localmente (puede no haber replicado aún desde el server)
+	pcall(function()
+		character.Archivable = true
+	end)
 
+	local ok, clone = pcall(function()
+		return character:Clone()
+	end)
+	if not ok or not clone then
+		warn("[DeathPhysicsHandler] Clone failed for", character.Name, ":", tostring(clone))
+		return
+	end
+	clone.Name = character.Name .. "_Ragdoll"
+	clone:SetAttribute("IsRagdollClone", true)
+
+	-- 2. Hide original (local-only change — other clients hide independently)
+	_hideOriginal(character)
+
+	-- 3. Un-anchor ALL BaseParts of the clone (server anchored everything)
+	for _, part in clone:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = true
+		end
+	end
+
+	-- 4. Neutralize clone's Humanoid (prevent re-death or interference)
+	local humanoid = clone:FindFirstChildWhichIsA("Humanoid")
+	if humanoid then
+		humanoid.BreakJointsOnDeath = false
+		humanoid.RequiresNeck = false
+		humanoid.PlatformStand = true
+		humanoid.Health = 1 -- Mantener "vivo" para que los joints no se rompan
+	end
+
+	-- 5. Enable ragdoll on clone
+	_enableRagdoll(clone)
+
+	-- 6. Apply structural changes + forces based on death type
 	if deathType == "Headshot" and hitDirection then
-		_applyHeadshotForces(character, hitDirection, overkillDamage)
+		local head = clone:FindFirstChild("Head") :: BasePart?
+		if head then
+			_destroyAttachmentsOnPart(head)
+			head.CanCollide = true
+		end
+		_applyHeadshotForces(clone, hitDirection, overkillDamage)
 	elseif deathType == "Dismember" and hitDirection then
-		_applyDismemberForces(character, hitDirection, overkillDamage)
+		for _, part in clone:GetDescendants() do
+			if part:IsA("BasePart") then
+				_destroyAttachmentsOnPart(part)
+				part.CanCollide = true
+			end
+		end
+		_applyDismemberForces(clone, hitDirection, overkillDamage)
 	else
-		_applyStandardForces(character, hitDirection, overkillDamage)
+		_applyStandardForces(clone, hitDirection, overkillDamage)
 	end
-end
 
-------------------------------------------------------------------------
--- PRIVATE: Observe characters (players + NPCs)
-------------------------------------------------------------------------
+	-- 7. Parent to workspace (starts local physics simulation)
+	clone.Parent = workspace
 
-function DeathPhysicsHandler:_observeCharacter(character: Model)
-	local deathHandled = false
+	-- 8. Settle: congelar el ragdoll tras unos segundos para evitar temblores
+	local settleTime = if deathType == "Dismember" then DISMEMBER_SETTLE_TIME else RAGDOLL_SETTLE_TIME
+	_settleClone(clone, settleTime)
 
-	local conn = character:GetAttributeChangedSignal("LifeState"):Connect(function()
-		if deathHandled then
-			return
-		end
-		local lifeState = character:GetAttribute("LifeState")
-		if lifeState == "Dead" then
-			deathHandled = true
-			self:_onCharacterDied(character)
-		end
-	end)
-	table.insert(self._connections, conn)
-
-	-- Cleanup when character is removed
-	local cleanupConn
-	cleanupConn = character.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			conn:Disconnect()
-			cleanupConn:Disconnect()
-		end
-	end)
-	table.insert(self._connections, cleanupConn)
-
-	-- Check if already dead at subscription time
-	if character:GetAttribute("LifeState") == "Dead" and not deathHandled then
-		deathHandled = true
-		self:_onCharacterDied(character)
-	end
-end
-
-------------------------------------------------------------------------
--- PRIVATE: NPC AND PLAYER TRACKING
-------------------------------------------------------------------------
-
-local function _isNPC(model: Model): boolean
-	if not model:IsA("Model") then
-		return false
-	end
-	if not model:FindFirstChildWhichIsA("Humanoid") then
-		return false
-	end
-	if Players:GetPlayerFromCharacter(model) then
-		return false
-	end
-	return true
-end
-
-function DeathPhysicsHandler:_scanForNPCs(container: Instance)
-	for _, child in container:GetChildren() do
-		if _isNPC(child :: Model) then
-			self:_observeCharacter(child :: Model)
-		end
-	end
-end
-
-function DeathPhysicsHandler:_trackPlayer(player: Player)
-	if player.Character then
-		self:_observeCharacter(player.Character)
-	end
-	table.insert(
-		self._connections,
-		player.CharacterAdded:Connect(function(character)
-			self:_observeCharacter(character)
-		end)
-	)
+	-- 9. Auto-cleanup
+	Debris:AddItem(clone, DISMEMBER_LIFETIME)
 end
 
 ------------------------------------------------------------------------
@@ -213,32 +271,12 @@ function DeathPhysicsHandler:Init()
 end
 
 function DeathPhysicsHandler:Start()
-	local Workspace = game:GetService("Workspace")
-
-	-- Track all players
-	for _, player in Players:GetPlayers() do
-		self:_trackPlayer(player)
-	end
+	local deathPhysicsRemote = ReplicatedStorage:WaitForChild("DeathPhysicsRemote")
 
 	table.insert(
 		self._connections,
-		Players.PlayerAdded:Connect(function(player)
-			self:_trackPlayer(player)
-		end)
-	)
-
-	-- Track NPCs
-	self:_scanForNPCs(Workspace)
-
-	table.insert(
-		self._connections,
-		Workspace.DescendantAdded:Connect(function(descendant)
-			if descendant:IsA("Humanoid") then
-				local model = descendant.Parent
-				if model and _isNPC(model :: Model) then
-					self:_observeCharacter(model :: Model)
-				end
-			end
+		deathPhysicsRemote.OnClientEvent:Connect(function(character, deathType, hitDirection, overkillDamage)
+		self:_processDeathLocally(character, deathType, hitDirection, overkillDamage)
 		end)
 	)
 end

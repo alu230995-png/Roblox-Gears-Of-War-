@@ -156,6 +156,10 @@ local function _isNPC(model: Model): boolean
 	if not model:FindFirstChildWhichIsA("Humanoid") then
 		return false
 	end
+	-- Excluir clones de ragdoll creados por DeathPhysicsHandler
+	if model:GetAttribute("IsRagdollClone") then
+		return false
+	end
 	-- Si es character de algún Player, no es NPC
 	if Players:GetPlayerFromCharacter(model) then
 		return false

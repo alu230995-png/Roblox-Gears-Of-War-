@@ -14,12 +14,30 @@
 	  4. Si salud < -OVERKILL_THRESHOLD → muerte por desmembramiento
 	  5. Si el impacto letal fue headshot → muerte headshot
 
-	El servidor ejecuta los cambios ESTRUCTURALES que deben replicar a
-	todos los clientes (ragdoll, destrucción de attachments, kill).
-	Las FUERZAS FÍSICAS (velocidades) se aplican en el CLIENTE del
-	jugador que muere (DeathPhysicsHandler) — él ya es network owner
-	de su propio personaje, así la simulación se distribuye entre
-	todos los clientes en vez de sobrecargar al servidor.
+	ULTRA-OPTIMIZACIÓN: Client-Sided Ragdolls
+	═══════════════════════════════════════════════════════════════
+	El servidor NO ejecuta NINGUNA física de muerte.
+	  - No ragdoll (no IsKinematic)
+	  - No fuerzas (no AssemblyLinearVelocity)
+	  - No NetworkOwnership changes
+	  - No destrucción de Attachments
+
+	El servidor SOLO:
+	  1. Mata al Humanoid (Health = 0)
+	  2. Escribe atributos de muerte (LifeState, DeathType, etc.)
+	  3. Congela el modelo original (Anchor HRP) para que no derive
+	  4. Dispara RemoteEvent "DeathPhysicsRemote" a TODOS los clientes
+	     con los datos matemáticos del impacto
+
+	Cada CLIENTE recibe el evento y:
+	  1. Clona el character localmente
+	  2. Oculta el original (Transparency = 1, local-only)
+	  3. Convierte el clon a ragdoll + aplica fuerzas
+	  → Cada PC simula su propia versión del ragdoll
+
+	Resultado: 0% CPU de física en el servidor, 0% ancho de banda
+	de replicación de partes en movimiento. Solo un paquete ligero
+	por muerte (~64 bytes).
 
 	Atributos escritos:
 	  LifeState           → "Alive" | "DBNO" | "Dead"
@@ -31,7 +49,6 @@
 ]]
 
 local Debris = game:GetService("Debris")
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -46,162 +63,38 @@ local HealthStateManager = {}
 local OVERKILL_THRESHOLD = Constants.OVERKILL_THRESHOLD or 10
 local DISMEMBER_LIFETIME = Constants.DISMEMBER_LIFETIME or 8
 
--- Force constants (usados server-side solo para NPCs)
-local HEADSHOT_FORCE_MULTIPLIER = Constants.HEADSHOT_FORCE_MULTIPLIER or 50
-local DISMEMBER_FORCE_MULTIPLIER = Constants.DISMEMBER_FORCE_MULTIPLIER or 15
-local BODY_FORCE_MULTIPLIER = Constants.BODY_FORCE_MULTIPLIER or 1.2
-local MIN_BODY_FORCE = Constants.MIN_BODY_FORCE or 1
-local MAX_FORCE = Constants.MAX_FORCE or 100
-
 ------------------------------------------------------------------------
--- PRIVATE: Physics Helpers (structural — must replicate from server)
+-- RemoteEvent: datos de muerte → todos los clientes
 ------------------------------------------------------------------------
 
---- Encuentra el jugador más cercano a un character (fallback para NPCs sin killer)
-local function _getNearestPlayer(character: Model): Player?
-	local nearest = nil
-	local minSquareDist = math.huge
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then
-		return nil
-	end
-
-	local pos = hrp.Position
-	for _, p in Players:GetPlayers() do
-		if p.Character then
-			local pHrp = p.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if pHrp then
-				local distSq = (pHrp.Position - pos).Magnitude
-				if distSq < minSquareDist then
-					minSquareDist = distSq
-					nearest = p
-				end
-			end
-		end
-	end
-	return nearest
-end
-
---- Recolecta todas las AnimationConstraints del character.
-local function _getAllConstraints(character: Model): { AnimationConstraint }
-	local constraints = {}
-	for _, descendant in character:GetDescendants() do
-		if descendant:IsA("AnimationConstraint") then
-			table.insert(constraints, descendant)
-		end
-	end
-	return constraints
-end
-
---- Elimina todos los Attachments de una BasePart.
-local function _destroyAttachmentsOnPart(part: BasePart)
-	for _, child in part:GetChildren() do
-		if child:IsA("Attachment") then
-			child:Destroy()
-		end
-	end
-end
-
---- Ragdoll: IsKinematic = false en todos los AnimationConstraints.
---- Debe ser server-side para que replique a todos los clientes.
-local function _enableRagdoll(character: Model)
-	for _, constraint in _getAllConstraints(character) do
-		constraint.IsKinematic = false
-	end
-end
+local _deathPhysicsRemote = Instance.new("RemoteEvent")
+_deathPhysicsRemote.Name = "DeathPhysicsRemote"
+_deathPhysicsRemote.Parent = ReplicatedStorage
 
 ------------------------------------------------------------------------
--- PRIVATE: Post-death physics — Player vs NPC
+-- PRIVATE: Freeze original — anchor HRP para evitar drift server-side
 ------------------------------------------------------------------------
 
---- Para JUGADORES: devuelve network ownership al cliente.
---- Cuando Humanoid.Health = 0, Roblox transfiere ownership al servidor
---- automáticamente. Devolvemos ownership al cliente para que
---- DeathPhysicsHandler aplique fuerzas (distribuye carga).
-local function _giveOwnershipToPlayer(character: Model, player: Player)
-	for _, part in character:GetDescendants() do
-		if part:IsA("BasePart") then
+local function _freezeOriginal(character: Model)
+	-- Asegurar Archivable = true en TODA la jerarquía para que Clone() funcione en clientes
+	character.Archivable = true
+	for _, desc in character:GetDescendants() do
+		if desc:IsA("Instance") then
 			pcall(function()
-				part:SetNetworkOwner(player)
+				desc.Archivable = true
 			end)
 		end
 	end
-end
 
---- Fuerza al HumanoidRootPart (NPC server-side).
-local function _applyBodyForce(character: Model, hitDirection: Vector3, overkillDamage: number)
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then
-		return
-	end
-	local forceMagnitude = math.clamp(overkillDamage * BODY_FORCE_MULTIPLIER, MIN_BODY_FORCE, MAX_FORCE)
-	hrp.AssemblyLinearVelocity = hitDirection * forceMagnitude
-end
-
---- Aplica fuerzas server-side para NPCs (no tienen cliente que simule).
-local function _applyNPCForces(character: Model, deathType: string, hitDirection: Vector3?, overkillDamage: number)
-	if not hitDirection then
-		return
-	end
-
-	if deathType == "Headshot" then
-		local head = character:FindFirstChild("Head") :: BasePart?
-		if head then
-			local force = math.min(math.max(overkillDamage, 5) * HEADSHOT_FORCE_MULTIPLIER, MAX_FORCE)
-			local upComponent = Vector3.new(0, 0.4, 0)
-			head.AssemblyLinearVelocity = (hitDirection + upComponent).Unit * force
-			head.AssemblyAngularVelocity =
-				Vector3.new((math.random() - 0.5) * 20, (math.random() - 0.5) * 20, (math.random() - 0.5) * 20)
-		end
-		_applyBodyForce(character, hitDirection, overkillDamage)
-	elseif deathType == "Dismember" then
-		local force = math.min(math.max(overkillDamage, 5) * DISMEMBER_FORCE_MULTIPLIER, MAX_FORCE)
-		for _, part in character:GetDescendants() do
-			if part:IsA("BasePart") then
-				local randomSpread =
-					Vector3.new(math.random() - 0.5, math.random() * 0.5 + 0.3, math.random() - 0.5).Unit
-				local finalDir = (hitDirection * 0.7 + randomSpread * 0.3).Unit
-				part.AssemblyLinearVelocity = finalDir * force
-				part.AssemblyAngularVelocity = Vector3.new(
-					(math.random() - 0.5) * force * 0.1,
-					(math.random() - 0.5) * force * 0.1,
-					(math.random() - 0.5) * force * 0.1
-				)
-			end
-		end
-	else
-		-- Standard
-		_applyBodyForce(character, hitDirection, overkillDamage)
-	end
-end
-
---- Decide si delegar física al cliente (Player) o aplicar server-side (NPC).
-local function _handlePostDeathPhysics(
-	character: Model,
-	deathType: string,
-	hitDirection: Vector3?,
-	overkillDamage: number,
-	killerName: string?
-)
-	local player = Players:GetPlayerFromCharacter(character)
-	if player then
-		-- Jugador: devolver ownership a sí mismo
-		character:SetAttribute("ClientPhysicsOwner", player.Name)
-		_giveOwnershipToPlayer(character, player)
-	else
-		-- NPC: buscar killer o jugador más cercano
-		local ownerPlayer = if killerName then Players:FindFirstChild(killerName) else nil
-		if not ownerPlayer then
-			ownerPlayer = _getNearestPlayer(character)
-		end
-
-		if ownerPlayer then
-			-- Delegar simulación al killer o jugador más cercano
-			character:SetAttribute("ClientPhysicsOwner", ownerPlayer.Name)
-			_giveOwnershipToPlayer(character, ownerPlayer)
-		else
-			-- Fallback: no hay jugadores, o algo falló, simula el servidor (raro)
-			_applyNPCForces(character, deathType, hitDirection, overkillDamage)
+	-- Anclar TODAS las BaseParts y desactivar colisiones para congelar
+	-- completamente el modelo. CanCollide = false evita que jugadores
+	-- choquen con el cadáver invisible (el clon visual lo reemplaza).
+	for _, part in character:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+			part.CanCollide = false
+			part.CanTouch = false
+			part.CanQuery = false
 		end
 	end
 end
@@ -219,7 +112,8 @@ local function _writeDeathData(
 	killerName: string?,
 	weaponName: string?
 )
-	humanoid.BreakJointsOnDeath = (deathType == "Dismember")
+	-- NUNCA romper joints en servidor — el clon client-side lo maneja
+	humanoid.BreakJointsOnDeath = false
 	humanoid.RequiresNeck = false
 
 	character:SetAttribute("DeathType", deathType)
@@ -243,10 +137,10 @@ local function _writeDeathData(
 end
 
 ------------------------------------------------------------------------
--- PRIVATE: Death types — ownership + kill + physics
+-- PRIVATE: Death types — kill + freeze + fire remote (ZERO physics)
 ------------------------------------------------------------------------
 
---- Standard: ragdoll (fuerzas las aplica el cliente via DeathPhysicsHandler)
+--- Standard: mata, congela original, envía datos a clientes
 local function _standardDeath(
 	humanoid: Humanoid,
 	character: Model,
@@ -257,11 +151,11 @@ local function _standardDeath(
 )
 	_writeDeathData(humanoid, character, "Standard", hitDirection, overkillDamage, killerName, weaponName)
 	humanoid.Health = 0
-	_enableRagdoll(character)
-	_handlePostDeathPhysics(character, "Standard", hitDirection, overkillDamage or 0, killerName)
+	_freezeOriginal(character)
+	_deathPhysicsRemote:FireAllClients(character, "Standard", hitDirection, overkillDamage or 0)
 end
 
---- Headshot: ragdoll + eliminar attachments del Head (fuerzas las aplica el cliente)
+--- Headshot: mata, congela original, envía datos a clientes
 local function _headshotDeath(
 	humanoid: Humanoid,
 	character: Model,
@@ -272,20 +166,11 @@ local function _headshotDeath(
 )
 	_writeDeathData(humanoid, character, "Headshot", hitDirection, overkillDamage, killerName, weaponName)
 	humanoid.Health = 0
-	_enableRagdoll(character)
-
-	local head = character:FindFirstChild("Head") :: BasePart?
-	if head then
-		-- Eliminar Attachments del Head → separa la cabeza (debe replicar)
-		_destroyAttachmentsOnPart(head)
-		head.CanCollide = true
-		Debris:AddItem(head, DISMEMBER_LIFETIME)
-	end
-
-	_handlePostDeathPhysics(character, "Headshot", hitDirection, overkillDamage, killerName)
+	_freezeOriginal(character)
+	_deathPhysicsRemote:FireAllClients(character, "Headshot", hitDirection, overkillDamage)
 end
 
---- Dismember: eliminar todos los attachments + ragdoll (fuerzas las aplica el cliente o server para NPCs)
+--- Dismember: mata, congela original, envía datos a clientes, limpia original después
 local function _dismemberDeath(
 	humanoid: Humanoid,
 	character: Model,
@@ -296,21 +181,8 @@ local function _dismemberDeath(
 )
 	_writeDeathData(humanoid, character, "Dismember", hitDirection, overkillDamage, killerName, weaponName)
 	humanoid.Health = 0
-
-	-- 1. Eliminar todos los Attachments → rompe todas las conexiones (debe replicar)
-	for _, part in character:GetDescendants() do
-		if part:IsA("BasePart") then
-			_destroyAttachmentsOnPart(part)
-			part.CanCollide = true
-		end
-	end
-
-	-- 2. IsKinematic = false en constraints restantes
-	for _, constraint in _getAllConstraints(character) do
-		constraint.IsKinematic = false
-	end
-
-	_handlePostDeathPhysics(character, "Dismember", hitDirection, overkillDamage, killerName)
+	_freezeOriginal(character)
+	_deathPhysicsRemote:FireAllClients(character, "Dismember", hitDirection, overkillDamage)
 	Debris:AddItem(character, DISMEMBER_LIFETIME)
 end
 
