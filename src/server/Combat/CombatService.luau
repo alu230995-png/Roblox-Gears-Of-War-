@@ -49,15 +49,21 @@ local _lifeStateConnections: { [Player]: RBXScriptConnection } = {}
 local function _cancelBleedout(player: Player)
 	local timer = _bleedoutTimers[player]
 	if timer then
-		task.cancel(timer)
 		_bleedoutTimers[player] = nil
+		-- Only cancel if the thread is still yielded; skip if dead or
+		-- if we are calling from inside the bleedout thread itself ("running"/"normal").
+		if coroutine.status(timer) == "suspended" then
+			task.cancel(timer)
+		end
 	end
 end
 
 --- Muerte por bleedout: CombatService es el único que llama esto.
 --- HealthStateManager maneja las muertes por daño de armas.
 local function _killFromBleedout(player: Player, character: Model, humanoid: Humanoid)
-	_cancelBleedout(player)
+	-- Don't call _cancelBleedout here — this runs INSIDE the bleedout thread.
+	-- Just clear the reference; the thread returns naturally after this function.
+	_bleedoutTimers[player] = nil
 	character:SetAttribute("LifeState", "Dead")
 	character:SetAttribute("DeathType", "Bleedout")
 	humanoid.Health = 0

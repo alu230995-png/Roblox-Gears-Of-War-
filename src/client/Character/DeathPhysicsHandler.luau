@@ -38,6 +38,7 @@
 
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
@@ -57,7 +58,7 @@ local MAX_FORCE = Constants.MAX_FORCE or 100
 local DISMEMBER_LIFETIME = Constants.DISMEMBER_LIFETIME or 8
 
 -- Tiempo (segundos) que el ragdoll tiene física activa antes de congelarse
-local RAGDOLL_SETTLE_TIME = 3
+local RAGDOLL_SETTLE_TIME = 1
 -- Tiempo para dismember (más largo porque las piezas vuelan más lejos)
 local DISMEMBER_SETTLE_TIME = 4
 
@@ -65,9 +66,10 @@ local DISMEMBER_SETTLE_TIME = 4
 -- CONSTRUCTOR
 ------------------------------------------------------------------------
 
-function DeathPhysicsHandler.new()
+function DeathPhysicsHandler.new(effectsController: any?)
 	local self = setmetatable({}, DeathPhysicsHandler)
 	self._connections = {} :: { RBXScriptConnection }
+	self._effectsController = effectsController
 	return self
 end
 
@@ -159,17 +161,51 @@ local function _hideOriginal(character: Model)
 end
 
 ------------------------------------------------------------------------
+-- PRIVATE: Force CanCollide every frame (Stepped runs BEFORE physics)
+------------------------------------------------------------------------
+
+--- Conecta un listener a Stepped que fuerza CanCollide = true en todas
+--- las BaseParts del clon ANTES de cada paso de física.
+--- El Humanoid internamente setea CanCollide = false en extremidades;
+--- este override gana porque Stepped corre después del Humanoid state update
+--- pero antes de la simulación de física.
+--- Retorna la RBXScriptConnection para desconectar al settle.
+local function _forceCollision(clone: Model): RBXScriptConnection
+	-- Cache de las parts para evitar GetDescendants cada frame
+	local parts: { BasePart } = {}
+	for _, desc in clone:GetDescendants() do
+		if desc:IsA("BasePart") then
+			table.insert(parts, desc)
+		end
+	end
+
+	return RunService.Stepped:Connect(function()
+		for _, part in parts do
+			if part.Parent then
+				part.CanCollide = true
+			end
+		end
+	end)
+end
+
+------------------------------------------------------------------------
 -- PRIVATE: Settle — congela el ragdoll tras N segundos para que no tiemble
 ------------------------------------------------------------------------
 
-local function _settleClone(clone: Model, delay: number)
+local function _settleClone(clone: Model, delay: number, collisionConn: RBXScriptConnection?)
 	task.delay(delay, function()
+		-- Desconectar el override de CanCollide — ya no hace falta, las parts se anclan
+		if collisionConn then
+			collisionConn:Disconnect()
+		end
+
 		if not clone or not clone.Parent then
 			return
 		end
 		for _, part in clone:GetDescendants() do
 			if part:IsA("BasePart") then
 				part.Anchored = true
+				part.CanCollide = true
 				part.AssemblyLinearVelocity = Vector3.zero
 				part.AssemblyAngularVelocity = Vector3.zero
 			end
@@ -211,21 +247,20 @@ function DeathPhysicsHandler:_processDeathLocally(
 	-- 2. Hide original (local-only change — other clients hide independently)
 	_hideOriginal(character)
 
-	-- 3. Un-anchor ALL BaseParts of the clone (server anchored everything)
+	-- 3. Un-anchor ALL BaseParts of the clone (el servidor ahora ancló el original)
 	for _, part in clone:GetDescendants() do
 		if part:IsA("BasePart") then
 			part.Anchored = false
-			part.CanCollide = true
 		end
 	end
 
-	-- 4. Neutralize clone's Humanoid (prevent re-death or interference)
+	-- 4. Neutralize clone's Humanoid (conservar vivo para texturas/ropa)
 	local humanoid = clone:FindFirstChildWhichIsA("Humanoid")
 	if humanoid then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
 		humanoid.PlatformStand = true
-		humanoid.Health = 1 -- Mantener "vivo" para que los joints no se rompan
+		humanoid.Health = 1
 	end
 
 	-- 5. Enable ragdoll on clone
@@ -236,14 +271,12 @@ function DeathPhysicsHandler:_processDeathLocally(
 		local head = clone:FindFirstChild("Head") :: BasePart?
 		if head then
 			_destroyAttachmentsOnPart(head)
-			head.CanCollide = true
 		end
 		_applyHeadshotForces(clone, hitDirection, overkillDamage)
 	elseif deathType == "Dismember" and hitDirection then
 		for _, part in clone:GetDescendants() do
 			if part:IsA("BasePart") then
 				_destroyAttachmentsOnPart(part)
-				part.CanCollide = true
 			end
 		end
 		_applyDismemberForces(clone, hitDirection, overkillDamage)
@@ -251,12 +284,29 @@ function DeathPhysicsHandler:_processDeathLocally(
 		_applyStandardForces(clone, hitDirection, overkillDamage)
 	end
 
+	-- 6b. Pase inicial CanCollide = true
+	for _, part in clone:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.CanCollide = true
+		end
+	end
+
+	-- 6c. Conectar override per-frame en Stepped (corre ANTES de physics).
+	-- El Humanoid fuerza CanCollide = false en extremidades cada frame;
+	-- este listener lo revierte justo antes de la simulación.
+	local collisionConn = _forceCollision(clone)
+
 	-- 7. Parent to workspace (starts local physics simulation)
 	clone.Parent = workspace
 
+	-- 7b. Blood particles sobre el clon (sincronizado — el original se moverá al subsuelo)
+	if self._effectsController then
+		self._effectsController:OnDeathBlood(clone, deathType, hitDirection, overkillDamage)
+	end
+
 	-- 8. Settle: congelar el ragdoll tras unos segundos para evitar temblores
 	local settleTime = if deathType == "Dismember" then DISMEMBER_SETTLE_TIME else RAGDOLL_SETTLE_TIME
-	_settleClone(clone, settleTime)
+	_settleClone(clone, settleTime, collisionConn)
 
 	-- 9. Auto-cleanup
 	Debris:AddItem(clone, DISMEMBER_LIFETIME)

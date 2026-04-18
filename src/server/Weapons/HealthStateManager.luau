@@ -91,12 +91,23 @@ local function _freezeOriginal(character: Model)
 	-- choquen con el cadáver invisible (el clon visual lo reemplaza).
 	for _, part in character:GetDescendants() do
 		if part:IsA("BasePart") then
-			part.Anchored = false
-			part.CanCollide = false
+			part.Anchored = true
+			part.CanCollide = true
 			part.CanTouch = false
 			part.CanQuery = false
 		end
 	end
+
+	-- Tras 0.2s (tiempo suficiente para que los clientes clonen el modelo),
+	-- mover el modelo congelado muy por debajo del mapa para eliminar
+	-- cualquier interferencia residual de colisiones server-side.
+	task.delay(0.2, function()
+		for _, part in character:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.CFrame = part.CFrame + Vector3.new(0, 20, 0)
+			end
+		end
+	end)
 end
 
 ------------------------------------------------------------------------

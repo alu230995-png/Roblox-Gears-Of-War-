@@ -351,22 +351,34 @@ function EffectsController:OnWeaponEquipped(weaponName: string, character: Model
 	self:_playSound("VFX_Weapon_Equip", character and self:_getCharacterPosition(character))
 end
 
+--- Llamado desde DeathPhysicsHandler con el clon ragdoll ya parenteado en workspace.
+--- De este modo los emitters persistentes siguen al ragdoll visible, no al original
+--- que el servidor mueve al subsuelo.
+function EffectsController:OnDeathBlood(
+	ragdollClone: Model,
+	deathType: string,
+	hitDirection: Vector3?,
+	_overkillDamage: number?
+)
+	self._bloodEffect:FireDeath(ragdollClone, deathType, hitDirection)
+end
+
 function EffectsController:OnDeath(
 	character: Model,
 	deathType: string,
 	hitDirection: Vector3?,
 	_overkillDamage: number?
 )
-	-- 1. Partículas de sangre
-	self._bloodEffect:FireDeath(character, deathType, hitDirection)
+	-- Sangre: gestionada por DeathPhysicsHandler via OnDeathBlood(ragdollClone)
+	-- para garantizar que los emitters se attachan al clon visible, no al original.
 
-	-- 2. Death sound
+	-- 1. Death sound
 	local deathConfig = EffectsConfig.DEATH[deathType]
 	if deathConfig and deathConfig.Sound then
 		self:_playSound(deathConfig.Sound, self:_getCharacterPosition(character))
 	end
 
-	-- 3. Screen shake si el local player es el killer
+	-- 2. Screen shake si el local player es el killer
 	local localPlayer = Players.LocalPlayer
 	if localPlayer and localPlayer.Character and localPlayer.Character ~= character then
 		self._screenShake:FireDeathShake(deathType)
