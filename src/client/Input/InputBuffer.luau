@@ -45,6 +45,7 @@ local INTENT_TTL = {
 	WantsMantle = Constants.BUFFER_TTL_MANTLE,
 	WantsVault = Constants.BUFFER_TTL_VAULT,
 	WantsExitCover = Constants.BUFFER_TTL_DEFAULT,
+	WantsSelfRevive = Constants.BUFFER_TTL_SELF_REVIVE,
 }
 
 function InputBuffer.new()

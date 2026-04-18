@@ -94,14 +94,18 @@ function BallisticsUtils.CalculateDamage(
 	return math.max(damage, 1)
 end
 
---- Calcula daño de explosión con caída lineal por distancia al epicentro.
+--- Calcula daño de explosión con o sin caída (falloff) por distancia.
 --- @param baseDamage number — daño máximo en el epicentro
 --- @param distance number — distancia del epicentro al objetivo (studs)
 --- @param explosionRadius number — radio máximo de la explosión (studs)
+--- @param falloffEnabled boolean — true si el daño decae con la distancia
 --- @return number — daño final (0 si fuera de radio)
-function BallisticsUtils.CalculateExplosionDamage(baseDamage: number, distance: number, explosionRadius: number): number
+function BallisticsUtils.CalculateExplosionDamage(baseDamage: number, distance: number, explosionRadius: number, falloffEnabled: boolean): number
 	if explosionRadius <= 0 or distance >= explosionRadius then
 		return 0
+	end
+	if not falloffEnabled then
+		return baseDamage
 	end
 	local falloff = 1 - (distance / explosionRadius)
 	return math.max(baseDamage * falloff, 0)

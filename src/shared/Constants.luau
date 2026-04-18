@@ -36,7 +36,6 @@ local Constants = {}
 ------------------------------------------------------------------------
 
 Constants.DEBUG_MODE = false
-
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
 ------------------------------------------------------------------------
@@ -307,15 +306,22 @@ Constants.COVER_SLIDE_DURATION = 0.3
 
 Constants.EVADE_DURATION = 0.6
 Constants.EVADE_COOLDOWN = 1.2
-Constants.EVADE_IMPULSE_SPEED = 45
+Constants.EVADE_IMPULSE_SPEED = 58
 Constants.EVADE_DECELERATION = 4.0
 Constants.EVADE_MIN_SPEED = 0.5
+-- Ventana mínima de compromiso (segundos) antes de permitir encadenar otra acción.
+-- Durante este tiempo el SM permanece en Evading sin resolver FreeStateRules.
+-- Después, el ActionResolver permite inputs libremente (GoW feel).
+Constants.EVADE_CHAIN_WINDOW = 0.2
 
 -- ExitCorner: salida diagonal desde esquina (más corta que un roll completo, sin marometa)
 Constants.EXIT_CORNER_DURATION = 0.3
 -- Umbral de lateralidad para separar CornerRollOut (lateral) de ExitCorner (diagonal)
 -- |moveDir · wallRight| >= threshold → CornerRollOut; < threshold → ExitCorner
-Constants.EXIT_CORNER_LATERAL_THRESHOLD = 0.95
+Constants.EXIT_CORNER_LATERAL_THRESHOLD = 0.98
+-- Fracción de coverNormal (forward) mezclada con la tangente al inicio del ExitCorner
+-- 0.0 = puramente lateral, 1.0 = puramente forward. ~0.35 = diagonal ~20° bordeando esquina
+Constants.EXIT_CORNER_FORWARD_BIAS = 0.35 -- Ajuste fino para que la dirección de salida se sienta bien en esquinas de 30° a 45°
 
 -- Duración de acciones de traversal (segundos)
 Constants.MANTLE_DURATION = 0.6
@@ -324,7 +330,7 @@ Constants.VAULT_DURATION = 1
 -- Vault over low cover — Bezier 3D
 Constants.VAULT_FORWARD_DIST = 6
 Constants.VAULT_ARC_HEIGHT = 4
-Constants.VAULT_FORWARD_DOT_THRESHOLD = 0.9 -- mínimo dot entre input forward y dirección al cover para permitir vault
+Constants.VAULT_FORWARD_DOT_THRESHOLD = 0.95 -- mínimo dot entre input forward y dirección al cover para permitir vault
 Constants.VAULT_OVERHEAD_RAY_HEIGHT = 2.5
 Constants.VAULT_LANDING_RAY_DOWN = 10
 Constants.VAULT_LANDING_RAY_UP = 3
@@ -364,6 +370,7 @@ Constants.BUFFER_TTL_INTERACT = 0.1
 Constants.BUFFER_TTL_MANTLE = 0.12
 Constants.BUFFER_TTL_VAULT = 0.3
 Constants.BUFFER_TTL_DEFAULT = 0.1
+Constants.BUFFER_TTL_SELF_REVIVE = 0.3
 
 ------------------------------------------------------------------------
 -- 13b. INTENT LISTS — single source of truth
@@ -387,6 +394,7 @@ Constants.DISCRETE_INTENTS = table.freeze({
 	"WantsStopBlindFire",
 	"WantsStopChainsaw",
 	"WantsExitCover",
+	"WantsSelfRevive",
 })
 
 --- Subset de discretos que se buffean con TTL.
@@ -402,6 +410,7 @@ Constants.BUFFERABLE_INTENTS = table.freeze({
 	"WantsInteract",
 	"WantsSwapWeapon",
 	"WantsExitCover",
+	"WantsSelfRevive",
 })
 
 ------------------------------------------------------------------------
@@ -420,6 +429,13 @@ Constants.HEALTH_REGEN_DELAY = 5.0
 Constants.HEALTH_REGEN_RATE = 60
 Constants.DBNO_HEALTH = 150
 Constants.DBNO_BLEEDOUT_TIME = 30
+Constants.DBNO_COUNTDOWN_TIME = 8
+Constants.DBNO_REVIVE_POINTS_STILL = 5
+Constants.DBNO_REVIVE_POINTS_MOVING = 2
+Constants.DBNO_REVIVE_COOLDOWN = 0.5
+Constants.DBNO_REVIVE_THRESHOLD = 45
+Constants.DBNO_PROMPT_RANGE = 8
+Constants.DBNO_PROMPT_HOLD_TIME = 1.5
 
 -- Death types: overkill thresholds y fuerzas
 Constants.OVERKILL_THRESHOLD = 20 -- Daño extra sobre la salud restante para considerar un golpe como overkill

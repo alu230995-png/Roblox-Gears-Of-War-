@@ -64,8 +64,14 @@ local HealthObserver = require(script.Parent.Character.HealthObserver)
 -- Death Effects (ragdoll, dismember, headshot — client-side visuals)
 local DeathEffectsHandler = require(script.Parent.Character.DeathEffectsHandler)
 
+-- Death Physics (forces applied client-side to avoid server overload)
+local DeathPhysicsHandler = require(script.Parent.Character.DeathPhysicsHandler)
+
 -- Death Sequence (blood effect → spectator transition → respawn hooks)
 local DeathSequenceHandler = require(script.Parent.Character.DeathSequenceHandler)
+
+-- DBNO Handler (countdown UI hooks, self-revive input)
+local DBNOHandler = require(script.Parent.Character.DBNOHandler)
 
 -- Spectator (camera cycling over other players during death)
 local SpectatorController = require(script.Parent.Spectator.SpectatorController)
@@ -131,8 +137,10 @@ local soundController = SoundController.new(stateMachine)
 local healthObserver = HealthObserver.new(stateMachine)
 local effectsController = EffectsController.new(stateMachine)
 local deathEffectsHandler = DeathEffectsHandler.new(effectsController)
+local deathPhysicsHandler = DeathPhysicsHandler.new()
 local deathSequenceHandler = DeathSequenceHandler.new(stateMachine, effectsController)
 local spectatorController = SpectatorController.new(stateMachine)
+local dbnoHandler = DBNOHandler.new(stateMachine, movementController.ActionExecuted)
 
 ------------------------------------------------------------------------
 -- WEAPON SYSTEM — Per-Tool management (scan directo, sin WeaponToolManager)
@@ -229,8 +237,10 @@ locator:Register("SoundController", soundController)
 locator:Register("HealthObserver", healthObserver)
 locator:Register("EffectsController", effectsController)
 locator:Register("DeathEffectsHandler", deathEffectsHandler)
+locator:Register("DeathPhysicsHandler", deathPhysicsHandler)
 locator:Register("DeathSequenceHandler", deathSequenceHandler)
 locator:Register("SpectatorController", spectatorController)
+locator:Register("DBNOHandler", dbnoHandler)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()

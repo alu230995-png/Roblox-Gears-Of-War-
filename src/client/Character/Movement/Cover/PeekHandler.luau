@@ -76,11 +76,21 @@ function PeekHandler:Begin(side: string)
 	end
 	wallRight = wallRight.Unit
 
-	self._startPos = hrp.Position
+	-- Mantener un origen estable durante todo el ciclo de peek para
+	-- evitar drift cuando Begin/End se alternan en frames rápidos.
+	if not self._startPos then
+		self._startPos = hrp.Position
+	end
 	self._peekSide = side
 
+	local basePos = self._startPos
+	if not basePos then
+		basePos = hrp.Position
+		self._startPos = basePos
+	end
+
 	local direction = if side == "Right" then 1 else -1
-	self._targetPos = self._startPos + wallRight * direction * Constants.PEEK_OFFSET_STUDS
+	self._targetPos = basePos + wallRight * direction * Constants.PEEK_OFFSET_STUDS
 
 	self._isActive = true
 	self._returning = false
@@ -90,9 +100,9 @@ function PeekHandler:Begin(side: string)
 			string.format(
 				"[PeekHandler] BEGIN side=%s | start=(%.1f,%.1f,%.1f) → target=(%.1f,%.1f,%.1f)",
 				side,
-				self._startPos.X,
-				self._startPos.Y,
-				self._startPos.Z,
+				basePos.X,
+				basePos.Y,
+				basePos.Z,
 				self._targetPos.X,
 				self._targetPos.Y,
 				self._targetPos.Z
@@ -139,6 +149,9 @@ function PeekHandler:Cancel()
 
 	self._isActive = false
 	self._returning = false
+	self._startPos = nil
+	self._targetPos = nil
+	self._peekSide = nil
 
 	local hrp = self:_getHRP()
 	if hrp then
@@ -162,6 +175,10 @@ function PeekHandler:Update(dt: number)
 	local hrp = self:_getHRP()
 	if not hrp or not self._targetPos then
 		self._isActive = false
+		self._returning = false
+		self._startPos = nil
+		self._targetPos = nil
+		self._peekSide = nil
 		return
 	end
 
@@ -185,6 +202,9 @@ function PeekHandler:Update(dt: number)
 			-- Retorno completado: desactivar
 			self._isActive = false
 			self._returning = false
+			self._startPos = nil
+			self._targetPos = nil
+			self._peekSide = nil
 			if Constants.DEBUG_MODE then
 				print("[PeekHandler] RETURN COMPLETE — snapped to exact startPos")
 			end
@@ -210,6 +230,11 @@ end
 --- Retorna el lado actual del peek ("Left" o "Right"), o nil.
 function PeekHandler:GetPeekSide(): string?
 	return self._peekSide
+end
+
+--- Retorna la posición de origen del peek (donde estaba el HRP al iniciar).
+function PeekHandler:GetStartPos(): Vector3?
+	return self._startPos
 end
 
 ------------------------------------------------------------------------

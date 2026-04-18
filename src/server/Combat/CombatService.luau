@@ -70,13 +70,18 @@ end
 local function _startBleedout(player: Player, character: Model, humanoid: Humanoid)
 	_cancelBleedout(player)
 
-	local drainPerSecond = Constants.DBNO_HEALTH / Constants.DBNO_BLEEDOUT_TIME
+	local countdownTime = Constants.DBNO_COUNTDOWN_TIME
+	local drainPerSecond = Constants.DBNO_HEALTH / countdownTime
 	local TICK_RATE = 0.5 -- drain every 0.5s for smooth visual feedback
 	local drainPerTick = drainPerSecond * TICK_RATE
 	local elapsed = 0
 
+	-- Initialize DBNO attributes (replicated to clients for UI)
+	character:SetAttribute("DBNOTimeRemaining", countdownTime)
+	character:SetAttribute("DBNORevivePoints", 0)
+
 	_bleedoutTimers[player] = task.spawn(function()
-		while elapsed < Constants.DBNO_BLEEDOUT_TIME do
+		while elapsed < countdownTime do
 			task.wait(TICK_RATE)
 			elapsed += TICK_RATE
 
@@ -92,6 +97,10 @@ local function _startBleedout(player: Player, character: Model, humanoid: Humano
 			end
 
 			humanoid.Health = math.max(0, humanoid.Health - drainPerTick)
+
+			-- Update countdown attribute for client UI
+			local remaining = math.max(0, countdownTime - elapsed)
+			character:SetAttribute("DBNOTimeRemaining", remaining)
 
 			if humanoid.Health <= 0 then
 				_killFromBleedout(player, character, humanoid)
@@ -122,6 +131,9 @@ local function _onLifeStateChanged(player: Player, character: Model, humanoid: H
 		_startBleedout(player, character, humanoid)
 	elseif lifeState == "Dead" or lifeState == "Alive" then
 		_cancelBleedout(player)
+		-- Clean DBNO attributes when leaving DBNO state
+		character:SetAttribute("DBNOTimeRemaining", nil)
+		character:SetAttribute("DBNORevivePoints", nil)
 	end
 end
 

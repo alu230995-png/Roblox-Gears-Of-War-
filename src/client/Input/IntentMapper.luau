@@ -224,11 +224,6 @@ function IntentMapper:_processContinuousState()
 			self:_setIntent(entry.intent, true)
 		end
 	end
-
-	-- Exit cover: moveDirection "hacia atrás" = quiere salir de cover.
-	if moveDir.Y < -Constants.EXIT_COVER_BACK_THRESHOLD then
-		self:_setIntent("WantsExitCover", true)
-	end
 end
 
 ------------------------------------------------------------------------

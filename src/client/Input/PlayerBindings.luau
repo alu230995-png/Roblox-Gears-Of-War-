@@ -138,6 +138,9 @@ PlayerBindings.DEFAULT = {
 		-- Interacción y swap
 		WantsInteract = { RawInput = "InteractButton", Mode = "Pressed" },
 		WantsSwapWeapon = { RawInput = "SwapWeapon", Mode = "Pressed" },
+
+		-- DBNO (auto-revive)
+		WantsSelfRevive = { RawInput = "CoverButton", Mode = "Tap" },
 	},
 
 	------------------------------------------------------------------------

@@ -9,6 +9,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Helpers = require(script.Parent.Parent:WaitForChild("Helpers"))
+local SharedRules = require(script.Parent:WaitForChild("SharedRules"))
 
 local TransitionRules = {}
 
@@ -66,6 +67,12 @@ TransitionRules.Entering = {
 			return "BlindFire", nil, nil
 		end,
 	},
+
+	-- Prio 4: ExitCorner desde entering (reduce latencia de input)
+	SharedRules.ExitCorner,
+
+	-- Prio 5: CornerRollOut desde entering (roll lateral completo)
+	SharedRules.CornerRollOut,
 }
 
 ------------------------------------------------------------------------

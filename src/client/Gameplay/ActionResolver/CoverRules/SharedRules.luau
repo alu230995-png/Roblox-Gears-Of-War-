@@ -6,6 +6,7 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 local Helpers = require(script.Parent.Parent:WaitForChild("Helpers"))
@@ -32,7 +33,35 @@ end
 SharedRules.ExitCover = {
 	id = "ExitCover",
 	check = function(_resolver, ctx)
-		return ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover")
+	-- Intent buffered o continuo (ej: desde binding directo)
+	if ctx.Buffer:HasIntent("WantsExitCover") or ctx.Intents:HasIntent("WantsExitCover") then
+		return true
+	end
+
+	-- Si el sensor perdió pared de respaldo, forzar salida de cover.
+	if ctx.Env.IsInActiveCover and ctx.Env.HasActiveCoverBehind == false then
+		return true
+	end
+
+	-- Detección vectorial cross-platform: humanoid.MoveDirection · coverNormal > umbral
+	-- Si el dot product es positivo, el jugador empuja HACIA la normal (alejándose de la pared)
+	local coverNormal = ctx.Env.ActiveCoverNormal
+	if not coverNormal then
+		return false
+	end
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return false
+	end
+	local moveDir = humanoid.MoveDirection
+	if moveDir.Magnitude < Constants.MOVE_DIRECTION_THRESHOLD then
+		return false
+	end
+	return moveDir:Dot(coverNormal) > Constants.EXIT_COVER_BACK_THRESHOLD
 	end,
 	execute = function(_resolver, ctx)
 		ctx.Buffer:Consume("WantsExitCover")

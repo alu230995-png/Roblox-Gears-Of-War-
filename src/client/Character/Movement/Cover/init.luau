@@ -240,6 +240,7 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 		or currentState == "CoverFiring"
 		or currentState == "CoverPeek"
 		or currentState == "CoverBlindFire"
+		or currentState == "CoverEntering"
 	then
 		self._cornerCover:Update(envContext)
 	end
@@ -555,13 +556,10 @@ function CoverMain:_syncToEnvironmentSensor()
 	)
 
 	-- Sincronizar estado de esquinas (desde CornerCover con histéresis)
-	envSensor:SetActiveCornerState(
-		self._cornerCover:IsAtLeft(),
-		self._cornerCover:IsAtRight()
-	)
+	envSensor:SetActiveCornerState(self._cornerCover:IsAtLeft(), self._cornerCover:IsAtRight())
 
-	-- Sincronizar estado de peek
-	envSensor:SetPeekActive(self._peekHandler:IsActive())
+	-- Sincronizar estado de peek (incluir posición de origen para que el recheck de pared no falle)
+	envSensor:SetPeekActive(self._peekHandler:IsActive(), self._peekHandler:GetStartPos())
 end
 
 function CoverMain:Destroy()

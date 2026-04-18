@@ -146,7 +146,22 @@ local CAPABILITY_EXCEPTIONS = {
 	Vaulting = ALL_LOCKED,
 	Executing = ALL_LOCKED,
 
-	Evading = ALL_LOCKED_INVULNERABLE, -- iframes parciales
+	ExitCorner = { -- Corner exit: permite hip-fire (GoW)
+		canShoot = true,
+		canMove = false,
+		canTakeCover = false,
+		canEvade = false,
+		canSprint = false,
+	},
+
+	Evading = { -- iframes parciales + encadenable (GoW feel)
+		canShoot = false,
+		canMove = false,
+		canTakeCover = true, -- permite slide-a-cover desde evade
+		canEvade = true, -- permite evade-to-evade chain
+		canSprint = false,
+		isVulnerable = false,
+	},
 
 	-- DBNO GROUP
 	DBNO = {

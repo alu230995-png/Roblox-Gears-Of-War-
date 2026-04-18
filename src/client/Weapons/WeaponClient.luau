@@ -57,7 +57,7 @@ local FORCE_UNEQUIP_STATES: { [string]: true } = {
 	CoverSlide = true,
 	CoverExiting = true,
 	CoverSwap = true,
-	ExitCorner = true,
+	-- ExitCorner: NO forzar unequip → permite hip-fire durante la salida de esquina (GoW)
 	DBNO = true,
 	Death = true,
 	Spectator = true,
@@ -333,10 +333,14 @@ function WeaponClient:HandleAction(action: string, _targetState: string?, _data:
 	-- Shooting (WeaponClient es autoridad de transición a Firing desde estados libres)
 	if action == "Shoot" or action == "ShootFromCover" or action == "BlindFire" then
 		if not _targetState then
-			-- Estado libre: transicionar ANTES de arrancar el loop.
-			-- Si STATE_MIN_DURATION bloquea la transición, no se dispara.
-			if not self._stateMachine or not self._stateMachine:TransitionTo("Firing") then
-				return
+			-- ExitCorner: hip-fire sin transición de estado (la animación de salida continúa)
+			local currentState = self._stateMachine and self._stateMachine:GetCurrentState()
+			if currentState ~= "ExitCorner" then
+				-- Estado libre: transicionar ANTES de arrancar el loop.
+				-- Si STATE_MIN_DURATION bloquea la transición, no se dispara.
+				if not self._stateMachine or not self._stateMachine:TransitionTo("Firing") then
+					return
+				end
 			end
 		end
 		local started = self:_startFiring()

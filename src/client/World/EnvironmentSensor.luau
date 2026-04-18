@@ -93,7 +93,11 @@ function EnvironmentSensor.new()
 		ActiveAtCornerRight = false,
 		IsPeekActive = false,
 		IsInActiveCover = false,
+		HasActiveCoverBehind = true,
 	}
+
+	-- Posición de origen del peek (usada para recheck de pared durante peek)
+	self._peekOrigin = nil :: Vector3?
 
 	-- Cache de character refs (evita FindFirstChild cada frame)
 	self._cachedCharacter = nil :: Model?
@@ -158,8 +162,11 @@ function EnvironmentSensor:SetActiveCornerState(atLeft: boolean, atRight: boolea
 end
 
 --- Actualiza el estado de peek. Llamado por CoverMain/PeekHandler.
-function EnvironmentSensor:SetPeekActive(active: boolean)
+--- @param active boolean
+--- @param peekOrigin Vector3? — posición de origen del peek (donde estaba el HRP antes de desplazarse)
+function EnvironmentSensor:SetPeekActive(active: boolean, peekOrigin: Vector3?)
 	self._context.IsPeekActive = active
+	self._peekOrigin = if active then peekOrigin else nil
 end
 
 --- Limpia todo el estado de cover activo. Llamado por CoverMain al
@@ -174,6 +181,8 @@ function EnvironmentSensor:ClearActiveCoverData()
 	ctx.ActiveAtCornerRight = false
 	ctx.IsPeekActive = false
 	ctx.IsInActiveCover = false
+	ctx.HasActiveCoverBehind = true
+	self._peekOrigin = nil
 end
 
 --- Actualizar el sensor según el estado actual del jugador.
@@ -237,6 +246,12 @@ function EnvironmentSensor:Update(
 
 	-- Detectar esquinas siempre que estés en cover
 	if inCoverState and coverNormal then
+		-- Durante peek el HRP se desplaza lateralmente y puede perder la pared;
+		-- usar la posición de origen del peek para que el rayo siga impactando.
+		local recheckPos = if self._context.IsPeekActive and self._peekOrigin then self._peekOrigin else hrp.Position
+		local activeCoverInstance = self:RecheckCoverWall(recheckPos, coverNormal)
+		self._context.HasActiveCoverBehind = activeCoverInstance ~= nil
+
 		self:_detectCorners(hrp, coverNormal)
 
 		-- Calcular RawMovementDirection (world-space) desde input Vector2 + cámara
@@ -259,6 +274,8 @@ function EnvironmentSensor:Update(
 				end
 			end
 		end
+	else
+		self._context.HasActiveCoverBehind = true
 	end
 end
 
@@ -478,6 +495,7 @@ function EnvironmentSensor:_resetContext(moveDirection: Vector2)
 	ctx.IsAtOuterCorner = false
 	ctx.CornerExitDirection = nil
 	ctx.RawMovementDirection = nil
+	ctx.HasActiveCoverBehind = true
 
 	-- Mantener el estado de cover activo (NO se resetea cada frame,
 	-- solo lo actualiza CoverMain cuando cambia el estado de cover).

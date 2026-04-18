@@ -124,13 +124,13 @@ local FreeStateRules = {
 		end,
 	},
 
-	-- Prio 6a: Shoot (desde Idle, Walking o Aiming)
+	-- Prio 6a: Shoot (desde Idle, Walking, Aiming o ExitCorner hip-fire)
 	{
 		id = "Shoot",
 		check = function(_resolver, ctx)
 	return ctx.Intents:HasIntent("WantsShoot")
 		and ctx.StateConfig.canShoot
-		and (ctx.State == "Aiming" or ctx.State == "Idle" or ctx.State == "Walking")
+		and (ctx.State == "Aiming" or ctx.State == "Idle" or ctx.State == "Walking" or ctx.State == "ExitCorner")
 		end,
 		execute = function()
 	return "Shoot", nil, nil -- WeaponClient es autoridad de transición a Firing

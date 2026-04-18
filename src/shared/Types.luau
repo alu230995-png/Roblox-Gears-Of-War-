@@ -148,6 +148,7 @@ export type Intent =
 	| "WantsSwapWeapon"
 	| "WantsMantle"
 	| "WantsVault"
+	| "WantsSelfRevive"
 	| "WantsExitCover"
 
 -- RESERVED Phase 3 — not yet used (only referenced in comments)

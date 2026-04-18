@@ -196,7 +196,7 @@ WeaponConstants.WEAPONS = table.freeze({
 			IsHeavy = false,
 		}),
 		Stats = table.freeze({
-			BaseDamage = 600,
+			BaseDamage = 800,
 			FireRate = 2.0,
 			Range = 300,
 			AutoFire = false,
@@ -211,9 +211,9 @@ WeaponConstants.WEAPONS = table.freeze({
 		}),
 		Ballistics = table.freeze({
 			Falloff = table.freeze({
-				Enabled = false,
-				StartDistance = 0,
-				DamagePerUnit = 0,
+				Enabled = true,
+				StartDistance = 1,
+				DamagePerUnit = 20,
 				Spread = 0.0,
 			}),
 			Explosive = table.freeze({
@@ -293,7 +293,7 @@ WeaponConstants.WEAPONS = table.freeze({
 			IsHeavy = true,
 		}),
 		Stats = table.freeze({
-			BaseDamage = 800,
+			BaseDamage = 1200,
 			FireRate = 2.0,
 			Range = 150,
 			AutoFire = false,
@@ -308,14 +308,14 @@ WeaponConstants.WEAPONS = table.freeze({
 		}),
 		Ballistics = table.freeze({
 			Falloff = table.freeze({
-				Enabled = false,
-				StartDistance = 0,
-				DamagePerUnit = 0,
+				Enabled = true,
+				StartDistance = 1,
+				DamagePerUnit = 100,
 				Spread = 0.0,
 			}),
 			Explosive = table.freeze({
 				Enabled = true,
-				Radius = 12,
+				Radius = 25,
 			}),
 			SpreadPattern = table.freeze({
 				[1] = UDim2.new(0.5, 0, 0.5, 0),

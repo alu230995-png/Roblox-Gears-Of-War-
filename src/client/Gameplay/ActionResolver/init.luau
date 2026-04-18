@@ -89,7 +89,13 @@ function ActionResolver:Resolve(): (string, string?, any?)
 	if self._stateMachine:IsInGroup("InactiveGroup") then
 		return "NoAction", nil, nil
 	end
-	if self._stateMachine:IsInGroup("ActionGroup") and state ~= "CoverSwap" and state ~= "CoverEntering" then
+	if
+		self._stateMachine:IsInGroup("ActionGroup")
+		and state ~= "CoverSwap"
+		and state ~= "CoverEntering"
+		and state ~= "ExitCorner"
+		and state ~= "Evading"
+	then
 		if Constants.DEBUG_MODE and (state == "CoverAimHigh" or state == "CoverAimLow" or state == "CoverFiring") then
 			print(`[AimDebug] ActionResolver: state={state} BLOCKED by ActionGroup guard!`)
 		end
@@ -145,6 +151,22 @@ function ActionResolver:_selectRules(state: string)
 	-- CoverEntering: permite vault-from-entering y cover chaining
 	if state == "CoverEntering" then
 		return CoverRules.Entering
+	end
+
+	-- ExitCorner: permite encadenar a Walking/Idle/RoadieRun/Evade para transición fluida
+	if state == "ExitCorner" then
+		return FreeStateRules
+	end
+
+	-- Evading: permite encadenar después de EVADE_CHAIN_WINDOW (compromiso mínimo).
+	-- Antes de la ventana, bloquear resolución para que la animación tenga
+	-- un mínimo de compromiso. Después, evaluar FreeStateRules normalmente.
+	if state == "Evading" then
+		local elapsed = self._stateMachine:GetTimeInState()
+		if elapsed < Constants.EVADE_CHAIN_WINDOW then
+			return {} -- tabla vacía = NoAction (ventana de compromiso)
+		end
+		return FreeStateRules
 	end
 
 	if self._stateMachine:IsInGroup("CoverGroup") then

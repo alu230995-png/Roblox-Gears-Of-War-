@@ -4,11 +4,12 @@
 	Efectos visuales de muerte — ejecutados en el CLIENTE.
 	═══════════════════════════════════════════════════════════════
 
-	Toda la física de muerte (ragdoll, fuerzas, attachments) se ejecuta
-	en el SERVIDOR (HealthStateManager) para replicar a TODOS los clientes.
+	Toda la física de muerte (ragdoll, destrucción de attachments) se ejecuta
+	en el SERVIDOR (HealthStateManager) para replicar a todos los clientes.
+	Las FUERZAS (velocidades) se aplican en el cliente (DeathPhysicsHandler).
 
-	Este módulo observa LifeState en todos los Characters y aplica
-	SOLO efectos client-only que no necesitan replicar:
+	Este módulo observa LifeState en TODOS los Characters (Players + NPCs)
+	y aplica SOLO efectos client-only que no necesitan replicar:
 	  - Partículas de sangre / gore
 	  - Sonidos de muerte
 	  - Screen shake en el killer
@@ -22,6 +23,7 @@
 ]]
 
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
 local DeathEffectsHandler = {}
 DeathEffectsHandler.__index = DeathEffectsHandler
@@ -143,6 +145,33 @@ function DeathEffectsHandler:_trackPlayer(player: Player)
 end
 
 ------------------------------------------------------------------------
+-- PRIVATE: NPC tracking (Models con Humanoid que no son Player characters)
+------------------------------------------------------------------------
+
+--- Determina si un Model es un NPC (tiene Humanoid pero no es character de ningún Player)
+local function _isNPC(model: Model): boolean
+	if not model:IsA("Model") then
+		return false
+	end
+	if not model:FindFirstChildWhichIsA("Humanoid") then
+		return false
+	end
+	-- Si es character de algún Player, no es NPC
+	if Players:GetPlayerFromCharacter(model) then
+		return false
+	end
+	return true
+end
+
+function DeathEffectsHandler:_scanForNPCs(container: Instance)
+	for _, child in container:GetChildren() do
+		if _isNPC(child :: Model) then
+			self:_observeCharacter(child :: Model)
+		end
+	end
+end
+
+------------------------------------------------------------------------
 -- PUBLIC API (Lifecycle)
 ------------------------------------------------------------------------
 
@@ -151,6 +180,7 @@ function DeathEffectsHandler:Init()
 end
 
 function DeathEffectsHandler:Start()
+	-- Track all current and future Player characters
 	for _, player in Players:GetPlayers() do
 		self:_trackPlayer(player)
 	end
@@ -159,6 +189,22 @@ function DeathEffectsHandler:Start()
 		self._globalConnections,
 		Players.PlayerAdded:Connect(function(player)
 			self:_trackPlayer(player)
+		end)
+	)
+
+	-- Track NPCs: scan workspace for existing NPCs and watch for new ones
+	self:_scanForNPCs(Workspace)
+
+	table.insert(
+		self._globalConnections,
+		Workspace.DescendantAdded:Connect(function(descendant)
+			-- Cuando se añade un Humanoid, su Parent es el NPC Model
+			if descendant:IsA("Humanoid") then
+				local model = descendant.Parent
+				if model and _isNPC(model :: Model) then
+					self:_observeCharacter(model :: Model)
+				end
+			end
 		end)
 	)
 end
