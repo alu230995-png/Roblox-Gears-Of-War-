@@ -64,17 +64,17 @@ EffectsConfig.WEAPONS = {
 				LightBrightness = 3,
 			},
 			BulletTrail = {
-				Path = nil,
-				PathDelay = nil,
-				Width = 0.07,
-				Lifetime = 0.18,
-				Color = Color3.fromRGB(70, 190, 255),
-				FadeTime = 0.12,
-				Speed = 120,
-				TrailDelay = 0.15,
-				HoldTime = 0.3,
-				SmokeColor = Color3.fromRGB(150, 180, 220),
-				SmokeWidth = 0.05,
+				Path = {
+					"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Beam1R",
+					"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.Beam2R",
+				},
+				ParticlePath = {
+					"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.BulletGlowR1",
+					"ReplicatedStorage.Assets.Effects.Bullets.Lanzer.BulletGlowR2",
+				},
+				SmokePath = "ReplicatedStorage.Assets.Effects.Bullets.Lanzer.SmokeR",
+				PathDelay = 0,
+				Speed = 550,
 			},
 		},
 		ShellEjection = {

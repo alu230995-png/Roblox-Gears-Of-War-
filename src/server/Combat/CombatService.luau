@@ -81,7 +81,7 @@ local function _startBleedout(player: Player, character: Model, humanoid: Humano
 			elapsed += TICK_RATE
 
 			-- Guard: character may have been destroyed (disconnect, etc.)
-			if not character.Parent or not humanoid.Parent then
+			if not character or not humanoid or not character.Parent or not humanoid.Parent then
 				_bleedoutTimers[player] = nil
 				return
 			end
@@ -199,10 +199,10 @@ function CombatService:Destroy()
 	for player, _ in _bleedoutTimers do
 		_cancelBleedout(player)
 	end
-	for player, conn in _lifeStateConnections do
+	for _, conn in _lifeStateConnections do
 		conn:Disconnect()
-		_lifeStateConnections[player] = nil
 	end
+	table.clear(_lifeStateConnections)
 end
 
 return CombatService

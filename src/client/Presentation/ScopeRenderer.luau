@@ -220,36 +220,61 @@ function ScopeRenderer:_showGnasherHitmarker(data: any)
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.Parent = dot
 		table.insert(hitmarkerInfo.cleanupParts, stroke)
+	end
 
-		-- Kill pulse: agrandar el dot brevemente
-		if hasKill then
-			local originalSize = dot.Size
-			local enlargedSize = UDim2.new(0, DOT_RADIUS * 3, 0, DOT_RADIUS * 3)
+	-- Kill: el container crece lentamente; los dots hacen fade simultáneamente
+	if hasKill and #hitmarkerInfo.affectedDots > 0 and self._container then
+		local originalContainerSize = self._container.Size
+		local enlargedSize = UDim2.new(
+			0,
+			math.round(originalContainerSize.X.Offset * HITMARKER_KILL_SCALE),
+			0,
+			math.round(originalContainerSize.Y.Offset * HITMARKER_KILL_SCALE)
+		)
 
-			local growTween = TweenService:Create(
-				dot,
-				TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-				{ Size = enlargedSize }
-			)
-			local shrinkTween = TweenService:Create(
-				dot,
-				TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Size = originalSize }
-			)
-			growTween:Play()
-			growTween.Completed:Once(function()
-				if dot.Parent then
-					shrinkTween:Play()
+		local KILL_GROW_TIME = 0.2
+
+		local growTween = TweenService:Create(
+			self._container,
+			TweenInfo.new(KILL_GROW_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Size = enlargedSize }
+		)
+		growTween:Play()
+		growTween.Completed:Once(function()
+			if self._container then
+				self._container.Size = originalContainerSize
+			end
+		end)
+		table.insert(hitmarkerInfo.tweens, growTween)
+
+		-- Dots y strokes hacen fade durante el crecimiento
+		for _, dot in hitmarkerInfo.affectedDots do
+			if dot and dot.Parent then
+				local fadeTween = TweenService:Create(
+					dot,
+					TweenInfo.new(KILL_GROW_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ BackgroundTransparency = 1 }
+				)
+				fadeTween:Play()
+				table.insert(hitmarkerInfo.tweens, fadeTween)
+
+				local uiStroke = dot:FindFirstChildOfClass("UIStroke")
+				if uiStroke then
+					local strokeFadeTween = TweenService:Create(
+						uiStroke,
+						TweenInfo.new(KILL_GROW_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+						{ Thickness = 0 }
+					)
+					strokeFadeTween:Play()
+					table.insert(hitmarkerInfo.tweens, strokeFadeTween)
 				end
-			end)
-			table.insert(hitmarkerInfo.tweens, growTween)
-			table.insert(hitmarkerInfo.tweens, shrinkTween)
+			end
 		end
 	end
 
 	table.insert(self._activeHitmarkers, hitmarkerInfo)
 
-	-- Fade out después del tiempo de display
+	-- Fade out después del tiempo de display (si no fue kill, o si ya terminó el pulse)
 	task.delay(HITMARKER_DISPLAY_TIME, function()
 		self:_fadeOutGnasherHitmarker(hitmarkerInfo)
 	end)

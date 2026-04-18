@@ -267,7 +267,13 @@ end
 -- PRIVATE: clonar partícula de brillo en un Attachment (Enabled)
 ------------------------------------------------------------------------
 
-function BulletTrailEffect:_cloneParticleToAttachment(path: string, attachment: Attachment)
+function BulletTrailEffect:_cloneParticleToAttachment(path: string | { string }, attachment: Attachment)
+	if type(path) == "table" then
+		for _, p in path do
+			self:_cloneParticleToAttachment(p, attachment)
+		end
+		return
+	end
 	local template = EffectsConstants.ResolvePath(path)
 	if not template then
 		warn("[BulletTrailEffect] ParticlePath not found: " .. path)
@@ -302,7 +308,7 @@ end
 function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vector3, config: {
 	Path: string?,
 	SmokePath: string?,
-	ParticlePath: string?,
+	ParticlePath: (string | { string })?,
 	Color: Color3?,
 	Width: number?,
 	FadeTime: number?,
@@ -343,23 +349,18 @@ function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vect
 	local targetOffset = destination - origin
 
 	----------------------------------------------------------------
-	-- 4 Attachments (todos nacen en origin = Vector3.zero)
+	-- 3 Attachments (todos nacen en origin = Vector3.zero)
 	----------------------------------------------------------------
 
-	local a0 = Instance.new("Attachment") -- HEAD (punta líder)
+	local a0 = Instance.new("Attachment") -- HEAD (punta líder + partículas)
 	a0.Name = "A0_Lead"
 	a0.Position = Vector3.zero
 	a0.Parent = part
 
-	local a1 = Instance.new("Attachment") -- TAIL (cola, sale con delay)
+	local a1 = Instance.new("Attachment") -- TAIL bala + HEAD smoke
 	a1.Name = "A1_Trail"
 	a1.Position = Vector3.zero
 	a1.Parent = part
-
-	local a2 = Instance.new("Attachment") -- punta del smoke (sigue a a1)
-	a2.Name = "A2_SmokeLead"
-	a2.Position = Vector3.zero
-	a2.Parent = part
 
 	local a3 = Instance.new("Attachment") -- ancla del smoke (queda en origin)
 	a3.Name = "A3_SmokeAnchor"
@@ -387,7 +388,7 @@ function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vect
 	-- Beam 2: estela de humo (a2 smokeLead → a3 smokeAnchor)
 	----------------------------------------------------------------
 
-	local smokeBeam = self:_obtainSmokeBeam(config, a2, a3, part, smokeWidth, smokeColor)
+	local smokeBeam = self:_obtainSmokeBeam(config, a1, a3, part, smokeWidth, smokeColor)
 	smokeBeam.Enabled = false
 
 	part.Parent = self:_ensureFolder()
@@ -435,7 +436,7 @@ function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vect
 		end
 	end)
 
-	-- 3) TrailDelay después: A1 (TAIL) sale lineal misma velocidad + A2 lo sigue
+	-- 3) TrailDelay después: A1 (TAIL/SmokeLead) sale lineal misma velocidad
 	task.delay(trailDelay, function()
 		if not part.Parent then
 			return
@@ -443,7 +444,6 @@ function BulletTrailEffect:_fireAnimatedTrail(origin: Vector3, destination: Vect
 
 		smokeBeam.Enabled = true
 
-		TweenService:Create(a2, tweenLinear, { Position = targetOffset }):Play()
 		TweenService:Create(a1, tweenLinear, { Position = targetOffset }):Play()
 	end)
 

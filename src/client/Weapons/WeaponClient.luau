@@ -423,10 +423,11 @@ function WeaponClient:_startFiring(): boolean
 		end
 		self._isShooting = true
 		self:_startHoldSound()
-		self.HoldStarted:Fire(self._weaponName, self._player.Character)
+		local holdCharacter = self._player.Character
+		self.HoldStarted:Fire(self._weaponName, holdCharacter)
 		self._holdBreathHandler:Start(function()
 			self:_stopHoldSound()
-			self.HoldReleased:Fire(self._weaponName, self._player.Character)
+			self.HoldReleased:Fire(self._weaponName, self._player.Character or holdCharacter)
 			if self._isShooting and self._weaponState == WS_EQUIPPED and self._ammoState.current > 0 then
 				self:_fireOneShot(1) -- carga completa = precisión perfecta
 			end

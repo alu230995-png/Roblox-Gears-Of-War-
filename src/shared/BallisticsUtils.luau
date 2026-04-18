@@ -100,7 +100,7 @@ end
 --- @param explosionRadius number — radio máximo de la explosión (studs)
 --- @return number — daño final (0 si fuera de radio)
 function BallisticsUtils.CalculateExplosionDamage(baseDamage: number, distance: number, explosionRadius: number): number
-	if distance >= explosionRadius then
+	if explosionRadius <= 0 or distance >= explosionRadius then
 		return 0
 	end
 	local falloff = 1 - (distance / explosionRadius)

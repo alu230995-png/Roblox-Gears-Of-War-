@@ -90,9 +90,9 @@ WeaponConstants.WEAPONS = table.freeze({
 			IsHeavy = false,
 		}),
 		Stats = table.freeze({
-			BaseDamage = 75,
+			BaseDamage = 60,
 			FireRate = 0.8,
-			Range = 30,
+			Range = 200,
 			AutoFire = false,
 		}),
 		Ammo = table.freeze({
@@ -106,8 +106,8 @@ WeaponConstants.WEAPONS = table.freeze({
 		Ballistics = table.freeze({
 			Falloff = table.freeze({
 				Enabled = true,
-				StartDistance = 10,
-				DamagePerUnit = 3.0,
+				StartDistance = 0.5,
+				DamagePerUnit = 5,
 				Spread = 8.0,
 			}),
 			Explosive = table.freeze({
@@ -127,7 +127,7 @@ WeaponConstants.WEAPONS = table.freeze({
 			}),
 		}),
 		Mechanics = table.freeze({
-			SphereCastRadius = 0,
+			SphereCastRadius = 0.2,
 			HoldingBreath = table.freeze({
 				Enabled = false,
 				Duration = 0,

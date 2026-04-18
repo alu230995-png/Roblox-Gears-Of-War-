@@ -279,7 +279,7 @@ function HealthStateManager.ApplyDamage(damageReport: any, shooterName: string?,
 		local character: Model = victim.Character
 
 		-- Guard: humanoid/character may have been destroyed
-		if not humanoid.Parent or not character.Parent then
+		if not humanoid or not character or not humanoid.Parent or not character.Parent then
 			continue
 		end
 
