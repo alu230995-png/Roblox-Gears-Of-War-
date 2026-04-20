@@ -115,9 +115,11 @@ function IntentMapper:RebuildBindings(bindings)
 				table.insert(intentMap[raw][stopMode].stop, intentName)
 			end
 
-			-- Auto-detectar continuous held: Mode="Pressed" + StopMode="Released"
+			-- Auto-detectar continuous held: Pressed/Released Y HoldStart/Release
 			if mode == "Pressed" and stopMode == "Released" then
-				table.insert(continuousHeld, { raw = raw, intent = intentName })
+				table.insert(continuousHeld, { raw = raw, intent = intentName, holdSensitive = false })
+			elseif mode == "HoldStart" and stopMode == "Release" then
+				table.insert(continuousHeld, { raw = raw, intent = intentName, holdSensitive = true })
 			end
 		end
 	end
@@ -218,10 +220,40 @@ function IntentMapper:_processContinuousState()
 	self:_setIntent("WantsMoveLeft", moveDir.X < -Constants.MOVE_DIRECTION_THRESHOLD)
 	self:_setIntent("WantsMoveRight", moveDir.X > Constants.MOVE_DIRECTION_THRESHOLD)
 
-	-- Held-based continuous intents (data-driven loop)
+	-- Paso 1: determinar qué intents continuos deben estar activos.
+	-- Un intent es activo si AL MENOS UNO de sus bindings lo dice.
+	local shouldBeActive = {} -- [intentName] = true
+
 	for _, entry in self._continuousHeld do
-		if detector:IsRawHeld(entry.raw) then
-			self:_setIntent(entry.intent, true)
+		local isHeld = detector:IsRawHeld(entry.raw)
+		if isHeld then
+			if entry.holdSensitive then
+				-- HoldStart/Release: solo re-afirmar si el evento HoldStart ya activó
+				-- el intent. Evita que un TAP brevísimo active WantsRoadieRun solo
+				-- porque IsRawHeld es true durante 1-2 frames.
+				local current = self._activeIntents[entry.intent]
+				if current and current.Active then
+					shouldBeActive[entry.intent] = true
+				end
+			else
+				-- Pressed/Released: activo siempre que esté held
+				shouldBeActive[entry.intent] = true
+			end
+		end
+	end
+
+	-- Paso 2: aplicar. Activar los que deben estar activos,
+	-- limpiar los que ningún binding sostiene (safety net para Release perdidos).
+	local processed = {}
+	for _, entry in self._continuousHeld do
+		local intent = entry.intent
+		if not processed[intent] then
+			processed[intent] = true
+			if shouldBeActive[intent] then
+				self:_setIntent(intent, true)
+			elseif self._activeIntents[intent] then
+				self._activeIntents[intent] = nil
+			end
 		end
 	end
 end

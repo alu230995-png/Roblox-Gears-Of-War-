@@ -94,6 +94,7 @@ function EnvironmentSensor.new()
 		IsPeekActive = false,
 		IsInActiveCover = false,
 		HasActiveCoverBehind = true,
+		IsCoverSettleActive = false,
 	}
 
 	-- Posición de origen del peek (usada para recheck de pared durante peek)
@@ -164,6 +165,11 @@ end
 --- Actualiza el estado de peek. Llamado por CoverMain/PeekHandler.
 --- @param active boolean
 --- @param peekOrigin Vector3? — posición de origen del peek (donde estaba el HRP antes de desplazarse)
+--- Marca si el settle de rotacion de cover esta activo. Llamado por InCover.
+function EnvironmentSensor:SetCoverSettleActive(active: boolean)
+	self._context.IsCoverSettleActive = active
+end
+
 function EnvironmentSensor:SetPeekActive(active: boolean, peekOrigin: Vector3?)
 	self._context.IsPeekActive = active
 	self._peekOrigin = if active then peekOrigin else nil
@@ -182,6 +188,7 @@ function EnvironmentSensor:ClearActiveCoverData()
 	ctx.IsPeekActive = false
 	ctx.IsInActiveCover = false
 	ctx.HasActiveCoverBehind = true
+	ctx.IsCoverSettleActive = false
 	self._peekOrigin = nil
 end
 
@@ -204,8 +211,8 @@ function EnvironmentSensor:Update(
 		return
 	end
 
-	-- Actualizar cache si el character cambió (respawn)
-	if character ~= self._cachedCharacter then
+	-- Actualizar cache si el character cambió (respawn) o si HRP/Humanoid no estaban listos
+	if character ~= self._cachedCharacter or (character and (not self._cachedHRP or not self._cachedHumanoid)) then
 		self._cachedCharacter = character
 		self._cachedHRP = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 		self._cachedHumanoid = character:FindFirstChildOfClass("Humanoid")

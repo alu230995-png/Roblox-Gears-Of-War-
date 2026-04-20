@@ -85,6 +85,12 @@ local WeaponClient = require(script.Parent.Weapons.WeaponClient)
 -- Presentation (UI/visual — Layer 5)
 local ScopeRenderer = require(script.Parent.Presentation.ScopeRenderer)
 
+-- Mobile Touch HUD (botones táctiles para móvil)
+local MobileTouchHUD = require(script.Parent.UI.MobileTouchHUD)
+
+-- Weapon HUD (munición + active reload — estilo GOW profesional)
+local WeaponHUD = require(script.Parent.UI.WeaponHUD)
+
 ------------------------------------------------------------------------
 -- BOOTSTRAP
 ------------------------------------------------------------------------
@@ -141,6 +147,8 @@ local deathPhysicsHandler = DeathPhysicsHandler.new(effectsController)
 local deathSequenceHandler = DeathSequenceHandler.new(stateMachine, effectsController)
 local spectatorController = SpectatorController.new(stateMachine)
 local dbnoHandler = DBNOHandler.new(stateMachine, movementController.ActionExecuted)
+local mobileTouchHUD = MobileTouchHUD.new(inputDetector, stateMachine, spectatorController)
+local weaponHUD = WeaponHUD.new()
 
 ------------------------------------------------------------------------
 -- WEAPON SYSTEM — Per-Tool management (scan directo, sin WeaponToolManager)
@@ -162,22 +170,10 @@ local function setupWeaponTool(tool: Tool)
 	-- Bind effects system to this weapon
 	effectsController:BindWeaponClient(wc)
 
-	-- TEST: exponer WeaponClient para AmmoHUD de prueba (borrar después)
-	local function exposeToAmmoHUD(weaponClient)
-		-- selene: allow(global_usage)
-		_G._testAmmoHUD = {
-			WeaponClient = weaponClient,
-			ReloadHandler = weaponClient:GetReloadHandler(),
-		}
-		-- selene: allow(global_usage)
-		local cb = _G._testAmmoHUD_onSwap
-		if cb then
-			cb()
-		end
-	end
-	exposeToAmmoHUD(wc)
+	-- WeaponHUD: bind arma actual al HUD profesional
+	weaponHUD:BindWeapon(wc)
 	wc.WeaponEquipped:Connect(function()
-		exposeToAmmoHUD(wc)
+		weaponHUD:BindWeapon(wc)
 	end)
 
 	-- Camera shake: solo tras disparo real validado por WeaponClient
@@ -212,15 +208,6 @@ local function scanForTools(container: Instance)
 	end)
 end
 
-local backpack = player:WaitForChild("Backpack")
-scanForTools(backpack)
-if player.Character then
-	scanForTools(player.Character)
-end
-player.CharacterAdded:Connect(function(character)
-	scanForTools(character)
-end)
-
 -- Registrar en ServiceLocator (orden de registro = orden de Init/Start)
 locator:Register("StateMachine", stateMachine)
 locator:Register("InputDetector", inputDetector)
@@ -241,6 +228,8 @@ locator:Register("DeathPhysicsHandler", deathPhysicsHandler)
 locator:Register("DeathSequenceHandler", deathSequenceHandler)
 locator:Register("SpectatorController", spectatorController)
 locator:Register("DBNOHandler", dbnoHandler)
+locator:Register("MobileTouchHUD", mobileTouchHUD)
+locator:Register("WeaponHUD", weaponHUD)
 
 -- FASE 1: Init (sin side-effects, sin conexiones)
 locator:InitAll()
@@ -253,9 +242,45 @@ locator:InitAll()
 --   CameraController escucha StateChanged + ActionExecuted
 locator:StartAll()
 
+-- Scan weapons AFTER StartAll so WeaponHUD:Start() has built the UI before BindWeapon is called
+local backpack = player:WaitForChild("Backpack")
+scanForTools(backpack)
+if player.Character then
+	scanForTools(player.Character)
+end
+player.CharacterAdded:Connect(function(character)
+	scanForTools(character)
+end)
+
 -- Post-Start DI: EffectsController necesita referencias a Camera y Sound
 effectsController:SetCameraController(cameraController)
 effectsController:SetSoundController(soundController)
+
+------------------------------------------------------------------------
+-- RESPAWN CLEANUP — Limpiar estado residual de la vida anterior
+------------------------------------------------------------------------
+healthObserver.Respawned:Connect(function()
+	inputBuffer:Clear()
+	inputDetector:ResetUIHeldState()
+end)
+
+------------------------------------------------------------------------
+-- COVER STATE → SERVER (para tasa de regen en CombatService)
+------------------------------------------------------------------------
+do
+	local remotesFolder = ReplicatedStorage:WaitForChild("Remotes", 10)
+	local coverRemote = remotesFolder and remotesFolder:WaitForChild("CoverStateChanged", 10) :: RemoteEvent?
+	if coverRemote then
+		local wasInCover = false
+		stateMachine.StateChanged:Connect(function(_newState: string, _oldState: string)
+			local inCover = stateMachine:IsInGroup("CoverGroup")
+			if inCover ~= wasInCover then
+				wasInCover = inCover
+				coverRemote:FireServer(inCover)
+			end
+		end)
+	end
+end
 
 ------------------------------------------------------------------------
 -- HEARTBEAT — Game Loop central

@@ -87,8 +87,9 @@ function EnteringCover:_beginInternal(data)
 	-- Desactivar colisión character ↔ cover part para evitar atascamiento
 	self:_disableCoverCollision(character, data.coverInstance)
 
-	-- Guardar la normal de detección original. Solo se fija aquí, nunca en chaining.
-	self._cancelNormal = data.coverNormal
+	-- Vector de cancelación: dirección "hacia atrás" de la cámara.
+	-- Presionar S siempre produce MoveDirection alineado con este vector → cancela.
+	self._cancelNormal = self:_computeCancelNormal(data.coverNormal)
 end
 
 --- Retorna true si el entering está en progreso.
@@ -146,9 +147,9 @@ function EnteringCover:Update(dt: number, envContext: any?, wantsCoverRedirect: 
 			self._state.coverType = envContext.CoverType
 			self._state.wallRight = chainData.wallRight
 
-			-- Chain = nueva acción del jugador → actualizar la normal de cancelación
-			-- a la nueva cover. La referencia original ya no es relevante.
-			self._cancelNormal = envContext.CoverNormal
+			-- Chain = nueva acción del jugador → recalcular el vector de cancelación
+			-- desde la cámara actual. Así S siempre cancela tras redirección.
+			self._cancelNormal = self:_computeCancelNormal(envContext.CoverNormal)
 
 			if Constants.DEBUG_MODE then
 				print("[GoW] EnteringCover: Chain — re-dirigido a nueva cover")
@@ -165,6 +166,27 @@ function EnteringCover:Update(dt: number, envContext: any?, wantsCoverRedirect: 
 	end
 
 	return result
+end
+
+------------------------------------------------------------------------
+-- INTERNAL: Compute Cancel Normal (camera backward)
+------------------------------------------------------------------------
+
+--- Calcula el vector de cancelación basado en la dirección "hacia atrás" de la cámara.
+--- Al usar -Camera.LookVector (XZ, normalizado), presionar S siempre cancela
+--- independientemente del ángulo de la pared.
+--- @param fallbackNormal Vector3 — normal de la cover como fallback si no hay cámara
+--- @return Vector3
+function EnteringCover:_computeCancelNormal(fallbackNormal: Vector3): Vector3
+	local camera = workspace.CurrentCamera
+	if camera then
+		local look = camera.CFrame.LookVector
+		local flatBack = Vector3.new(-look.X, 0, -look.Z)
+		if flatBack.Magnitude > Constants.ZERO_MAGNITUDE then
+			return flatBack.Unit
+		end
+	end
+	return fallbackNormal
 end
 
 ------------------------------------------------------------------------
@@ -334,11 +356,38 @@ function EnteringCover:_updateEntering(data, rootPart: BasePart, humanoid: Human
 
 	-- ── 4. COMPROBACIÓN DE COMPLETADO ─────────────────────────────
 
+	-- Check A: distancia XZ al snap target (lógica original)
 	local finalDistXZ = Vector3.new(targetPos.X - newPos.X, 0, targetPos.Z - newPos.Z).Magnitude
 
 	if finalDistXZ < Constants.COVER_COMPLETION_XZ then
-		-- Mantenemos la rotación con la que venía para que InCover haga el giro suave
-		rootPart.CFrame = CFrame.new(Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)) * rootPart.CFrame.Rotation
+		-- Clamp lateral: si el snap target queda cerca de la arista del Part,
+		-- forzar posición hacia adentro para no terminar en esquina.
+		local wallSurfaceA = Vector3.new(targetPos.X, targetPos.Y, targetPos.Z)
+			- data.wallNormal * Constants.COVER_OFFSET
+		local clampedA =
+			self:_clampHitToFace(data.coverPart, wallSurfaceA, data.wallNormal, Constants.COVER_CORNER_MARGIN)
+		local finalA = clampedA + data.wallNormal * Constants.COVER_OFFSET
+		rootPart.CFrame = CFrame.new(Vector3.new(finalA.X, currentPos.Y, finalA.Z)) * rootPart.CFrame.Rotation
+		return "complete"
+	end
+
+	-- Check B: distancia perpendicular a la pared.
+	-- Si el raycast impactó en un ángulo muy lateral, el snap target queda lejos
+	-- en el eje paralelo a la pared, pero el personaje ya está a la distancia
+	-- correcta de la pared. Forzar completado para evitar atascos.
+	local wallNormal = data.wallNormal
+	local wallPoint = targetPos - wallNormal * Constants.COVER_OFFSET
+	local toWall = newPos - wallPoint
+	local perpDist = toWall:Dot(wallNormal)
+
+	if perpDist <= Constants.COVER_OFFSET + Constants.COVER_COMPLETION_XZ then
+		-- Colocar al jugador a exactamente COVER_OFFSET de la pared.
+		local snapPos = newPos + wallNormal * (Constants.COVER_OFFSET - perpDist)
+		-- Clamp lateral: forzar posición hacia adentro si termina en esquina.
+		local wallSurfaceB = snapPos - wallNormal * Constants.COVER_OFFSET
+		local clampedB = self:_clampHitToFace(data.coverPart, wallSurfaceB, wallNormal, Constants.COVER_CORNER_MARGIN)
+		snapPos = clampedB + wallNormal * Constants.COVER_OFFSET
+		rootPart.CFrame = CFrame.new(Vector3.new(snapPos.X, currentPos.Y, snapPos.Z)) * rootPart.CFrame.Rotation
 		return "complete"
 	end
 

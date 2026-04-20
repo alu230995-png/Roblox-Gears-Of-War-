@@ -360,8 +360,6 @@ EvadeHandler._handlers = {
 			else
 				self._evadeDirection = self._exitCornerTangent
 			end
-
-			print("ExitCorner: coverNormal =", coverNormal, "wallRight =", wallRight, "tangent =", tangent)
 		else
 			-- Fallback sin curva: comportamiento recto original
 			self._isExitCornerCurve = false

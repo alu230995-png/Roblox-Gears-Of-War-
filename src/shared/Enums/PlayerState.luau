@@ -79,7 +79,7 @@ PlayerState.Transitions = {
 	-- Transiciones específicas — Action Group
 	CoverSlide = { "CoverIdle" },
 	CoverEntering = { "CoverIdle", "Idle", "Vaulting" },
-	CoverExiting = { "Idle" },
+	CoverExiting = { "Idle", "Walking", "Aiming", "Firing" },
 	CoverSwap = { "CoverIdle", "RoadieRun", "CoverWalking", "Idle" },
 	ExitCorner = { "Idle", "Walking", "RoadieRun" },
 	Evading = { "Idle", "Walking", "RoadieRun"},

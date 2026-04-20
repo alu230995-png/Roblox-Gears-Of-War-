@@ -220,6 +220,10 @@ function MovementController:Update(dt: number)
 
 	if stateAfter == "RoadieRun" then
 		self:_updateRoadieRun()
+	else
+		if self._roadieRunLV and self._roadieRunLV.Enabled then
+			self._roadieRunLV.Enabled = false
+		end
 	end
 
 	self._rotationHandler:Update(dt, stateAfter, self._coverHandler:GetNormal())
@@ -249,13 +253,38 @@ end
 -- INTERNAL: Character Refs Cache
 ------------------------------------------------------------------------
 
---- Refresca la cache de character/humanoid/hrp si el character cambió (respawn).
+--- Refresca la cache de character/humanoid/hrp si el character cambió (respawn)
+--- o si HRP/Humanoid no estaban listos en el cache anterior (race condition en mobile).
 function MovementController:_refreshCache()
 	local character = self._player.Character
-	if character ~= self._cachedCharacter then
+	if character ~= self._cachedCharacter or (character and (not self._cachedHRP or not self._cachedHumanoid)) then
 		self._cachedCharacter = character
 		self._cachedHumanoid = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
 		self._cachedHRP = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+
+		if self._cachedHRP then
+			local attachment = self._cachedHRP:FindFirstChild("RoadieRunAttachment")
+			if not attachment then
+				attachment = Instance.new("Attachment")
+				attachment.Name = "RoadieRunAttachment"
+				attachment.Parent = self._cachedHRP
+			end
+
+			local lv = self._cachedHRP:FindFirstChild("RoadieRunVelocity")
+			if not lv then
+				lv = Instance.new("LinearVelocity")
+				lv.Name = "RoadieRunVelocity"
+				lv.Attachment0 = attachment
+				lv.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+				lv.MaxAxesForce = Vector3.new(math.huge, 0, math.huge) -- Control XYZ, ignora gravedad Y
+				lv.VectorVelocity = Vector3.zero
+				lv.Enabled = false
+				lv.Parent = self._cachedHRP
+			end
+			self._roadieRunLV = lv
+		else
+			self._roadieRunLV = nil
+		end
 	end
 end
 
@@ -297,15 +326,26 @@ function MovementController:_updateRoadieRun()
 	-- Aplanar al plano horizontal y normalizar
 	local flatDir = Vector3.new(rawDir.X, 0, rawDir.Z)
 	if flatDir.Magnitude < Constants.ZERO_MAGNITUDE then
+		if self._roadieRunLV then
+			self._roadieRunLV.Enabled = false
+		end
 		return
 	end
 	flatDir = flatDir.Unit
 
-	hrp.AssemblyLinearVelocity = Vector3.new(
+	local targetVelocity = Vector3.new(
 		flatDir.X * Constants.ROADIE_RUN_SPEED,
-		hrp.AssemblyLinearVelocity.Y,
+		0, -- Y is ignored by MaxAxesForce
 		flatDir.Z * Constants.ROADIE_RUN_SPEED
 	)
+
+	if self._roadieRunLV then
+		self._roadieRunLV.VectorVelocity = targetVelocity
+		self._roadieRunLV.Enabled = true
+	else
+		-- Fallback to AssemblyLinearVelocity
+		hrp.AssemblyLinearVelocity = Vector3.new(targetVelocity.X, hrp.AssemblyLinearVelocity.Y, targetVelocity.Z)
+	end
 end
 
 return MovementController

@@ -90,8 +90,8 @@ WeaponConstants.WEAPONS = table.freeze({
 			IsHeavy = false,
 		}),
 		Stats = table.freeze({
-			BaseDamage = 60,
-			FireRate = 0.8,
+			BaseDamage = 62,
+			FireRate = 1.2,
 			Range = 200,
 			AutoFire = false,
 		}),

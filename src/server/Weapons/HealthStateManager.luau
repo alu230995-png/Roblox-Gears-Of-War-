@@ -92,7 +92,7 @@ local function _freezeOriginal(character: Model)
 	for _, part in character:GetDescendants() do
 		if part:IsA("BasePart") then
 			part.Anchored = true
-			part.CanCollide = true
+			part.CanCollide = false
 			part.CanTouch = false
 			part.CanQuery = false
 		end
@@ -102,9 +102,12 @@ local function _freezeOriginal(character: Model)
 	-- mover el modelo congelado muy por debajo del mapa para eliminar
 	-- cualquier interferencia residual de colisiones server-side.
 	task.delay(0.2, function()
+		if not character or not character.Parent then
+			return
+		end
 		for _, part in character:GetDescendants() do
 			if part:IsA("BasePart") then
-				part.CFrame = part.CFrame + Vector3.new(0, 20, 0)
+				part.CFrame = part.CFrame + Vector3.new(0, 100, 0)
 			end
 		end
 	end)
@@ -204,10 +207,11 @@ end
 --- Inicia el estado DBNO: clampea HP al threshold y marca LifeState.
 --- El bleedout lo gestiona CombatService (ya existente) escuchando
 --- el cambio de LifeState a "DBNO".
-local function _enterDBNO(humanoid: Humanoid, character: Model, newHealth: number)
+local function _enterDBNO(humanoid: Humanoid, character: Model, _newHealth: number)
 	character:SetAttribute("LifeState", "DBNO")
-	-- Clampear a DBNO health (no dejar que baje de 1 en la transición)
-	humanoid.Health = math.clamp(newHealth, 1, Constants.DBNO_HEALTH)
+	-- Siempre iniciar DBNO con su pool de vida completo (independiente de la vida que tenía)
+	humanoid.MaxHealth = Constants.DBNO_HEALTH
+	humanoid.Health = Constants.DBNO_HEALTH
 end
 
 ------------------------------------------------------------------------

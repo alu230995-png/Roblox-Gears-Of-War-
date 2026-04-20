@@ -69,6 +69,11 @@ function InCover:NotifyEnterFromSnap()
 	-- Notificar a la cámara que el settle está activo (desactiva Dynamic Framing)
 	self._state.onCoverSettleChanged:Fire(true)
 
+	-- Notificar al EnvironmentSensor para bloquear aim durante la rotación inicial
+	if self._state.envSensor then
+		self._state.envSensor:SetCoverSettleActive(true)
+	end
+
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
@@ -372,6 +377,11 @@ function InCover:_cleanupSettle(hrp: BasePart?)
 	-- hacia la cover normal. SetCoverNormal solo se llama cuando la cover
 	-- realmente cambia (esquina interna, cover swap).
 	self._state.onCoverSettleChanged:Fire(false)
+
+	-- Notificar al EnvironmentSensor que el settle ya terminó
+	if self._state.envSensor then
+		self._state.envSensor:SetCoverSettleActive(false)
+	end
 end
 
 --- Obtiene el HumanoidRootPart del personaje local con cache (nil si no existe).

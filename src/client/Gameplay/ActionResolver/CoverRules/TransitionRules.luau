@@ -57,21 +57,10 @@ TransitionRules.Entering = {
 		end,
 	},
 
-	-- Prio 3: BlindFire durante entering (disparo sin apuntar)
-	{
-		id = "BlindFireFromEntering",
-		check = function(_resolver, ctx)
-			return ctx.Intents:HasIntent("WantsShoot")
-		end,
-		execute = function()
-			return "BlindFire", nil, nil
-		end,
-	},
-
-	-- Prio 4: ExitCorner desde entering (reduce latencia de input)
+	-- Prio 3: ExitCorner desde entering (reduce latencia de input)
 	SharedRules.ExitCorner,
 
-	-- Prio 5: CornerRollOut desde entering (roll lateral completo)
+	-- Prio 4: CornerRollOut desde entering (roll lateral completo)
 	SharedRules.CornerRollOut,
 }
 

@@ -156,6 +156,9 @@ local function _hideOriginal(character: Model)
 	for _, descendant in character:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.Transparency = 1
+			descendant.CanCollide = false
+			descendant.CanTouch = false
+			descendant.CanQuery = false
 		end
 	end
 end
@@ -205,7 +208,7 @@ local function _settleClone(clone: Model, delay: number, collisionConn: RBXScrip
 		for _, part in clone:GetDescendants() do
 			if part:IsA("BasePart") then
 				part.Anchored = true
-				part.CanCollide = true
+				part.CanCollide = false
 				part.AssemblyLinearVelocity = Vector3.zero
 				part.AssemblyAngularVelocity = Vector3.zero
 			end

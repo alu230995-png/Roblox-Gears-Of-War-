@@ -198,6 +198,7 @@ function CameraController.new(stateMachine, actionExecutedSignal, mouseInput)
 	self._pitch = 0
 	self._sensitivityMultiplier = Constants.CAM_SENSITIVITY_DEFAULT
 	self._pitchDamping = 1.0
+	self._cameraInitialized = false -- true una vez que _yaw/_pitch se leen de la cámara real
 
 	-- Spring Arm
 	self._currentArmLength = Constants.CAM_ARM_LENGTH
@@ -251,17 +252,19 @@ function CameraController:Init()
 end
 
 function CameraController:Start()
-	-- Forzar Scriptable
-	local camera = workspace.CurrentCamera
-	if camera then
-		camera.CameraType = Enum.CameraType.Scriptable
+	local function initFromCamera(cam: Camera)
+		cam.CameraType = Enum.CameraType.Scriptable
+		if not self._cameraInitialized then
+			local pitchRad, yawRad, _ = cam.CFrame:ToEulerAnglesYXZ()
+			self._yaw = math.deg(yawRad)
+			self._pitch = math.deg(pitchRad)
+			self._cameraInitialized = true
+		end
 	end
 
-	-- Inicializar yaw desde la orientación actual de la cámara
+	local camera = workspace.CurrentCamera
 	if camera then
-		local pitchRad, yawRad, _ = camera.CFrame:ToEulerAnglesYXZ()
-		self._yaw = math.deg(yawRad)
-		self._pitch = math.deg(pitchRad)
+		initFromCamera(camera)
 	end
 
 	-- Escuchar cambios de estado → FOV, bob, shoulder, noise, sensitivity
@@ -283,10 +286,18 @@ function CameraController:Start()
 	-- vea el estado post-corrección del HRP (sin jitter de 1-frame lag).
 
 	-- Re-forzar Scriptable si la cámara cambia (respawn, etc.)
+	-- Si _yaw/_pitch aún no se inicializaron (CurrentCamera era nil al Start()),
+	-- los inicializamos aquí desde la nueva cámara.
 	self._connections.cameraChanged = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		local cam = workspace.CurrentCamera
 		if cam then
 			cam.CameraType = Enum.CameraType.Scriptable
+			if not self._cameraInitialized then
+				local pitchRad, yawRad, _ = cam.CFrame:ToEulerAnglesYXZ()
+				self._yaw = math.deg(yawRad)
+				self._pitch = math.deg(pitchRad)
+				self._cameraInitialized = true
+			end
 		end
 	end)
 
@@ -460,9 +471,16 @@ function CameraController:Update(dt: number)
 		return
 	end
 
+	-- 1. Procesar input de mouse SIEMPRE — incluso mientras el personaje carga.
+	-- Si no lo hacemos aquí, mouseInput:Update() consume el delta cada frame
+	-- pero _yaw/_pitch nunca se actualizan → la cámara aparece bloqueada
+	-- hasta que el jugador mueve el mouse tras el respawn.
+	self:_processMouseInput(dt)
+
 	local character = Players.LocalPlayer.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
+		-- Yaw/pitch están actualizados; sin HRP no podemos posicionar la cámara.
 		return
 	end
 
@@ -474,9 +492,6 @@ function CameraController:Update(dt: number)
 	self._targetBobMultiplier = if horizontalSpeed > Constants.CAM_BOB_VELOCITY_THRESHOLD
 		then self._stateBobMultiplier
 		else 0
-
-	-- 1. Procesar input de mouse → acumular yaw/pitch
-	self:_processMouseInput(dt)
 
 	-- 1b. Follow-yaw: rotar cámara suavemente hacia dirección de movimiento
 	self:_applyFollowYaw(hrp, dt)

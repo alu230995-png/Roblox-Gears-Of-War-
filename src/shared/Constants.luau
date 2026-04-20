@@ -35,7 +35,7 @@ local Constants = {}
 -- 1. DEBUG
 ------------------------------------------------------------------------
 
-Constants.DEBUG_MODE = false
+Constants.DEBUG_MODE = true
 ------------------------------------------------------------------------
 -- 2. THRESHOLDS — guardas numéricas compartidas
 ------------------------------------------------------------------------
@@ -113,6 +113,9 @@ Constants.CAM_SENSITIVITY_DBNO = 0.4
 
 -- Base multiplier applied to mouse delta (internal scaling)
 Constants.CAM_MOUSE_SENSITIVITY_BASE = 0.3
+
+-- Mobile specific multiplier to increase sensitivity
+Constants.CAM_MOBILE_SENSITIVITY_MULTIPLIER = 3.25
 
 -- Camera bob
 Constants.CAMERA_BOB_ENABLED = true
@@ -300,6 +303,13 @@ Constants.COVER_ENTRY_CANCEL_DOT = 0.85
 Constants.COVER_EXIT_DURATION = 0.15
 Constants.COVER_SLIDE_DURATION = 0.3
 
+-- Exit collision guard (anti-clip — impide traspasar la cover al salir rápido)
+-- Enfoque suave: solo inyecta velocidad correctiva gradual, sin teleportar.
+Constants.COVER_EXIT_GUARD_DURATION = 0.5 -- Segundos que el guard anti-clip permanece activo tras ExitCover
+Constants.COVER_EXIT_GUARD_PUSH_SPEED = 18 -- Velocidad máxima de corrección suave (studs/s)
+Constants.COVER_EXIT_GUARD_DAMP_RATE = 8 -- Factor de damping exponencial para anular velocidad hacia la pared
+Constants.COVER_EXIT_GUARD_SAFE_DIST = 2.5 -- Distancia mínima (studs) del plano de la pared que se considera segura
+
 ------------------------------------------------------------------------
 -- 10. EVADE / ROLL
 ------------------------------------------------------------------------
@@ -426,12 +436,13 @@ Constants.STATE_MIN_DURATION = 0.1
 
 Constants.MAX_HEALTH = 600
 Constants.HEALTH_REGEN_DELAY = 5.0
-Constants.HEALTH_REGEN_RATE = 60
+Constants.HEALTH_REGEN_RATE = 85 -- HP/s fuera de cover (rápido)
+Constants.HEALTH_REGEN_RATE_COVER = 56 -- HP/s en cover (un poco más lento)
 Constants.DBNO_HEALTH = 150
 Constants.DBNO_BLEEDOUT_TIME = 30
 Constants.DBNO_COUNTDOWN_TIME = 8
-Constants.DBNO_REVIVE_POINTS_STILL = 5
-Constants.DBNO_REVIVE_POINTS_MOVING = 2
+Constants.DBNO_REVIVE_POINTS_STILL = 8
+Constants.DBNO_REVIVE_POINTS_MOVING = 4
 Constants.DBNO_REVIVE_COOLDOWN = 0.5
 Constants.DBNO_REVIVE_THRESHOLD = 45
 Constants.DBNO_PROMPT_RANGE = 8

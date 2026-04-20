@@ -31,8 +31,12 @@
 	  Los botones touch del HUD llaman este método.
 ]]
 
+local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+
+local IS_MOBILE = UserInputService.TouchEnabled and not GuiService:IsTenFootInterface()
 
 local PlayerBindings = require(script.Parent.PlayerBindings)
 
@@ -148,6 +152,13 @@ end
 --- Tiempo que lleva held un raw input. Retorna 0 si no está held.
 function InputDetector:GetHoldDuration(rawName: string): number
 	local now = os.clock()
+	-- UI synthetic key (botones móviles)
+	local uiKey = "UI_" .. rawName
+	local uiStart = self._heldKeys[uiKey]
+	if uiStart then
+		return now - uiStart
+	end
+	-- Physical keys (teclado/gamepad)
 	for key, pressStart in self._heldKeys do
 		local name = self._keyToRaw[key] or self._gamepadToRaw[key]
 		if name == rawName then
@@ -177,6 +188,26 @@ function InputDetector:RebuildBindings(bindings)
 	table.clear(self._eventQueue)
 end
 
+--- Limpia el held state de todos los botones UI virtuales (keys sintéticas "UI_*").
+--- Llamar al morir o al respawnear para evitar phantom held state entre vidas.
+--- Si un botón estaba held (Visible=false cortó el InputEnded), esto garantiza
+--- que _heldByRaw quede a cero y ningún intent continuo se active por stale state.
+function InputDetector:ResetUIHeldState()
+	local toRemove = {}
+	for key in self._heldKeys do
+		if type(key) == "string" and string.sub(key, 1, 3) == "UI_" then
+			table.insert(toRemove, key)
+		end
+	end
+	for _, key in toRemove do
+		local rawName = string.sub(key, 4) -- strip "UI_"
+		local count = (self._heldByRaw[rawName] or 0) - 1
+		self._heldByRaw[rawName] = if count > 0 then count else nil
+		self._heldKeys[key] = nil
+		self._holdEmitted[key] = nil
+	end
+end
+
 ------------------------------------------------------------------------
 -- RUTA UI / MÓVIL
 -- Botones HUD, touchscreen, o cualquier UI que quiera simular input.
@@ -184,10 +215,18 @@ end
 --   inputDetector:FireUIButton("CoverButton", "Tap")
 --   inputDetector:FireUIButton("FireButton", "Pressed")
 --   inputDetector:FireUIButton("SwapWeapon", "Pressed", 2) -- slot 2
+--
+-- Para botones hold-sensitive (ej. RoadieRun en móvil) usar los métodos
+-- Down/Up para que IsRawHeld() retorne true mientras el botón se mantiene:
+--   inputDetector:FireUIButtonDown("CoverButton", "HoldStart", elapsed)
+--   inputDetector:FireUIButtonUp("CoverButton", "Release", elapsed)
 ------------------------------------------------------------------------
 function InputDetector:FireUIButton(rawName: string, mode: string, data: any?)
 	self:_queueEvent(rawName, mode, data)
 end
+
+--- FireUIButtonDown y FireUIButtonUp definidos al final del módulo.
+--- Usan key sintética "UI_<rawName>" para no colisionar con teclas físicas.
 
 ------------------------------------------------------------------------
 -- INTERNAL: Input Began
@@ -287,14 +326,53 @@ end
 function InputDetector:_updateMoveDirection()
 	local dir = Vector2.zero
 
-	for keyCode, vec in self._moveKeys do
-		if UserInputService:IsKeyDown(keyCode) then
-			dir += vec
-		end
-	end
+	if IS_MOBILE then
+		-- En mobile, el DynamicThumbstick de Roblox controla Humanoid.MoveDirection
+		-- directamente. Leemos esa dirección y la convertimos a Vector2 camera-relative
+		-- para que el resto del pipeline (IntentMapper → ActionResolver) funcione.
+		local player = Players.LocalPlayer
+		local character = player and player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-	if dir.Magnitude > 0 then
-		dir = dir.Unit
+		if humanoid then
+			local moveDir3 = humanoid.MoveDirection
+			if moveDir3.Magnitude > 0.01 then
+				local camera = workspace.CurrentCamera
+				if camera then
+					local camCF = camera.CFrame
+					-- Proyectar vectores de cámara en el plano XZ
+					local fwd = camCF.LookVector
+					local right = camCF.RightVector
+					local fwd2 = Vector2.new(fwd.X, fwd.Z)
+					local right2 = Vector2.new(right.X, right.Z)
+					if fwd2.Magnitude > 0.001 then
+						fwd2 = fwd2.Unit
+					end
+					if right2.Magnitude > 0.001 then
+						right2 = right2.Unit
+					end
+
+					local move2 = Vector2.new(moveDir3.X, moveDir3.Z)
+					-- Dot products → componentes camera-relative (X = strafe, Y = forward)
+					local forwardAmount = move2:Dot(fwd2)
+					local rightAmount = move2:Dot(right2)
+					dir = Vector2.new(rightAmount, forwardAmount)
+					if dir.Magnitude > 1 then
+						dir = dir.Unit
+					end
+				end
+			end
+		end
+	else
+		for keyCode, vec in self._moveKeys do
+			if UserInputService:IsKeyDown(keyCode) then
+				dir += vec
+			end
+		end
+
+		if dir.Magnitude > 0 then
+			dir = dir.Unit
+		end
 	end
 
 	self._moveDirection = dir
@@ -327,6 +405,27 @@ function InputDetector:_queueEvent(name: string, mode: string, data: any?)
 		Data = data,
 		Timestamp = os.clock(),
 	})
+end
+
+function InputDetector:FireUIButtonDown(rawName: string, mode: string, data: any?)
+	self:_queueEvent(rawName, mode, data)
+	local syntheticKey = "UI_" .. rawName
+	if not self._heldKeys[syntheticKey] then
+		self._heldKeys[syntheticKey] = os.clock()
+		self._holdEmitted[syntheticKey] = (mode == "HoldStart")
+		self._heldByRaw[rawName] = (self._heldByRaw[rawName] or 0) + 1
+	end
+end
+
+function InputDetector:FireUIButtonUp(rawName: string, mode: string, data: any?)
+	self:_queueEvent(rawName, mode, data)
+	local syntheticKey = "UI_" .. rawName
+	if self._heldKeys[syntheticKey] then
+		self._heldKeys[syntheticKey] = nil
+		self._holdEmitted[syntheticKey] = nil
+		local count = (self._heldByRaw[rawName] or 0) - 1
+		self._heldByRaw[rawName] = if count > 0 then count else nil
+	end
 end
 
 return InputDetector

@@ -103,7 +103,7 @@ local FreeStateRules = {
 		check = function(_resolver, ctx)
 	return ctx.Intents:HasIntent("WantsAim")
 		and ctx.StateConfig.canShoot
-		and (ctx.State == "Idle" or ctx.State == "Walking")
+		and (ctx.State == "Idle" or ctx.State == "Walking" or ctx.State == "CoverExiting")
 		end,
 		execute = function()
 	return "StartAim", "Aiming", nil
@@ -130,7 +130,13 @@ local FreeStateRules = {
 		check = function(_resolver, ctx)
 	return ctx.Intents:HasIntent("WantsShoot")
 		and ctx.StateConfig.canShoot
-		and (ctx.State == "Aiming" or ctx.State == "Idle" or ctx.State == "Walking" or ctx.State == "ExitCorner")
+		and (
+			ctx.State == "Aiming"
+			or ctx.State == "Idle"
+			or ctx.State == "Walking"
+			or ctx.State == "ExitCorner"
+			or ctx.State == "CoverExiting"
+		)
 		end,
 		execute = function()
 	return "Shoot", nil, nil -- WeaponClient es autoridad de transición a Firing

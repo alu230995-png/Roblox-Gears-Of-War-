@@ -57,7 +57,7 @@ function RotationHandler.new()
 	self._roadieRunTimer = 0 -- tiempo en RoadieRun (para Quick Snap → Heavy Steering)
 	self._lastState = ""
 	self._lockedRunDirection = nil :: Vector3? -- Direction Caching: dirección fija durante Fase 1
-	self._lowCoverNoCollision = nil :: NoCollisionConstraint? -- constraint activa durante CoverAimLow
+	self._lowCoverNoCollision = {} :: { NoCollisionConstraint } -- constraints activas durante CoverAimLow (una por BasePart del personaje)
 	self._lowCoverReturnActive = false -- true: rotando de vuelta tras salir de CoverAimLow, NoCollision aún necesaria
 
 	-- Cache de character refs (evita FindFirstChild cada frame)
@@ -138,11 +138,19 @@ function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?
 		return
 	end
 
-	-- Actualizar cache si el character cambió (respawn)
+	-- Actualizar cache si el character cambió (respawn) o si los parts aún no estaban listos
 	if character ~= self._cachedCharacter then
-		self._cachedCharacter = character
-		self._cachedHumanoid = character:FindFirstChildOfClass("Humanoid")
-		self._cachedHRP = character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if humanoid and hrp then
+			-- Parts listos: cachear y continuar
+			self._cachedCharacter = character
+			self._cachedHumanoid = humanoid
+			self._cachedHRP = hrp
+		else
+			-- Parts aún no cargados (race condition post-respawn): reintentar el frame siguiente
+			return
+		end
 	end
 
 	local humanoid = self._cachedHumanoid
@@ -230,8 +238,8 @@ function RotationHandler:Update(dt: number, state: string, coverNormal: Vector3?
 				local charLook = hrp.CFrame.LookVector
 				local flatLook = Vector3.new(charLook.X, 0, charLook.Z)
 				if flatLook.Magnitude > 0.01 then
-					if flatLook.Unit:Dot(coverNormal) > 0.95 then
-						-- Alineado: limpiar NoCollision rápidamente
+					if flatLook.Unit:Dot(coverNormal) > 0.99 then
+						-- Alineado (~8° de margen): limpiar NoCollision
 						self._lowCoverReturnActive = false
 						self:_cleanupLowCoverNoCollision()
 					end
@@ -298,38 +306,50 @@ end
 -- INTERNAL: Low Cover NoCollision — evita clipping al rotar hacia afuera
 ------------------------------------------------------------------------
 
---- Crea o mantiene una NoCollisionConstraint entre el HRP y el cover part.
+--- Crea o mantiene NoCollisionConstraints entre TODOS los BaseParts del personaje y el cover part.
 --- Se llama cada frame durante CoverAimLow front-cone rotation.
-function RotationHandler:_ensureLowCoverNoCollision(hrp: BasePart)
+--- Igual que EnteringCover._disableCoverCollision: cubre HRP + torso + arms + legs.
+function RotationHandler:_ensureLowCoverNoCollision(_hrp: BasePart)
 	local coverPart = self._coverHandler and self._coverHandler:GetCoverInstance()
 	if not coverPart then
 		self:_cleanupLowCoverNoCollision()
 		return
 	end
 
-	-- Si ya tenemos constraint con la misma part, no recrear
+	-- Si ya tenemos constraints con la misma cover part, no recrear
 	local existing = self._lowCoverNoCollision
-	if existing and existing.Parent and existing.Part1 == coverPart then
+	if #existing > 0 and existing[1].Parent ~= nil and existing[1].Part1 == coverPart then
 		return
 	end
 
-	-- Limpiar constraint anterior (puede ser de otra cover part)
+	-- Limpiar constraints anteriores (puede ser de otra cover part)
 	self:_cleanupLowCoverNoCollision()
 
-	local noCol = Instance.new("NoCollisionConstraint")
-	noCol.Name = "LowCoverAimNoCollision"
-	noCol.Part0 = hrp
-	noCol.Part1 = coverPart
-	noCol.Parent = hrp
-	self._lowCoverNoCollision = noCol
+	-- Crear NCC para cada BasePart del personaje (evita que torso/arms clippen con la pared al rotar)
+	local character = self._player.Character
+	if not character then
+		return
+	end
+	for _, part in character:GetChildren() do
+		if part:IsA("BasePart") then
+			local noCol = Instance.new("NoCollisionConstraint")
+			noCol.Name = "LowCoverAimNoCollision"
+			noCol.Part0 = part
+			noCol.Part1 = coverPart
+			noCol.Parent = part
+			table.insert(self._lowCoverNoCollision, noCol)
+		end
+	end
 end
 
---- Destruye la NoCollisionConstraint si existe.
+--- Destruye todas las NoCollisionConstraints del ciclo de CoverAimLow.
 function RotationHandler:_cleanupLowCoverNoCollision()
-	if self._lowCoverNoCollision then
-		self._lowCoverNoCollision:Destroy()
-		self._lowCoverNoCollision = nil
+	for _, ncc in self._lowCoverNoCollision do
+		if ncc and ncc.Parent then
+			ncc:Destroy()
+		end
 	end
+	table.clear(self._lowCoverNoCollision)
 end
 
 ------------------------------------------------------------------------

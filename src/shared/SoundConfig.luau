@@ -213,8 +213,8 @@ SoundConfig.VFX_Vault = {
 }
 
 SoundConfig.VFX_Weapon_Lancer_Fire = {
-	Ids = { "rbxassetid://0", "rbxassetid://0", "rbxassetid://0" },
-	Random = true,
+	Ids = { "rbxassetid://110150952627649", "rbxassetid://89825700276956", "rbxassetid://97911118271227" },
+	Random = false,
 	Looped = false,
 	Scope = "Global",
 	Group = "VFX",
@@ -224,8 +224,8 @@ SoundConfig.VFX_Weapon_Lancer_Fire = {
 }
 
 SoundConfig.VFX_Weapon_Gnasher_Fire = {
-	Ids = { "rbxassetid://0", "rbxassetid://0" },
-	Random = true,
+	Ids = { "rbxassetid://89064934453725", "rbxassetid://97496591038052", "rbxassetid://118730681474585" },
+	Random = false,
 	Looped = false,
 	Scope = "Global",
 	Group = "VFX",
@@ -246,12 +246,12 @@ SoundConfig.VFX_Weapon_Longshot_Fire = {
 }
 
 SoundConfig.VFX_Weapon_TorqueBow_Fire = {
-	Ids = { "rbxassetid://0" },
+	Ids = { "rbxassetid://100368502906072" },
 	Random = false,
 	Looped = false,
 	Scope = "Global",
 	Group = "VFX",
-	Volume = 0.8,
+	Volume = 0.5,
 	MaxDistance = 120,
 	PitchVariation = 0.04,
 }

@@ -24,6 +24,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
@@ -126,6 +127,7 @@ end
 function DBNOHandler:_onEnterDBNO()
 	self._isInDBNO = true
 	self._lastReviveAttempt = 0
+	ProximityPromptService.Enabled = false
 	self.DBNOStarted:Fire()
 
 	local player = Players.LocalPlayer
@@ -161,6 +163,7 @@ end
 
 function DBNOHandler:_onExitDBNO(newState: string)
 	self._isInDBNO = false
+	ProximityPromptService.Enabled = true
 	self:_cleanAttributeConnections()
 
 	local reason = (newState == "Death") and "Died" or "Revived"

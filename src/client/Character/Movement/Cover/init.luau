@@ -101,6 +101,15 @@ function CoverMain.new(stateMachine, environmentSensor)
 	self._timer = 0
 	self._timerCallback = nil :: (() -> ())?
 
+	-- Exit Collision Guard: impide traspasar la cover al salir rápido
+	-- Se activa en ExitCover con los datos de la cover que se abandona.
+	self._exitGuard = nil :: {
+		coverInstance: BasePart,
+		coverNormal: Vector3,
+		coverPosition: Vector3,
+		timer: number,
+	}?
+
 	return self
 end
 
@@ -130,6 +139,40 @@ end
 --- @param envContext table? — EnvironmentContext del EnvironmentSensor
 --- @param wantsCoverRedirect boolean? — true si el jugador pulsó cover de nuevo
 function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: boolean?)
+	-- ★ STALE COVER GUARD: si el estado salió de CoverGroup (ForceState a DBNO/Death/Idle)
+	-- mientras había cover data activa, limpiar todo para evitar esquinas fantasma,
+	-- peek residual, settle huérfano, y datos stale en EnvironmentSensor.
+	-- Excluir estados de ActionGroup que necesitan cover data viva para completarse.
+	local currentState = self._stateMachine:GetCurrentState()
+	local isCoverRelated = self._stateMachine:IsInGroup("CoverGroup")
+		or currentState == "CoverSlide"
+		or currentState == "CoverEntering"
+		or currentState == "CoverExiting"
+		or currentState == "CoverSwap"
+	if not isCoverRelated then
+		if
+			self._coverState.coverNormal
+			or self._enteringCover:IsActive()
+			or self._peekHandler:IsActive()
+			or self._coverSwapController:IsActive()
+			or self._coverRunning:IsActive()
+			or self._pendingCoverIdleTransition
+		then
+			self._enteringCover:Cancel()
+			self._coverSwapController:Cancel()
+			self._peekHandler:Cancel()
+			self._cornerCover:Reset()
+			self._coverRunning:Stop()
+			self._inCover:_cancelSettle(nil)
+			self:_clearCoverState()
+			self:_cancelTimer()
+			self._pendingCoverIdleTransition = false
+			self._pendingIdleTransition = false
+			self._exitGuard = nil
+			return
+		end
+	end
+
 	-- ★ Validación de cover instance: si la part desapareció/fue destruida,
 	-- cancelar cualquier estado de cover y volver a Idle.
 	local coverInst = self._coverState.coverInstance
@@ -172,6 +215,20 @@ function CoverMain:Update(dt: number, envContext: any?, wantsCoverRedirect: bool
 				self._timerCallback()
 				self._timerCallback = nil
 			end
+		end
+	end
+
+	-- EXIT COLLISION GUARD: impide traspasar la cover durante los frames
+	-- posteriores a ExitCover. Si el personaje se acerca demasiado a la
+	-- pared que acaba de abandonar, inyecta velocidad correctiva para
+	-- empujarlo hacia fuera. Desactivar si re-entra en cover (enteringCover active).
+	if self._exitGuard then
+		self._exitGuard.timer -= dt
+		local guard = self._exitGuard
+		if guard.timer <= 0 or not guard.coverInstance:IsDescendantOf(workspace) or self._enteringCover:IsActive() then
+			self._exitGuard = nil
+		else
+			self:_updateExitGuard(guard, dt)
 		end
 	end
 
@@ -351,6 +408,23 @@ function CoverMain:ResetCover()
 	self._pendingIdleTransition = false
 	self._cornerCover:Reset()
 	self._coverRunning:Stop()
+
+	-- FIX: cancelar settle de InCover (misma razón que ExitCover)
+	self._inCover:_cancelSettle(nil)
+
+	-- Activar exit guard anti-clip antes de limpiar
+	local exitNormal = self._coverState.coverNormal
+	local exitPosition = self._coverState.coverPosition
+	local exitInstance = self._coverState.coverInstance
+	if exitNormal and exitPosition and exitInstance and exitInstance:IsDescendantOf(workspace) then
+		self._exitGuard = {
+			coverInstance = exitInstance,
+			coverNormal = exitNormal,
+			coverPosition = exitPosition,
+			timer = Constants.COVER_EXIT_GUARD_DURATION,
+		}
+	end
+
 	self:_clearCoverState()
 	self:_cancelTimer()
 end
@@ -365,6 +439,9 @@ CoverMain._handlers = {
 		if not data then
 			return
 		end
+
+		-- Cancelar exit guard si existe (re-entrada cancela anti-clip)
+		self._exitGuard = nil
 
 		-- Escribir estado compartido
 		self._coverState.coverNormal = data.coverNormal
@@ -399,6 +476,9 @@ CoverMain._handlers = {
 		if not data then
 			return
 		end
+
+		-- Cancelar exit guard si existe (re-entrada cancela anti-clip)
+		self._exitGuard = nil
 
 		self._coverState.coverNormal = data.coverNormal
 		self._coverState.coverPosition = data.coverPos
@@ -439,10 +519,36 @@ CoverMain._handlers = {
 		self._peekHandler:Cancel()
 		self._cornerCover:Reset()
 		self._coverRunning:Stop()
+
+		-- FIX: cancelar settle de InCover para destruir CoverSettleNoCollision
+		-- que de otro modo quedaría huérfana y deshabilitaría colisiones post-exit.
+		self._inCover:_cancelSettle(nil)
+
+		-- Guardar datos de la cover ANTES de limpiar para el exit guard anti-clip
+		local exitNormal = self._coverState.coverNormal
+		local exitPosition = self._coverState.coverPosition
+		local exitInstance = self._coverState.coverInstance
+
 		self:_clearCoverState()
 
+		-- Activar exit collision guard si tenemos datos válidos
+		if exitNormal and exitPosition and exitInstance and exitInstance:IsDescendantOf(workspace) then
+			self._exitGuard = {
+				coverInstance = exitInstance,
+				coverNormal = exitNormal,
+				coverPosition = exitPosition,
+				timer = Constants.COVER_EXIT_GUARD_DURATION,
+			}
+		end
+
 		self:_startTimer(Constants.COVER_EXIT_DURATION, function()
-			if not self._stateMachine:TransitionTo("Idle") then
+			-- Transicionar al estado correcto según si el jugador se está moviendo.
+			-- Evita el parpadeo Idle→Walking que ocurría al hardcodear siempre Idle.
+			local character = self._coverState.player.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			local isMoving = humanoid and humanoid.MoveDirection.Magnitude > Constants.MOVE_DIRECTION_THRESHOLD
+			local targetState = if isMoving then "Walking" else "Idle"
+			if not self._stateMachine:TransitionTo(targetState) then
 				self._pendingIdleTransition = true
 			end
 		end)
@@ -513,6 +619,64 @@ function CoverMain:_clearCoverState()
 	end
 end
 
+------------------------------------------------------------------------
+-- EXIT COLLISION GUARD — barrera suave post-exit cover
+-- Impide traspasar la cover recién abandonada usando solo velocidad
+-- correctiva (sin CFrame snap). Patrón: damping exponencial de la
+-- componente de velocidad hacia la pared + empuje suave hacia fuera
+-- proporcional a la cercanía. Invisible para el jugador, se siente
+-- como si la pared simplemente tuviera colisión sólida.
+------------------------------------------------------------------------
+
+--- Cada frame: amortigua velocidad hacia la pared y añade empuje
+--- correctivo proporcional a la cercanía. Sin teleportaciones.
+function CoverMain:_updateExitGuard(guard, dt: number)
+	local character = self._coverState.player.Character
+	if not character then
+		return
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
+
+	local coverNormal = guard.coverNormal
+	local coverPosition = guard.coverPosition
+
+	-- Distancia del jugador al plano de la pared (positivo = lado correcto)
+	local toPlayer = hrp.Position - coverPosition
+	local perpDist = toPlayer:Dot(coverNormal)
+
+	local safeDist = Constants.COVER_EXIT_GUARD_SAFE_DIST
+
+	-- Solo actuar si el personaje está más cerca de la pared que safeDist
+	if perpDist >= safeDist then
+		return
+	end
+
+	local vel = hrp.AssemblyLinearVelocity
+	local perpVel = coverNormal:Dot(vel)
+
+	-- 1. DAMPING: amortiguar componente de velocidad HACIA la pared
+	--    Exponencial frame-rate independent: factor = 1 - e^(-rate * dt)
+	--    Solo actúa cuando perpVel < 0 (moviéndose hacia la pared).
+	if perpVel < 0 then
+		local dampFactor = 1 - math.exp(-Constants.COVER_EXIT_GUARD_DAMP_RATE * dt)
+		-- Reducir la componente negativa suavemente en vez de eliminarla de golpe
+		local correction = coverNormal * (-perpVel * dampFactor)
+		vel = vel + correction
+	end
+
+	-- 2. PUSH SUAVE: empuje correctivo proporcional a cuánto falta para safeDist.
+	--    err normalizado 0…1 (0 = en safeDist, 1 = dentro de la pared).
+	--    La fuerza crece suavemente con el cuadrado del error (ease-in).
+	local err = math.clamp((safeDist - perpDist) / safeDist, 0, 1)
+	local pushStrength = err * err * Constants.COVER_EXIT_GUARD_PUSH_SPEED
+	vel = vel + coverNormal * pushStrength * dt
+
+	hrp.AssemblyLinearVelocity = Vector3.new(vel.X, hrp.AssemblyLinearVelocity.Y, vel.Z)
+end
+
 function CoverMain:_startTimer(duration: number, callback: () -> ())
 	self._timer = duration
 	self._timerCallback = callback
@@ -571,6 +735,7 @@ function CoverMain:Destroy()
 	self._coverRunning:Stop()
 	self:_clearCoverState()
 	self:_cancelTimer()
+	self._exitGuard = nil
 
 	-- Destruir señales
 	self.CoverSettleChanged:Destroy()

@@ -81,7 +81,6 @@ function VaultSafety:CheckSafety(
 	local diagonalDir = (forwardDir + Vector3.new(0, 1, 0)).Unit * Constants.VAULT_OVERHEAD_CLEARANCE_UP
 	local playerOverheadResult = workspace:Raycast(playerOverheadOrigin, diagonalDir, self._rayParams)
 	if playerOverheadResult then
-		print("No se puede hacer vault")
 		return false, nil, nil
 	end
 

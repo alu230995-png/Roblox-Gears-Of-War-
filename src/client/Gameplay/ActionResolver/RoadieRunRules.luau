@@ -41,7 +41,26 @@ local RoadieRunRules = {
 		end,
 	},
 
-	-- Prio 3: Stop RoadieRun
+	-- Prio 3: Cover button tap detiene RoadieRun
+	-- Si cover nearby, Prio 1 (SlideIntoCover) ya lo manejó.
+	-- Si evade posible, Prio 2 (EvadeRoadie) ya lo manejó.
+	-- Esto cubre: no cover + evade en cooldown → forzar stop.
+	{
+		id = "StopRoadieRunOnCoverTap",
+		check = function(_resolver, ctx)
+	return ctx.Buffer:HasIntent("WantsCover")
+		end,
+		execute = function(_resolver, ctx)
+	ctx.Buffer:Consume("WantsCover")
+	if ctx.HasMovement then
+		return "StopRoadieRun", "Walking", nil
+	else
+		return "StopRoadieRun", "Idle", nil
+	end
+		end,
+	},
+
+	-- Prio 4: Stop RoadieRun (intent continuo liberado)
 	{
 		id = "StopRoadieRun",
 		check = function(_resolver, ctx)

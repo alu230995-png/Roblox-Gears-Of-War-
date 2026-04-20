@@ -127,6 +127,12 @@ function HealthObserver:_applyLifeState(lifeState: string)
 	elseif lifeState == "Alive" then
 		if currentState == "Death" or currentState == "DBNO" or currentState == "Lobby" then
 			self._stateMachine:ForceState("Idle")
+			-- Revive desde DBNO (mismo character, CharacterAdded no dispara):
+			-- limpiar inputs residuales para evitar que intents como WantsRoadieRun
+			-- activen RoadieRun automáticamente al primer frame tras el revive.
+			if currentState == "DBNO" then
+				self.Respawned:Fire()
+			end
 		end
 	end
 end

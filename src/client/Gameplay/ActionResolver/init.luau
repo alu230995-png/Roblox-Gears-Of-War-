@@ -93,6 +93,7 @@ function ActionResolver:Resolve(): (string, string?, any?)
 		self._stateMachine:IsInGroup("ActionGroup")
 		and state ~= "CoverSwap"
 		and state ~= "CoverEntering"
+		and state ~= "CoverExiting"
 		and state ~= "ExitCorner"
 		and state ~= "Evading"
 	then
@@ -151,6 +152,11 @@ function ActionResolver:_selectRules(state: string)
 	-- CoverEntering: permite vault-from-entering y cover chaining
 	if state == "CoverEntering" then
 		return CoverRules.Entering
+	end
+
+	-- CoverExiting: permite apuntar y disparar durante la animacion de salida de cover
+	if state == "CoverExiting" then
+		return FreeStateRules
 	end
 
 	-- ExitCorner: permite encadenar a Walking/Idle/RoadieRun/Evade para transición fluida

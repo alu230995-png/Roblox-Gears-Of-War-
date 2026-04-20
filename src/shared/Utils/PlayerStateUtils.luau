@@ -140,7 +140,14 @@ local CAPABILITY_EXCEPTIONS = {
 	-- ACTION GROUP: animaciones comprometidas — todo bloqueado
 	CoverSlide = ALL_LOCKED,
 	CoverEntering = ALL_LOCKED,
-	CoverExiting = ALL_LOCKED,
+	-- CoverExiting: transición de salida — permite disparar/apuntar pero no re-entrar ni sprint
+	CoverExiting = {
+		canShoot = true,
+		canMove = false,
+		canTakeCover = false,
+		canEvade = false,
+		canSprint = false,
+	},
 	CoverSwap = ALL_LOCKED,
 	Mantling = ALL_LOCKED,
 	Vaulting = ALL_LOCKED,

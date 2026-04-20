@@ -122,7 +122,7 @@ SharedRules.ExitCorner = {
 SharedRules.PopUpAim = {
 	id = "PopUpAim",
 	check = function(_resolver, ctx)
-		return ctx.Intents:HasIntent("WantsAim") and not SharedRules.isAimDeadzone(ctx)
+	return ctx.Intents:HasIntent("WantsAim") and not SharedRules.isAimDeadzone(ctx) and not ctx.Env.IsCoverSettleActive
 	end,
 	execute = function(_resolver, ctx)
 		local coverType = ctx.Env.ActiveCoverType

@@ -176,26 +176,52 @@ PlayerBindings.DEFAULT = {
 		{
 			Id = "CoverAction",
 			Label = "A",
+			UIName = "SpaceMoveButton",
 			RawInput = "CoverButton",
 			HoldSensitive = true,
+			-- Visible mientras esté vivo Y en DBNO (tap = WantsSelfRevive para auto-revive)
+			VisibilityGroup = "Cover",
 		},
 		{
 			Id = "Fire",
 			Label = "RT",
+			UIName = "ShootButton",
 			RawInput = "FireButton",
 			HoldSensitive = false,
+			-- Visible solo con arma equipada
+			VisibilityGroup = "Combat",
 		},
 		{
 			Id = "Aim",
 			Label = "LT",
+			UIName = "AimButton",
 			RawInput = "AimButton",
 			HoldSensitive = false,
+			VisibilityGroup = "Combat",
 		},
 		{
 			Id = "Reload",
 			Label = "RB",
+			UIName = "ReloadButton",
 			RawInput = "ReloadButton",
 			HoldSensitive = false,
+			VisibilityGroup = "Combat",
+		},
+	},
+
+	------------------------------------------------------------------------
+	-- SPECTATOR: Botones de espectador (no pasan por InputDetector)
+	------------------------------------------------------------------------
+	SpectatorButtons = {
+		{
+			Id = "NextPlayer",
+			UIName = "NextPlayerRightButton",
+			Action = "RequestNext",
+		},
+		{
+			Id = "PreviousPlayer",
+			UIName = "NextPlayerLeftButton",
+			Action = "RequestPrevious",
 		},
 	},
 }

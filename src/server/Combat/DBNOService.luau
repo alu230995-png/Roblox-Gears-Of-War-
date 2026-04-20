@@ -72,6 +72,7 @@ end
 --- CombatService reacciona al cambio de LifeState → cancela bleedout.
 local function _revivePlayer(player: Player, character: Model, humanoid: Humanoid)
 	character:SetAttribute("LifeState", "Alive")
+	humanoid.MaxHealth = Constants.MAX_HEALTH
 	humanoid.Health = Constants.MAX_HEALTH
 
 	-- Limpiar atributos DBNO
@@ -127,6 +128,12 @@ local function _createPrompt(player: Player, character: Model)
 	_proximityPrompts[player] = prompt
 
 	_promptConnections[player] = prompt.Triggered:Connect(function(interactor: Player)
+		-- Guard: el interactor no debe estar en DBNO
+		local interactorCharacter = interactor.Character
+		if interactorCharacter and interactorCharacter:GetAttribute("LifeState") == "DBNO" then
+			return
+		end
+
 		-- Guard: todavía en DBNO
 		if character:GetAttribute("LifeState") ~= "DBNO" then
 			return
